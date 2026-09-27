@@ -1,5 +1,6 @@
 """The video panel: frames at the cursor, playback with the cursor following, rates."""
 import os
+import time
 import shutil
 
 import numpy as np
@@ -93,11 +94,15 @@ def test_playback_moves_the_cursor_and_the_panels(qapp, window, video_document):
     window.open_file(video_document)
     v = window.video
     window.stack.set_cursor(5.0)
+    started = time.monotonic()
     v.play()
     assert v.playing and window.act_play.text() == "Pause video"
     pump(qapp, 0.6)
     t1 = window.stack.cursor
-    assert 5.4 <= t1 <= 5.9
+    # The clock is wall time × rate, read at the last 40 ms tick: measure the wall time
+    # instead of assuming the pump took 0.6 s (a slow CI runner overran it by 30 %).
+    elapsed = time.monotonic() - started
+    assert 0.3 <= t1 - 5.0 <= elapsed + 0.05 and t1 - 5.0 >= elapsed - 0.15
     assert window.readout.text().startswith("Block 1 · 5.")
     assert window.data.table.item(0, 0) is not None and window.data.where.text().startswith("Cursor: Block 1 · 5.")
     assert "playing 1×" in v.caption.text()
@@ -109,10 +114,13 @@ def test_playback_moves_the_cursor_and_the_panels(qapp, window, video_document):
     # faster: four times the distance in the same time (rates step 1 -> 2 -> 4)
     v.faster(); v.faster()
     assert v.rate == 4.0 and v.rate_label.text() == "4×"
+    started = time.monotonic()
     v.play()
     pump(qapp, 0.5)
     v.pause()
-    assert 1.6 <= window.stack.cursor - t1 <= 2.6
+    elapsed = time.monotonic() - started
+    moved = window.stack.cursor - t1
+    assert 1.2 <= moved <= 4 * elapsed + 0.05 and moved >= 4 * (elapsed - 0.15)
     v.slower(); v.slower(); v.slower()
     assert v.rate == 0.5
     # start, end and playing again from the end
