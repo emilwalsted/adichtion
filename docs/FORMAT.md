@@ -350,7 +350,11 @@ the LabChart version/settings that wrote the file. A calculated channel's
 v26 files: the Map stream is fully accounted for (§3) and there is no other
 stream. The units name a calculated channel inherits from its source can be
 stale (an RMS channel of an EMG input labelled `" cmH2O"`, with the
-conversion off).
+conversion off). The definitions can be read from the LabChart for Mac
+document or settings file the `.adicht` was exported from, or recovered from
+the data; `CALCULATED_CHANNELS.md` covers both and gives the sample-level
+behaviour of Arithmetic, RMS, Integral, Spirometry Flow and Spirometry Volume
+as established on the files.
 
 ## 5. Physical units
 
@@ -392,12 +396,17 @@ stream in `ChildDocuments/ADIStdPart<k>` that starts with the GUID
 
 `start`/`stop` are the video-capture clock (seconds) when the record started
 and stopped (`stop − start` exceeds the record by ~0.1 s), `video_start` the
-clock at the first frame of the file, and `offset` ≈ `start − video_start +
-0.17 s` — the position in the video file that corresponds to the record's
-first sample as LabChart computed it (**inferred**: consistent in all 27
-entries, not yet checked against a played video). Records without video have
-four −1.0 values and an empty name; an unfinished capture leaves a
-`VidC<n>.tmp` name.
+clock at the first frame of the file, and `offset` is the position in the
+video file that corresponds to the record's first sample, **including the
+camera delay**: `offset = start − video_start + delay`, where `delay` is the
+video latency the user measures in LabChart's video setup (a visual feedback
+procedure) before recording. The delay is set per recording, so it is constant
+within a file and differs between files (0.17 s in both files seen). To show
+the frame belonging to record time `t`, seek to `offset + t`; `VideoClip.delay_s`
+exposes the measured delay for information and for a manual correction in a
+viewer. (Semantics **confirmed** by the author of the recordings; the constant
+is consistent in all 27 entries.) Records without video have four −1.0 values
+and an empty name; an unfinished capture leaves a `VidC<n>.tmp` name.
 
 ## 7. Open questions
 
@@ -408,12 +417,21 @@ four −1.0 values and an empty name; an unfinished capture leaves a
 * Units conversion types 3 (integrated volume) and the spirometry/BTPS
   channels have not been checked against an independent export (the MATLAB
   export available was made from a re-analysed copy whose spirometry
-  differs); the formula is the same as for the verified type 4 channel.
+  differs); the formula is the same as for the verified type 4 channel. Their
+  values are, however, reproduced from their input channels to float32
+  precision (`CALCULATED_CHANNELS.md` §3), which checks the scaling
+  indirectly.
 * Whether the 16-bit tick field of comments limits blocks to < 32768 ticks (all
   files seen use 16000-tick blocks).
 * Channels sampled below the tick rate have not been seen.
 * The `IncMap` stream (empty in all files) and the settings streams of v29
-  files (display scales, hardware channel map, Data Pad) are not read.
+  files (display scales, hardware channel map, Data Pad) are not read. A v29
+  file with calculated channels has not been seen; when one turns up,
+  `Settings/ChannelSettings` is the place to look for their definitions.
+* Of the LabChart for Mac settings (`CALCULATED_CHANNELS.md` §1): the RMS
+  window length, the Integral extension's source and reset mode, the
+  spirometry dead-space volume and the option behind the Spirometry Flow
+  zero correction are not decoded; the data gives them instead.
 
 ## 8. Evidence
 
@@ -439,4 +457,13 @@ four −1.0 values and an empty name; an unfinished capture leaves a
   stream chain is contiguous and `size` matches the content.
 * **Video**: 27 entries in two files; the file names exist in the `movies`
   folders (except the `.tmp` one), `stop − start` tracks the record
-  durations, `offset − (start − video_start)` is constant (0.17 s).
+  durations, `offset − (start − video_start)` is constant (0.17 s) and is the
+  camera delay measured before the recording, per the author of the files.
+* **Calculated channels**: on the longest record of each of the eleven 2016
+  files, every float32 channel is reproduced from the other channels by a
+  standard calculation, exactly or within half a count of the raw inputs
+  (`tests/test_integration_samples.py`); the Spirometry Volume rule was
+  checked on every record of three files (44 records) and the Spirometry
+  Flow zero correction likewise. The definitions read from the Mac settings
+  and templates of the study (`adichtion macsettings`) agree with the
+  numerical result wherever both exist.

@@ -206,14 +206,22 @@ class ChannelInfo:
 
 @dataclass(frozen=True)
 class VideoClip:
-    """One entry of the video module's stream: the video recorded with one record."""
+    """One entry of the video module's stream: the video recorded with one record.
+
+    ``offset_s`` is the position in the video file of the record's first
+    sample *including the camera delay* LabChart measured in its video setup
+    before the recording (``offset = start - video_start + delay``); the frame
+    for record time ``t`` is at ``offset_s + t`` in the file.  The delay is set
+    per recording, so it is constant within a file and may differ between
+    files; ``delay_s`` exposes it for a viewer's manual correction.
+    """
 
     record_index: int          # 0-based record
     file_name: str             # e.g. "Record5.wmv" ("" when no video was recorded; "*.tmp" when unfinished)
     start_s: float             # video-clock time (s) when the record started
     stop_s: float              # video-clock time (s) when the record stopped
     video_start_s: float       # video-clock time (s) of the first frame of the file
-    offset_s: float            # record start expressed in file time (s), as stored by LabChart
+    offset_s: float            # record start expressed in file time (s), camera delay included, as stored by LabChart
 
     @property
     def has_video(self) -> bool:
@@ -222,3 +230,12 @@ class VideoClip:
     @property
     def wall_duration_s(self) -> float:
         return self.stop_s - self.start_s
+
+    @property
+    def delay_s(self) -> float:
+        """The camera delay LabChart compensated for: ``offset - (start - video_start)``."""
+        return self.offset_s - (self.start_s - self.video_start_s)
+
+    def file_time(self, t: float) -> float:
+        """Position (s) in the video file of record time ``t`` (seconds from the record start)."""
+        return self.offset_s + t

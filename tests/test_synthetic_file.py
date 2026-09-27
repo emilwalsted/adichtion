@@ -118,6 +118,7 @@ def test_videos(synthetic):
         assert [v.file_name for v in f.videos] == ["Record1.wmv", ""]
         v = f.records[0].video
         assert v.has_video and v.offset_s == 0.46 and v.wall_duration_s == pytest.approx(38.98)
+        assert v.delay_s == pytest.approx(0.17) and v.file_time(2.5) == pytest.approx(2.96)
         assert not f.records[1].video.has_video
         assert f.movies_folder.endswith("synthetic_v29 movies")
         assert f.records[0].video_file is None            # the folder does not exist

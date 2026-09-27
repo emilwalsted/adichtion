@@ -111,3 +111,42 @@ def test_calculated_channels_match_matlab_export():
                 else:
                     assert np.all(np.abs(val - ref) <= tol * np.maximum(1.0, np.abs(ref))), (mat, ch)
         assert rec.value_label(5) == "cmH2O" and rec.value_label(12) == "V"
+
+
+def test_inference_explains_the_calculated_channels():
+    """Every float32 channel of the files with calculated channels must be explained
+    by a standard LabChart calculation of the other channels (exactly, or within the
+    count resolution of the raw inputs), and the kinds must match the channel titles
+    of the study (Pdi: arithmetic of two pressures; Spiro Flow: scaled and zero
+    corrected raw flow; Spiro Vol: spirometry volume or plain integral; RMS ...:
+    moving RMS of one raw channel).  The record analysed is the longest one."""
+    from adichtion.infer import infer_record
+
+    checked = 0
+    for path in sample_files():
+        with AdichtFile(path, cache_blocks=64) as f:
+            targets = [c for c in range(f.n_channels) if f.index.channel_dtype(c) == "float32"]
+            if not targets:
+                continue
+            rec = max(f.records, key=lambda r: r.ticks)
+            results = infer_record(rec, targets, length=200_000)
+            for c, hyps in results.items():
+                title = f.channel_titles[c]
+                assert hyps, (path, title)
+                best = hyps[0]
+                assert best.exact or best.within_lsb, (path, title, str(best))
+                if title == "Pdi":
+                    assert best.kind == "arithmetic" and len(best.sources) == 2
+                elif title.startswith("RMS"):
+                    assert best.kind == "rms" and best.params["window"] == 200
+                elif title == "Spiro Flow":
+                    assert best.kind in ("spiro_flow", "copy", "arithmetic") and len(best.sources) == 1
+                elif title == "Spiro Vol":
+                    assert best.kind in ("spiro_volume", "integral")
+                    if best.kind == "spiro_volume":
+                        assert best.params["dead_space"] == 0.4 and best.params["corrected_sign"] == -1
+                elif title.startswith("Vol"):
+                    assert best.kind == "integral"
+            checked += 1
+    if not checked:
+        pytest.skip("no file with calculated channels")

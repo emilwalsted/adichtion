@@ -9,6 +9,8 @@ export    write a selection of a record as LabChart-style text or CSV
 verify    compare decoded samples with a LabChart text export (the oracle)
 check     decode every block and compare with the min/max LabChart stored
 videos    the video clips recorded with the records
+infer     recover the definitions of calculated channels from the data
+macsettings  channel settings (calculated-channel definitions) of a LabChart 7 for Mac document or settings file
 strings   dump the tagged UTF-16 strings of the Map stream (debugging)
 """
 from __future__ import annotations
@@ -193,6 +195,50 @@ def cmd_strings(a: argparse.Namespace) -> None:
             print(f"{off:#08x}  {s[:120]!r}")
 
 
+def cmd_infer(a: argparse.Namespace) -> None:
+    """Test the standard LabChart calculations against the calculated channels of one record."""
+    from .infer import infer_record
+
+    with _open(a.file) as f:
+        if not 1 <= a.record <= len(f.records):
+            sys.exit(f"error: record {a.record} does not exist (file has {len(f.records)})")
+        rec = f.records[a.record - 1]
+        channels = _parse_channels(a.channels, f.n_channels) if a.channels else None
+        n = min(rec.ticks, a.samples)
+        print(f"record {a.record}: {rec.ticks} ticks @ {rec.tick_rate_hz:g} Hz, analysing the first {n} "
+              f"({n / rec.tick_rate_hz:.1f} s); channel numbers are 1-based")
+        results = infer_record(rec, channels, length=a.samples, only_float=not a.all)
+        if not results:
+            print("no calculated (float32) channels in this file; use --all or --channels to test raw channels")
+        for c, hyps in results.items():
+            print(f"Ch{c + 1} {f.channel_titles[c]!r} ({f.index.channel_dtype(c)}, {rec.value_label(c) or 'stored units'}):")
+            if not hyps:
+                print("    no hypothesis matched (not a standard calculation of the other channels, or its inputs are not in the file)")
+            for h in hyps[: a.top]:
+                print(f"    {h}")
+
+
+def cmd_macsettings(a: argparse.Namespace) -> None:
+    """Channel settings of a LabChart 7 for Mac document or settings file."""
+    from .macchart import KEY_N_CHANNELS, MacChartError, MacResFile, channel_settings, document_properties
+
+    try:
+        f = MacResFile(a.file)
+        settings = channel_settings(f)
+    except (OSError, MacChartError) as exc:
+        sys.exit(f"error: {exc}")
+    kind = "document (with data)" if f.is_document else "settings file"
+    n_doc = document_properties(f).get(KEY_N_CHANNELS)
+    print(f"{a.file}: LabChart for Mac {kind}, {len(f.chunks)} chunks" + (f", {n_doc} channels" if n_doc else ""))
+    for ch, s in settings.items():
+        if n_doc and ch > n_doc and not s.is_calculated and not a.verbose:
+            continue
+        print(f"  {ch:3d} {s.title!r:24} {s.describe()}")
+        if a.verbose:
+            for key, value in sorted(s.properties.items()):
+                print(f"        {key:#06x} = {value!r}")
+
+
 def main(argv: Optional[list[str]] = None) -> None:
     p = argparse.ArgumentParser(prog="adichtion", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--version", action="version", version=f"adichtion {__version__}")
@@ -225,6 +271,18 @@ def main(argv: Optional[list[str]] = None) -> None:
     s.add_argument("--raw", action="store_true", help="compare stored values instead of converted units")
     s.add_argument("--fit", action="store_true", help="allow an unknown linear scaling per channel")
     s.set_defaults(fn=cmd_verify)
+
+    s = sub.add_parser("infer", help="recover the definitions of calculated channels from the data of one record")
+    s.add_argument("file"); s.add_argument("--record", type=int, default=1, help="1-based record number (default 1)")
+    s.add_argument("--channels", help="1-based channels to explain (default: every float32 channel)")
+    s.add_argument("--samples", type=int, default=200_000, help="ticks analysed from the record start (default 200000)")
+    s.add_argument("--top", type=int, default=3, help="hypotheses listed per channel (default 3)")
+    s.add_argument("--all", action="store_true", help="also test the raw (int16) channels")
+    s.set_defaults(fn=cmd_infer)
+
+    s = sub.add_parser("macsettings", help="channel settings of a LabChart 7 for Mac document or settings file")
+    s.add_argument("file"); s.add_argument("-v", "--verbose", action="store_true", help="every property of every channel")
+    s.set_defaults(fn=cmd_macsettings)
 
     a = p.parse_args(argv)
     a.fn(a)

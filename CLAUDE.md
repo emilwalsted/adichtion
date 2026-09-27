@@ -10,6 +10,8 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 
 - `docs/FORMAT.md` — the format as far as it is known, with the evidence and
   the open questions. Every decoder change must keep it accurate.
+- `docs/CALCULATED_CHANNELS.md` — how LabChart's calculations behave at sample
+  level, the Mac settings file format and how definitions are recovered.
 - `docs/beslutninger.md` — dated decisions and "settled, don't reopen" points.
 - `src/adichtion/synth.py` — the executable form of the spec: it writes
   synthetic files that the reader must round-trip exactly (`tests/`).
@@ -30,6 +32,10 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    conversion per record, selections by time or comments, min/max envelopes
    for plotting (from the file's block index when possible), video clips.
 5. `export.py`, `cli.py` — text/CSV export and the command line.
+6. `infer.py` (numerical recovery of calculated-channel definitions, on top of
+   layer 4) and `macchart.py` (LabChart 7 for Mac documents/settings files,
+   standalone). Both are analysis helpers the UI may call; neither changes
+   what `AdichtFile` returns.
 
 The UI (not yet written) goes in `src/adichtion/ui/` and must talk to layer 4
 only. Never put Qt imports below that layer.
@@ -58,8 +64,9 @@ only. Never put Qt imports below that layer.
 
 - LabChart's "block" = this library's `Record` (following the ADI SDK); the
   16000-tick storage chunks are "blocks" here. Don't mix the two in the UI.
-- `pytest` is fast (< 2 s). The integration tests need `ADICHTION_SAMPLES`
-  pointing at a folder with real files (they skip otherwise).
+- `pytest` is fast. The integration tests need `ADICHTION_SAMPLES` pointing at
+  a folder with real files (they skip otherwise); the inference one takes a
+  couple of minutes on the eleven 2016 files.
 - Every channel's units object carries its LSB (volts per count, or the scale
   of a calculated channel), per record; `set_range_volts`/`--range-volts` is
   only a fallback for files the sequential parser cannot read
@@ -70,4 +77,13 @@ only. Never put Qt imports below that layer.
 - Unpacked sub-blocks carry no 32-bit flag and PackBits code 128 is a run of
   129; both are covered by tests, don't "fix" them back.
 - Video clips live in `<name> movies/Record<N>.wmv`; `Record.video` gives
-  LabChart's own offset of the record start within the file.
+  LabChart's own offset of the record start within the file. That offset
+  already includes the camera delay measured before the recording
+  (`VideoClip.delay_s`, constant per file): seek to `offset_s + t`.
+- The 2016-style files (v26) store the results of calculated channels but not
+  their definitions. `adichtion infer` recovers them from the data and
+  `adichtion macsettings` reads them from the Mac document or settings file
+  (`docs/CALCULATED_CHANNELS.md`). The reader never recomputes a calculated
+  channel on its own: the stored values are LabChart's and stay the reference.
+- `pytest` (unit + synthetic) stays under a few seconds; the inference tests
+  build their own synthetic document with derived channels.

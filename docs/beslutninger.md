@@ -2,6 +2,50 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-27 (nat) — beregnede kanalers definitioner og videoens offset
+
+- **Definitionerne på beregnede kanaler hentes ad to veje, og filens data er
+  dommeren.** `adichtion.macchart` læser dem fra LabChart 7 for Macs dokumenter
+  og indstillingsfiler ("ADInst Data Res File": Mcro-chunks 30001/30002 som
+  property-records), og `adichtion.infer` genfinder dem numerisk ved at teste
+  LabCharts standardberegninger mod dataene. Mac-filens *aktuelle*
+  indstillinger kan være yngre end `.adicht`-eksporten (et dokument havde to
+  kanaler mere og et ændret udtryk), så den numeriske vej afgør, hvad der
+  faktisk ligger i filen. Dokumentation: `docs/CALCULATED_CHANNELS.md`.
+- **Beregningernes sample-adfærd er fastlagt på dataene** (verificeret på alle
+  elleve 2016-filer): Arithmetic sample for sample; RMS som centreret vindue
+  (w/2 før, w/2−1 efter; 200 samples = 50 ms i studiet) på kildens counts;
+  Integral som rektangulær sum fra sample 0, nulstillet pr. record; Spirometry
+  Flow som `cal × (råflow − nul(t))` med nulniveauet interpoleret lineært fra
+  recordens første til dens sidste råsample; Spirometry Volume som integral med
+  ADI's volumenkorrektion (dødrum 0,4 L, der genfyldes af den ene fase, og
+  division med *k* af den anden fases flow ud over dødrummet, hele samples).
+  Rå-input i 2016-filerne er afrundet til hele counts, mens beregningerne kørte
+  på det uafrundede signal; derfor er "inden for ½ count" den bedste
+  nøjagtighed for kanaler med rå-input, og "eksakt" (float32) for kanaler af
+  float32-input. Statusordene i dokumentationen følger det.
+- **Læseren regner ikke selv beregnede kanaler ud.** Det lagrede er LabCharts
+  resultat og forbliver referencen; `infer` viser definitionen og dens
+  nøjagtighed, og UI'et skal vise den som oplysning. Genberegning (fx med et
+  andet dødrum) er en mulig senere funktion, aldrig en stiltiende erstatning.
+- **Videoens `offset` er den kompenserede position**: `offset = start −
+  video_start + forsinkelse`, hvor forsinkelsen er den kameraforsinkelse, man
+  måler i LabCharts video-opsætning (visuel feedback) før optagelsen; den er
+  fast inden for en fil og varierer mellem filer (0,17 s i begge sete filer).
+  Afspilning: billedet til record-tid *t* ligger ved `offset + t`;
+  `VideoClip.delay_s`/`file_time` eksponerer det. UI-spec'en skal stadig give
+  brugeren mulighed for at justere manuelt. Afgjort med Emil.
+- **Fortegnet i spirometrikorrektionen er optagelsens sag, ikke læserens.**
+  I studiets filer ramte korrektionen det negative flow, som dér er
+  inspiration (Arithmetic-kanalerne kalder det "In", og en 5 L negativ
+  udsving efter 0,1 L positiv kan kun være en inspiration). Læseren rapporterer
+  fortegnet; fortolkningen ligger hos brugeren.
+- **Ikke afkodet i Mac-indstillingerne**: RMS-vinduet (nøglerne 0x2DC5..0x2DC8
+  er konstante `(340, 2, 1.0, 84)` og ikke vinduet), Integral-kildens nøgle,
+  dødrummet (0,4 L er default og står ikke i filen) og valget bag Spirometry
+  Flows nulkorrektion. Dataene giver dem i stedet; punktet genåbnes kun med
+  nye filer, hvor de afviger.
+
 ## 2026-09-27 (aften) — Map-grammatikken, float32 og video
 
 - **Map-streamen parses efter sin grammatik, ikke ved scanning.** `chartdata.py`
@@ -45,13 +89,15 @@ Daterede beslutninger og afgjorte punkter. Nyeste øverst.
   eget tal for records starttid i videofilen. Om 0,17 s-konstanten i offsettet
   er en kameraforsinkelse, afgøres først, når en video afspilles synkront i
   UI'et; UI-spec'en skal give brugeren mulighed for at justere offsettet.
+  *(Afgjort samme nat, se ovenfor: konstanten er den målte kameraforsinkelse.)*
 - **Beregnede kanalers definitioner findes ikke i v26-filerne** (hele
   Map-streamen er nu forklaret, og der er ingen andre streams). v26-filerne
   bærer kun resultatet (float32-data) plus enhedsobjekt og titel; det er
   formentlig sådan LabChart for Mac skriver "Windows-format". Punktet er
   lukket for v26; for nyere filer med beregnede kanaler (v29+) skal det
   undersøges, om `Settings/ChannelSettings` bærer definitionerne, når Emil har
-  en sådan fil.
+  en sådan fil. *(Definitionerne hentes nu fra Mac-filerne og fra dataene, se
+  ovenfor.)*
 - **Terminologi i UI'et**: filens "Record<N>.wmv" viser, at ADI selv kalder
   LabCharts blokke *records* i filsystemet; det taler for at bruge "record" i
   UI'et og nævne "block" som LabCharts ord.
