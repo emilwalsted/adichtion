@@ -72,14 +72,16 @@ The installed binary is `python -m adichtion`: check it with `adichtion --versio
 
 ## 4. Signing
 
+Detail and the commands that set the secrets: [`SIGNING.md`](SIGNING.md).
+
 - **macOS**: with the repository secrets `APPLE_DEV_ID_IDENTITY`, `APPLE_CERTIFICATE_P12_BASE64`,
   `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID` and
   `APPLE_APP_SPECIFIC_PASSWORD` set, the dmg is Developer ID-signed and notarised
   (`notarytool`, stapled). Without them, or with *Ad-hoc sign* ticked, it is ad-hoc signed and
   the user opens it once with right-click ▸ *Open*. The release notes say which it is.
-- **Windows**: the MSI is built unsigned. A hardware-backed code-signing certificate cannot
-  sign on an ephemeral runner; sign locally after the release and replace the asset on the
-  release, as for RespMech.
+- **Windows**: the MSI is built unsigned. The Certum key is hardware-backed and cannot sign on
+  an ephemeral runner; after the release, `scripts/sign-msi-certum.sh vX.Y.Z` signs the MSI on
+  the Mac and replaces the release asset, as for RespMech.
 - **Linux**: unsigned `.deb`, like RespMech's.
 
 ## 5. Icons

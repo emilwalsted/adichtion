@@ -97,8 +97,11 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 - One entry point: `adichtion` (`adichtion.__main__:main`) starts the app,
   `adichtion <command>` the CLI; `CLI_COMMANDS` there is a copy of the argparse
   subcommands (a test keeps them equal). There is no `adichtion-app` any more.
-- Installers (`docs/RELEASING.md`): briefcase, config in `pyproject.toml`
-  `[tool.briefcase]`, icons in `installer/`. The version is in two places
-  (`__init__.py` and `[tool.briefcase]`) plus a `CHANGELOG.md` entry the Linux
-  build requires; a test checks all three agree. Windows MSI unsigned, macOS dmg
-  signed+notarised only with the Apple secrets, Ubuntu 24.04 `.deb` via Docker.
+- Installers (`docs/RELEASING.md`, repo skill `.claude/skills/release`):
+  briefcase, config in `pyproject.toml` `[tool.briefcase]`, icons in
+  `installer/`. The version is in two places (`__init__.py` and
+  `[tool.briefcase]`) plus a `CHANGELOG.md` entry the Linux build requires; a
+  test checks all three agree. Windows MSI unsigned in CI and Certum-signed
+  locally afterwards (`scripts/sign-msi-certum.sh`), macOS dmg signed+notarised
+  only with the Apple secrets (`docs/SIGNING.md`), Ubuntu 24.04 `.deb` via
+  Docker.
