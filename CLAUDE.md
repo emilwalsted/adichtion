@@ -61,6 +61,9 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 - **Ask before any upload to a live site or a release tag.** A `v*` tag runs
   `.github/workflows/release.yml` and publishes a GitHub release with the
   installers; a manual run of that workflow only produces artifacts.
+- **Commits** are authored and committed as Emil Walsted <emilwalsted@gmail.com>,
+  without tool-added trailers (`.claude/settings.json` turns them off; do not
+  reintroduce them). Commit with explicit paths, never `git add -A`.
 - Work language with Emil is Danish; code, docs and UI are English.
 
 ## Working notes
