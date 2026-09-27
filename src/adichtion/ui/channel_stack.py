@@ -334,7 +334,7 @@ class MarkerStrip(pg.PlotWidget):
     def __init__(self, pal: dict, parent=None):
         self.vb = ChannelViewBox()
         super().__init__(parent, viewBox=self.vb)
-        self.setFixedHeight(28)
+        self.setFixedHeight(44)                   # two rows: block labels above, comment flags below
         item = self.getPlotItem()
         item.hideButtons()
         item.hideAxis("left")
@@ -352,26 +352,74 @@ class MarkerStrip(pg.PlotWidget):
                                         brush=pg.mkBrush(*pal["comment_flag"]), hoverable=True,
                                         tip=lambda x, y, data: str(data))
         item.addItem(self.flags, ignoreBounds=True)
-        self._labels: list[pg.TextItem] = []
+        self._labels: list[pg.TextItem] = []          # one per block
+        self._comment_labels: dict[int, pg.TextItem] = {}
+        self._timeline: Optional[Timeline] = None
         self._pal = pal
+        self.vb.sigXRangeChanged.connect(self._relayout)
 
     def set_timeline(self, timeline: Optional[Timeline]) -> None:
-        for lbl in self._labels:
-            self.getPlotItem().removeItem(lbl)
+        item = self.getPlotItem()
+        for lbl in list(self._labels) + list(self._comment_labels.values()):
+            item.removeItem(lbl)
         self._labels = []
+        self._comment_labels = {}
+        self._timeline = timeline
         if timeline is None:
             self.markers.set_positions([], [])
             self.flags.setData([])
             return
         self.markers.set_positions(timeline.boundaries, [c.file_time_s for c in timeline.comments])
         self.flags.setData(x=[c.file_time_s for c in timeline.comments],
-                           y=[0.35] * len(timeline.comments),
+                           y=[0.22] * len(timeline.comments),
                            data=[f"#{c.comment.id}  {c.comment.text}" for c in timeline.comments])
         for b in timeline.blocks:
             lbl = pg.TextItem(f"Block {b.number}", color=self._pal["fg"], anchor=(0, 0))
             lbl.setPos(b.start_s, 1.0)
-            self.getPlotItem().addItem(lbl, ignoreBounds=True)
+            item.addItem(lbl, ignoreBounds=True)
             self._labels.append(lbl)
+        self._relayout()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._relayout()
+
+    def _relayout(self, *args) -> None:
+        """Hide block labels that would overlap their neighbour; name the comments when few are in view."""
+        tl = self.__dict__.get("_timeline")          # resizeEvent fires inside PlotWidget.__init__
+        if tl is None or not self._labels:
+            return
+        x0, x1 = self.vb.viewRange()[0]
+        width = max(1.0, float(self.vb.width()))
+        px_per_s = width / max(x1 - x0, 1e-9)
+        last_right = -1e9
+        for b, lbl in zip(tl.blocks, self._labels):
+            px = (b.start_s - x0) * px_per_s
+            w = lbl.boundingRect().width() + 6
+            show = x0 - 1 / px_per_s <= b.start_s <= x1 and px >= last_right
+            lbl.setVisible(show)
+            if show:
+                last_right = px + w
+        visible = [i for i, c in enumerate(tl.comments) if x0 <= c.file_time_s <= x1]
+        show_text = len(visible) <= 40
+        for i, lbl in self._comment_labels.items():
+            lbl.setVisible(show_text and i in visible)
+        if show_text:
+            last_right = -1e9
+            for i in visible:
+                c = tl.comments[i]
+                lbl = self._comment_labels.get(i)
+                if lbl is None:
+                    lbl = pg.TextItem(f"#{c.comment.id} {c.comment.text}", color=self._pal["comment_flag"], anchor=(0, 0.5))
+                    lbl.setPos(c.file_time_s, 0.25)
+                    self.getPlotItem().addItem(lbl, ignoreBounds=True)
+                    self._comment_labels[i] = lbl
+                px = (c.file_time_s - x0) * px_per_s + 8
+                if px < last_right:
+                    lbl.setVisible(False)
+                    continue
+                lbl.setVisible(True)
+                last_right = px + lbl.boundingRect().width() + 4
 
 
 class ChannelStack(QWidget):
