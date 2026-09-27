@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "adichtion"
+dynamic = ["version"]
+description = "Read ADInstruments LabChart .adicht files without LabChart: metadata, comments and sample data, on every platform"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Emil Ingerslev Walsted", email = "emilwalsted@gmail.com" }]
+maintainers = [{ name = "Emil Ingerslev Walsted", email = "emilwalsted@gmail.com" }]
+keywords = ["labchart", "adicht", "adinstruments", "powerlab", "physiology", "file-format", "reverse-engineering"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+# the UI layer will add e.g. PySide6 + pyqtgraph here (see docs/beslutninger.md)
+
+[project.scripts]
+adichtion = "adichtion.cli:main"
+
+[project.urls]
+Repository = "https://github.com/emilwalsted/adichtion"
+Issues = "https://github.com/emilwalsted/adichtion/issues"
+
+[tool.hatch.version]
+path = "src/adichtion/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adichtion"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]

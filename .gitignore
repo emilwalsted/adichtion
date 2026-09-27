@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# Real recordings and their exports are private data: never commit them
+*.adicht
+*.adidat
+samples/
+export/
+*.txt.gz
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
