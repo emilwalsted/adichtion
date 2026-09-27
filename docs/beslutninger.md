@@ -11,8 +11,15 @@ Afgjort med Emil ved spørgsmål inden byggeriet:
   gangen. Filtid = sekunder fra første bloks start med blokkene stødende op
   til hinanden; datapanelet nævner blok, tid i blokken og klokkeslæt.
 - **Ordet i UI'et er "block"** (LabCharts eget), `Record` i koden.
-- **Video: OpenCV (opencv-python-headless), stillbillede ved markøren**, fast
-  afhængighed i `[ui]`-ekstraen. Afspilning kan komme senere.
+- **Video: OpenCV (opencv-python-headless)**, fast afhængighed i
+  `[ui]`-ekstraen. Først stillbillede ved markøren; samme aften udvidet med
+  **afspilning**: play/pause fra markøren, til start/slut af blokkens klip,
+  hastighed 0,1×–8× (halvér/fordobl). Afspilningen er et ur, ikke en
+  medieafspiller: filtiden skrider frem med valgt hastighed, markøren følger
+  med på alle kanaler og i panelerne, visningen blader med, og der pauses ved
+  blokkens slutning (klippet hører til blokken). Billeder hentes pr. tik med
+  "nyeste vinder", så en langsom dekoder springer billeder over frem for at
+  sakke bagud.
 - **Markering: klik = punkt, Shift+klik = interval** fra markøren til klikket;
   venstre-træk panorerer som i RespMech.
 - Øvrigt fra spec'en: menulinje + toolbar + arbejdsområde, maksimeret start

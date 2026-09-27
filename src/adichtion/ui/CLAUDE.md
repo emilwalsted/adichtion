@@ -48,5 +48,13 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - **Threads are joined on close** (`JobRunner.stop()` marks every job stale and waits;
   `FrameGrabber.stop()`); tests close the window, so a job that ignores `stale()` shows up
   as a slow test, not a crash.
+- **Playback is a clock, not a media player** (`video_panel.py`): a 40 ms timer advances
+  file time at the chosen rate from the wall-clock moment play was pressed (re-anchored on
+  a rate change or a click), emits `positionChanged`, and the window moves the cursor with
+  `set_cursor(t, follow=True)`; frames are requested per tick and the grabber serves only
+  the latest, reading forward when the target is close (`grab_frame(..., last_pos)`) and
+  seeking otherwise. The panel ignores `set_position` calls that are its own tick coming
+  back (`_driving`); an external cursor move while playing re-anchors the clock. The data
+  table is rebuilt at most 10×/s while playing; overlays and readout follow every tick.
 - Tests grab the widgets offscreen (`widget.grab().save(...)`) when a look needs checking;
   the platform plugin prints "does not support propagateSizeHints", which is noise.

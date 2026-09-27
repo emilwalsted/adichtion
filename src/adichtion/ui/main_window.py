@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 import traceback
 from functools import partial
 from typing import Optional
@@ -99,6 +100,9 @@ class MainWindow(QMainWindow):
         self.runner.start()
         self.info.blockActivated.connect(self.go_to_block)
         self.info.commentActivated.connect(self.stack.set_cursor)
+        self.video.positionChanged.connect(self._on_playback_position)
+        self.video.playingChanged.connect(self._on_playing_changed)
+        self._data_refresh = 0.0
         self._update_actions()
 
     # -- actions, menus, toolbar ---------------------------------------------------------
@@ -132,6 +136,11 @@ class MainWindow(QMainWindow):
         self.act_step_fwd = act("Cursor one sample forward", lambda: self.stack.nudge_cursor(samples=1), "Right")
         self.act_sec_back = act("Cursor one second back", lambda: self.stack.nudge_cursor(seconds=-1.0), "Shift+Left")
         self.act_sec_fwd = act("Cursor one second forward", lambda: self.stack.nudge_cursor(seconds=1.0), "Shift+Right")
+        self.act_play = act("Play video", self.video.toggle, "Space", "Play the block's video from the cursor, or pause it")
+        self.act_video_start = act("Video: go to start", self.video.go_start, "Home")
+        self.act_video_end = act("Video: go to end", self.video.go_end, "End")
+        self.act_slower = act("Play slower", self.video.slower, "Ctrl+Down")
+        self.act_faster = act("Play faster", self.video.faster, "Ctrl+Up")
         self.act_about = act("About adichtion", self.about)
         self.recent_menu = QMenu("Open recent", self)
         self.recent_menu.aboutToShow.connect(self._rebuild_recent)
@@ -158,6 +167,9 @@ class MainWindow(QMainWindow):
         c = v.addMenu("Cursor")
         for a in (self.act_step_back, self.act_step_fwd, self.act_sec_back, self.act_sec_fwd):
             c.addAction(a)
+        vid = mb.addMenu("&Video")
+        for a in (self.act_play, self.act_video_start, self.act_video_end, self.act_slower, self.act_faster):
+            vid.addAction(a)
         h = mb.addMenu("&Help")
         h.addAction(self.act_about)
 
@@ -190,6 +202,8 @@ class MainWindow(QMainWindow):
                   self.act_auto, self.act_channels, self.act_all_channels, self.act_equalize, self.act_clear_sel,
                   self.act_step_back, self.act_step_fwd, self.act_sec_back, self.act_sec_fwd):
             a.setEnabled(has)
+        for a in (self.act_play, self.act_video_start, self.act_video_end, self.act_slower, self.act_faster):
+            a.setEnabled(has and self.video.has_videos)
 
     # -- files --------------------------------------------------------------------------
     def recent_files(self) -> list[str]:
@@ -311,8 +325,25 @@ class MainWindow(QMainWindow):
             self.data.show_point(None)
             return
         self.readout.setText(self.timeline.describe(t) if self.timeline else f"{t:.3f} s")
+        self.video.set_position(t)               # ignored while the panel's own clock is moving the cursor
+        if self.video.playing:
+            # the table is rebuilt at most ten times a second while the video plays; the
+            # channel overlays and the readout follow every tick
+            now = time.monotonic()
+            if now - self._data_refresh < 0.1:
+                return
+            self._data_refresh = now
         self.data.show_point(t)
-        self.video.set_position(t)
+
+    def _on_playback_position(self, t: float) -> None:
+        """The video clock moved: the cursor (and everything that follows it) goes along."""
+        self.stack.set_cursor(t, follow=True)
+
+    def _on_playing_changed(self, playing: bool) -> None:
+        self.act_play.setText("Pause video" if playing else "Play video")
+        if not playing and self.stack.cursor is not None:
+            self.data.show_point(self.stack.cursor)         # the final position, unthrottled
+        self.statusBar().showMessage(f"Playing at {self.video.rate:g}×." if playing else "Paused.")
 
     def _on_selection(self, sel) -> None:
         if sel is None:

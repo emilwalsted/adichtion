@@ -78,9 +78,13 @@ class JobRunner(QThread):
 
 
 class FrameGrabber(QThread):
-    """Decodes one video frame at a time with OpenCV; only the latest request is served."""
+    """Decodes one video frame at a time with OpenCV; only the latest request is served.
 
-    frame = Signal(int, object, float)           # request id, QImage (or None), actual time (s)
+    A request close ahead of the frame last decoded is served by reading forward
+    (cheap, and exact), anything else by a seek; that is what makes playback smooth
+    and a click elsewhere in the file still land on the right frame."""
+
+    frame = Signal(int, object, float)           # request id, QImage (or None), time of the frame shown (s)
     error = Signal(int, str)
 
     def __init__(self, parent=None):
@@ -90,6 +94,7 @@ class FrameGrabber(QThread):
         self._stop = False
         self._cap = None
         self._cap_path: Optional[str] = None
+        self._last_pos: Optional[float] = None    # time (s) of the frame last decoded from _cap
 
     def request(self, request_id: int, path: str, time_s: float) -> None:
         with self._cv:
@@ -109,6 +114,7 @@ class FrameGrabber(QThread):
                 self._cap.release()
             self._cap = cv2.VideoCapture(path)
             self._cap_path = path
+            self._last_pos = None
         return self._cap
 
     def run(self) -> None:                       # pragma: no cover - needs a video file
@@ -121,27 +127,69 @@ class FrameGrabber(QThread):
                 request_id, path, time_s = self._request
                 self._request = None
             try:
-                img, actual = grab_frame(self._open(path), time_s)
+                img, actual = grab_frame(self._open(path), time_s, self._last_pos)
+                self._last_pos = actual if img is not None else None
                 self.frame.emit(request_id, img, actual)
             except Exception as exc:              # noqa: BLE001
+                self._last_pos = None
                 self.error.emit(request_id, str(exc))
         if self._cap is not None:
             self._cap.release()
 
 
-def grab_frame(cap, time_s: float):
-    """The frame at ``time_s`` (seconds into the file) as a ``QImage``, plus the time the
-    decoder actually landed on.  ``None`` when the file yields nothing there."""
+FORWARD_WINDOW_S = 3.0      # a target this far ahead of the last frame is reached by reading, not seeking
+
+
+def grab_frame(cap, time_s: float, last_pos: Optional[float] = None, forward_window: float = FORWARD_WINDOW_S):
+    """The frame at ``time_s`` (seconds into the file) as a ``QImage``, plus the time of the
+    frame actually shown.  ``last_pos`` is the time of the frame the capture last decoded:
+    a target a little ahead of it is reached by reading forward, which is what playback
+    does.  Near the end of a file, where a seek can fail, the last decodable frame is
+    returned.  ``(None, time_s)`` when the file yields nothing at all."""
     import cv2                                     # noqa: PLC0415
     from PySide6.QtGui import QImage
 
     if cap is None or not cap.isOpened():
         raise RuntimeError("the video file could not be opened")
-    cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, time_s) * 1000.0)
-    ok, frame = cap.read()
-    if not ok or frame is None:
-        return None, time_s
-    actual = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+    time_s = max(0.0, time_s)
+    frame = None
+    actual = time_s
+    if last_pos is not None and 0.0 <= time_s - last_pos < forward_window:
+        # sequential: grab until the next frame's time reaches the target
+        pos = last_pos
+        while pos < time_s - 1e-6:
+            if not cap.grab():
+                break
+            pos = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            if pos <= last_pos:                    # a container without timestamps: stop at one frame
+                break
+        ok, frame = cap.retrieve()
+        if ok and frame is not None:
+            actual = pos
+        else:
+            frame = None
+    if frame is None:
+        cap.set(cv2.CAP_PROP_POS_MSEC, time_s * 1000.0)
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            actual = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        else:
+            # the tail of the file (or beyond it): seek a second back and read forward to the
+            # last frame there is
+            fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+            n = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+            end = min(time_s, n / fps) if fps > 0 and n > 0 else time_s
+            cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, end - 1.0) * 1000.0)
+            frame = None
+            while True:
+                ok, f = cap.read()
+                if not ok or f is None:
+                    break
+                frame, actual = f, cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                if actual >= time_s:
+                    break
+            if frame is None:
+                return None, time_s
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     h, w = rgb.shape[:2]
     img = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()

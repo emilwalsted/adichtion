@@ -39,6 +39,11 @@ them, with the block labels and comment flags in a strip above the channels.
   *Video* panel shows the frame the block's video clip has at that moment
   (camera delay compensated). Shift+click extends the cursor to an interval,
   and the data panel then gives min, max and mean per channel.
+* The video panel plays the clip from the cursor (Space, or the ▶ button): the
+  cursor moves with the video and every overlay and panel follows, the view
+  pages along, and playback pauses at the end of the block. ⏮/⏭ jump to the
+  start and end of the block's video; ◀◀/▶▶ halve or double the speed
+  (0.1× to 8×).
 * Scroll or drag to zoom and pan the time axis (all channels follow); the
   toolbar has zoom in/out/reset. *Auto zoom* fits every channel's y-axis to
   the visible data; the wheel over a y-axis, or the small `+ − A` buttons in a

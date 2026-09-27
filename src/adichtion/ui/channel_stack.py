@@ -643,13 +643,22 @@ class ChannelStack(QWidget):
         if len(points):
             self.set_cursor(float(points[0].pos().x()))
 
-    def set_cursor(self, t: Optional[float]) -> None:
+    def set_cursor(self, t: Optional[float], follow: bool = False) -> None:
+        """Place the cursor at file time ``t`` (clears any interval).  With ``follow`` the
+        view pages along so the cursor stays on screen, as playback needs."""
+        had_selection = self._selection is not None
         self._cursor = t
         self._selection = None
+        if follow and t is not None:
+            x0, x1 = self.view_range()
+            if not x0 <= t <= x1:
+                w = x1 - x0
+                self.set_range(t - 0.1 * w, t + 0.9 * w)
         self._paint_cursor()
         self._update_values()
         self.cursorChanged.emit(t)
-        self.selectionChanged.emit(None)
+        if had_selection:
+            self.selectionChanged.emit(None)
 
     def set_selection(self, t0: float, t1: float) -> None:
         if t1 < t0:
@@ -665,11 +674,7 @@ class ChannelStack(QWidget):
         pos = self.timeline.locate(self._cursor)
         t = self._cursor + seconds + samples / pos.block.tick_rate_hz
         t = min(max(0.0, t), self.timeline.duration_s)
-        x0, x1 = self.view_range()
-        self.set_cursor(t)
-        if not x0 <= t <= x1:                       # keep the cursor on screen
-            w = x1 - x0
-            self.set_range(t - w / 2, t + w / 2)
+        self.set_cursor(t, follow=True)
 
     def clear_selection(self) -> None:
         if self._selection is not None:
