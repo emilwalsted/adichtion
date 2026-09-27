@@ -1,4 +1,4 @@
-"""Command line interface: ``python -m adichtion`` / ``adichtion``.
+"""Command line interface: ``adichtion <command> ...`` (``adichtion`` alone starts the app).
 
 Commands
 --------

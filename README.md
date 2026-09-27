@@ -19,6 +19,23 @@ The *adichtion* desktop app (a channel viewer and exporter in the mould of
 
 ## Install
 
+**The desktop app** comes as a native installer for each platform, built by
+the *Build installers* workflow and attached to every
+[GitHub release](https://github.com/emilwalsted/adichtion/releases):
+
+| Platform | File | Notes |
+|---|---|---|
+| Windows | `adichtion-*.msi` | unsigned: if SmartScreen warns, *More info ▸ Run anyway* |
+| macOS (Apple Silicon) | `adichtion-*.dmg` | drag to Applications; an ad-hoc-signed build needs right-click ▸ *Open* the first time |
+| Ubuntu 24.04 / Debian-based | `adichtion_*_amd64.deb` | `sudo apt install ./adichtion_*_amd64.deb` |
+
+Each bundles its own Python and libraries; `.adicht` files open in the app by
+double-click, and the installed binary is also the command line
+(`adichtion info FILE`). See [`docs/RELEASING.md`](docs/RELEASING.md) for how
+the installers are built.
+
+**From source** (the library, the command line and, with `ui`, the app):
+
 ```
 pip install -e ".[dev]"        # the library and the command line
 pip install -e ".[ui,dev]"     # plus the viewer (PySide6, pyqtgraph, openpyxl, OpenCV)
@@ -27,8 +44,11 @@ pip install -e ".[ui,dev]"     # plus the viewer (PySide6, pyqtgraph, openpyxl, 
 ## The viewer
 
 ```
-adichtion-app [recording.adicht]
+adichtion [recording.adicht]
 ```
+
+One command does both: `adichtion` alone (or with a file) starts the app,
+`adichtion <command> …` runs the command line described below.
 
 Opens maximised with a file dialog (or the file given) and shows every channel
 of the file on one time axis, the blocks laid end to end as LabChart shows

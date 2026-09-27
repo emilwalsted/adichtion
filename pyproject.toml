@@ -28,15 +28,14 @@ classifiers = [
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
-# the desktop viewer (adichtion-app); openpyxl for Excel export, OpenCV for the video frames
+# the desktop viewer; openpyxl for Excel export, OpenCV for the video frames
 ui = ["PySide6>=6.6", "pyqtgraph>=0.13", "openpyxl>=3.1", "opencv-python-headless>=4.8"]
 dev = ["pytest>=7.0", "openpyxl>=3.1"]
 
+# One command: `adichtion` starts the app (optionally with a .adicht path); `adichtion info …`
+# and the other subcommands run the command line.
 [project.scripts]
-adichtion = "adichtion.cli:main"
-
-[project.gui-scripts]
-adichtion-app = "adichtion.ui.app:main"
+adichtion = "adichtion.__main__:main"
 
 [project.urls]
 Repository = "https://github.com/emilwalsted/adichtion"
@@ -52,3 +51,77 @@ exclude = ["**/CLAUDE.md"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
+
+
+# --- briefcase: native desktop installers (Windows MSI, macOS dmg, Linux .deb) -------------
+# Build with `pip install "briefcase>=0.4.5"` (docs/RELEASING.md; CI: .github/workflows/release.yml):
+#     briefcase create <windows|macOS>   ·   briefcase build <...>   ·   briefcase package <...>
+#     briefcase package linux system --target ubuntu:noble        (needs Docker)
+# The bundle runs `python -m adichtion`: the app without arguments, the command line with a
+# subcommand (`adichtion info …` works from the installed binary too). The version below is a
+# MANUAL copy of src/adichtion/__init__.py's __version__ (briefcase cannot read a dynamic
+# version): bump both, and add the CHANGELOG.md entry the Linux build reads.
+[tool.briefcase]
+project_name = "adichtion"
+bundle = "dk.emilwalsted"                     # -> dk.emilwalsted.adichtion
+version = "0.3.0"
+url = "https://github.com/emilwalsted/adichtion"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+author = "Emil Ingerslev Walsted"
+author_email = "emilwalsted@gmail.com"
+
+[tool.briefcase.app.adichtion]
+formal_name = "adichtion"
+description = "View and export ADInstruments LabChart .adicht recordings without LabChart"
+long_description = """adichtion opens LabChart .adicht files on Windows, macOS and Linux: every channel
+on one time axis with the blocks laid end to end, comments, the video recorded with a block,
+and the definitions of calculated channels recovered from the data. Exports the file, a block
+or a selection as LabChart-style text, CSV or Excel.
+"""
+icon = "installer/adichtion"                  # briefcase picks adichtion.ico / .icns / .png per platform
+sources = ["src/adichtion"]
+test_sources = ["tests"]
+# Everything the app needs at run time (the base dependency plus the [ui] extra), listed
+# explicitly so a bundle can never silently drop one.
+requires = [
+    "numpy>=1.24",
+    "PySide6>=6.6",
+    "pyqtgraph>=0.13",
+    "openpyxl>=3.1",
+    "opencv-python-headless>=4.8",
+]
+test_requires = ["pytest>=7.0"]
+
+# Registers .adicht as a document of the app: a double-clicked recording opens in adichtion
+# (macOS Info.plist / Windows registry). Declared once at the app level; briefcase derives the
+# macOS content-type keys itself. The role is Viewer: the app never writes a recording.
+[tool.briefcase.app.adichtion.document_type.adicht]
+extension = "adicht"
+description = "LabChart recording"
+icon = "installer/adichtion"
+url = "https://github.com/emilwalsted/adichtion"
+mime_type = "application/x-adicht"
+
+[tool.briefcase.app.adichtion.macOS]
+# Host-arch build (numpy/OpenCV wheels are per architecture); std-nslog routes app logging to
+# Apple's unified logging. macOS 12+ matches the wheels' own deployment targets.
+universal_build = false
+min_os_version = "12.0"
+requires = ["std-nslog>=1.0.0"]
+
+[tool.briefcase.app.adichtion.windows]
+# nothing platform-specific yet (see RespMech for the MAX_PATH note that also applies here)
+
+[tool.briefcase.app.adichtion.linux]
+# no X11/Wayland extras beyond what PySide6 needs at run time (below)
+
+[tool.briefcase.app.adichtion.linux.system]
+# The Qt platform plugins in the PySide6 wheel dlopen these system libraries; the .deb depends
+# on them so an installation on a bare server image does not fail at start-up.
+system_runtime_requires = [
+    "libegl1", "libgl1", "libopengl0", "libxkbcommon0", "libxkbcommon-x11-0",
+    "libxcb-cursor0", "libxcb-icccm4", "libxcb-keysyms1", "libxcb-shape0", "libxcb-xinerama0",
+    "libdbus-1-3", "libfontconfig1",
+]
+system_section = "science"

@@ -8,6 +8,10 @@ dist/
 .venv/
 venv/
 
+# briefcase (installer builds): tool state and failure logs
+.briefcase/
+logs/
+
 # Real recordings and their exports are private data: never commit them
 *.adicht
 *.adidat

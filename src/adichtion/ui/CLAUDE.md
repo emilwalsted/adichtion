@@ -6,7 +6,7 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 
 ## Structure
 
-- `app.py` — entry point (`adichtion-app`): theme, maximised `MainWindow`, open dialog.
+- `app.py` — the app entry point (`adichtion` without a subcommand, `python -m adichtion`, the packaged bundle): theme, maximised `MainWindow`, open dialog, macOS FileOpen events.
 - `theme.py` — RespMech's palette and style sheet (light/dark, `ADICHTION_THEME`), the
   plot palette (`plot_palette()`), `PLOT_AXIS_WIDTH`, `PLOT_ROW_MIN_HEIGHT`.
 - `timeline.py` (Qt-free) — the file axis: blocks end to end, `locate(t)`,

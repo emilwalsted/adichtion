@@ -37,7 +37,7 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    standalone). Both are analysis helpers the UI may call; neither changes
    what `AdichtFile` returns.
 
-7. `ui/` — the PySide6/pyqtgraph viewer (`adichtion-app`). It talks to layers
+7. `ui/` — the PySide6/pyqtgraph viewer (`adichtion` without a subcommand). It talks to layers
    4–6 only; never put Qt imports below it. `src/adichtion/ui/CLAUDE.md` has
    its structure and the Qt rules that were learnt the hard way.
 
@@ -58,7 +58,9 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   LabChart text/MATLAB exports; the Map grammar and block index are
   consistent across all sample files; the rest is inferred. Update
   `docs/FORMAT.md` §7/§8 when the status changes.
-- **Ask before any upload to a live site or a release tag.**
+- **Ask before any upload to a live site or a release tag.** A `v*` tag runs
+  `.github/workflows/release.yml` and publishes a GitHub release with the
+  installers; a manual run of that workflow only produces artifacts.
 - Work language with Emil is Danish; code, docs and UI are English.
 
 ## Working notes
@@ -92,3 +94,11 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 - UI wording: LabChart's blocks are "blocks" in the app (Emil's call,
   27-09-2026), `Record` in the code. The app never recomputes a calculated
   channel; it shows LabChart's values and the recovered definition.
+- One entry point: `adichtion` (`adichtion.__main__:main`) starts the app,
+  `adichtion <command>` the CLI; `CLI_COMMANDS` there is a copy of the argparse
+  subcommands (a test keeps them equal). There is no `adichtion-app` any more.
+- Installers (`docs/RELEASING.md`): briefcase, config in `pyproject.toml`
+  `[tool.briefcase]`, icons in `installer/`. The version is in two places
+  (`__init__.py` and `[tool.briefcase]`) plus a `CHANGELOG.md` entry the Linux
+  build requires; a test checks all three agree. Windows MSI unsigned, macOS dmg
+  signed+notarised only with the Apple secrets, Ubuntu 24.04 `.deb` via Docker.

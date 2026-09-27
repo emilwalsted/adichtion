@@ -151,7 +151,7 @@ def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic):
         qapp.quit()
 
     QTimer.singleShot(800, finish)
-    assert appmod.main(["adichtion-app", synthetic["path"]]) == 0
+    assert appmod.main(["adichtion", synthetic["path"]]) == 0
     assert seen == {"n": 1, "file": os.path.basename(synthetic["path"])}
     assert appmod.startup_path(["x", "nope.adicht"]) is None
 

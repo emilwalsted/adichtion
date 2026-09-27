@@ -2,6 +2,34 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-27 (nat, 2) — én kommando og installérbare pakker
+
+- **Appen hedder `adichtion`, ikke `adichtion-app`** (Emils krav). Ét entry
+  point (`adichtion.__main__:main`): uden argumenter, eller med en
+  `.adicht`-sti, starter appen; med en underkommando (`info`, `export`, …)
+  eller `--help`/`--version` kører kommandolinjen. `python -m adichtion` og
+  den pakkede app kører det samme. En test holder listen af underkommandoer i
+  `__main__` lig med argparse'ns, så en ny kommando ikke ender med at starte
+  appen.
+- **Standalone-installers som RespMech: briefcase.** Windows-MSI (usigneret;
+  signeres lokalt bagefter som for RespMech), macOS-dmg (Developer ID +
+  notarisering kun når Apple-secrets er sat, ellers ad hoc) og Ubuntu 24.04
+  `.deb` (bygget i Docker med `--target ubuntu:noble`, så pakken afhænger af
+  distributionens egen Python). AppImage er fravalgt: briefcase-dokumentationen
+  siger, at det ikke fungerer med binære wheels (numpy, PySide6, OpenCV).
+  Workflowet `Build installers` kan køres manuelt (kun artifacts) eller af et
+  `v*`-tag, som også opretter GitHub-releasen; tagget kræver Emils go
+  (`docs/RELEASING.md`).
+- **Versionen står to steder plus changelog**: `__version__` og
+  `[tool.briefcase] version` (briefcase kan ikke læse en dynamisk version)
+  samt en `## [X.Y.Z]`-post i `CHANGELOG.md`, som Debian-pakken kræver. En
+  test fejler, hvis de tre ikke stemmer.
+- **`.adicht` registreres som appens dokumenttype** (dobbeltklik åbner filen;
+  macOS' FileOpen-event håndteres i `AdichtionApplication`); rollen er
+  "viewer", appen skriver aldrig i en optagelse.
+- Ikonet er appens eget tegnede logo (`ui/logo.py`) renderet til
+  `installer/` i de størrelser, platformene vil have.
+
 ## 2026-09-27 (sen aften) — UI'ets grundform
 
 Afgjort med Emil ved spørgsmål inden byggeriet:

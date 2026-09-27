@@ -1,0 +1,237 @@
+name: Build installers
+
+# Native installers with briefcase: a Windows MSI, a macOS dmg and an Ubuntu .deb, uploaded
+# as workflow artifacts and, on a v* tag, attached to a GitHub release. Run it by hand
+# (Actions ▸ Build installers ▸ Run workflow) or by pushing a v* tag. Same shape as RespMech's.
+#
+# macOS signing is optional and secret-gated: with the Apple secrets present the dmg is
+# Developer ID-signed + notarised, otherwise ad-hoc signed (right-click ▸ Open the first time).
+#   secrets: APPLE_DEV_ID_IDENTITY, APPLE_CERTIFICATE_P12_BASE64, APPLE_CERTIFICATE_PASSWORD,
+#            APPLE_ID, APPLE_TEAM_ID, APPLE_APP_SPECIFIC_PASSWORD, KEYCHAIN_PASSWORD
+# The Windows MSI is built unsigned (a hardware-backed code-signing certificate cannot sign on
+# an ephemeral runner; sign locally after the release, as for RespMech).
+
+on:
+  workflow_dispatch:
+    inputs:
+      adhoc_sign:
+        description: "Ad-hoc sign the dmg (skip Developer ID + notarisation) — interim test builds only"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  BRIEFCASE: "briefcase>=0.4.5"
+
+jobs:
+  windows-msi:
+    name: Windows MSI (unsigned)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install briefcase
+        run: |
+          python -m pip install --upgrade pip
+          pip install "$BRIEFCASE"
+      - name: Create · build · package
+        run: |
+          briefcase create windows --no-input
+          briefcase build windows --no-input
+          briefcase package windows --adhoc-sign --packaging-format msi --no-input
+      - run: ls -la dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: adichtion-Windows-MSI
+          path: dist/*.msi
+          if-no-files-found: error
+
+  macos-dmg:
+    name: macOS dmg
+    runs-on: macos-latest
+    timeout-minutes: 90
+    outputs:
+      signed: ${{ steps.check.outputs.sign }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install briefcase
+        run: |
+          python -m pip install --upgrade pip
+          pip install "$BRIEFCASE"
+
+      - name: Detect signing config
+        id: check
+        env:
+          APPLE_DEV_ID_IDENTITY: ${{ secrets.APPLE_DEV_ID_IDENTITY }}
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          ADHOC_REQUESTED: ${{ inputs.adhoc_sign }}
+        run: |
+          if [ "$ADHOC_REQUESTED" = "true" ]; then
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Ad-hoc signing requested — the dmg is NOT Developer ID-signed or notarised."
+          elif [ -n "$APPLE_DEV_ID_IDENTITY" ] && [ -n "$APPLE_CERTIFICATE_P12_BASE64" ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Apple signing secrets not set — building an ad-hoc-signed dmg (not notarised)."
+          fi
+
+      - name: Import Developer ID certificate
+        if: steps.check.outputs.sign == 'true'
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_DEV_ID_IDENTITY: ${{ secrets.APPLE_DEV_ID_IDENTITY }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security default-keychain -s "$KEYCHAIN"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          for u in DeveloperIDG2CA DeveloperIDCA AppleWWDRCAG3; do
+            curl -fsSL "https://www.apple.com/certificateauthority/$u.cer" -o "$RUNNER_TEMP/$u.cer" \
+              && security import "$RUNNER_TEMP/$u.cer" -k "$KEYCHAIN" || true
+          done
+          security find-identity -v -p codesigning | grep -F -- "$APPLE_DEV_ID_IDENTITY" \
+            || { echo "::error::Signing identity not found; APPLE_DEV_ID_IDENTITY must match 'security find-identity' exactly."; exit 1; }
+
+      - name: Create · build
+        run: |
+          briefcase create macOS --no-input
+          briefcase build macOS --no-input
+
+      - name: Package
+        env:
+          APPLE_DEV_ID_IDENTITY: ${{ secrets.APPLE_DEV_ID_IDENTITY }}
+        run: |
+          if [ "${{ steps.check.outputs.sign }}" = "true" ]; then
+            briefcase package macOS --identity "$APPLE_DEV_ID_IDENTITY" --no-notarize --packaging-format dmg --no-input
+          else
+            briefcase package macOS --adhoc-sign --packaging-format dmg --no-input
+          fi
+
+      - name: Notarize and staple dmg
+        if: steps.check.outputs.sign == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          DMG=$(ls dist/*.dmg | head -n1)
+          OUT=$(xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait --output-format json)
+          echo "$OUT"
+          SID=$(echo "$OUT" | jq -r .id)
+          STATUS=$(echo "$OUT" | jq -r .status)
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization status: $STATUS"
+            xcrun notarytool log "$SID" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" || true
+            exit 1
+          fi
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - run: ls -la dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: adichtion-macOS-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  linux-deb:
+    name: Ubuntu .deb (24.04)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install briefcase
+        run: |
+          python -m pip install --upgrade pip
+          pip install "$BRIEFCASE"
+      # A system package is built inside a Docker image of the target distribution, so the
+      # .deb depends on that distribution's own python3 (3.12 on noble) whatever the runner has.
+      - name: Create · build · package (ubuntu:noble, in Docker)
+        run: |
+          briefcase create linux system --target ubuntu:noble --no-input
+          briefcase build linux system --target ubuntu:noble --no-input
+          briefcase package linux system --target ubuntu:noble --no-input
+      - run: ls -la dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: adichtion-Linux-deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    needs: [windows-msi, macos-dmg, linux-deb]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+      - name: Publish release with the installers attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAC_SIGNED: ${{ needs.macos-dmg.outputs.signed }}
+        run: |
+          ls -R dist
+          if [ "$MAC_SIGNED" = "true" ]; then
+            mac_file='`adichtion-*.dmg` (signed + notarised)'
+            mac_install='- **macOS:** open the dmg and drag the app to Applications.'
+          else
+            mac_file='`adichtion-*.dmg` (ad-hoc signed)'
+            mac_install='- **macOS:** right-click ▸ **Open** the first time (or `xattr -dr com.apple.quarantine` the app).'
+          fi
+          {
+            echo "Desktop installers — download below."
+            echo
+            echo "| Platform | File |"
+            echo "|---|---|"
+            echo "| Windows | \`adichtion-*.msi\` (unsigned) |"
+            echo "| macOS (Apple Silicon) | $mac_file |"
+            echo "| Ubuntu 24.04 / Debian-based | \`adichtion_*_amd64.deb\` |"
+            echo
+            echo "**Install**"
+            echo '- **Windows:** if SmartScreen warns (unknown publisher), *More info ▸ Run anyway*.'
+            echo "$mac_install"
+            echo '- **Linux:** `sudo apt install ./adichtion_*_amd64.deb`; the app is then `adichtion` and in the applications menu.'
+            echo
+            echo "Each bundles its own Python and libraries; nothing else to install. The command line (\`adichtion info …\`) is the same binary."
+          } > notes.md
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "adichtion $GITHUB_REF_NAME" \
+              --draft=false --latest --notes-file notes.md
+            gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --clobber dist/*/*.msi dist/*/*.dmg dist/*/*.deb
+          else
+            gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "adichtion $GITHUB_REF_NAME" \
+              --latest --notes-file notes.md dist/*/*.msi dist/*/*.dmg dist/*/*.deb
+          fi
