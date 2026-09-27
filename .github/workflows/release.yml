@@ -113,8 +113,16 @@ jobs:
             curl -fsSL "https://www.apple.com/certificateauthority/$u.cer" -o "$RUNNER_TEMP/$u.cer" \
               && security import "$RUNNER_TEMP/$u.cer" -k "$KEYCHAIN" || true
           done
-          security find-identity -v -p codesigning | grep -F -- "$APPLE_DEV_ID_IDENTITY" \
-            || { echo "::error::Signing identity not found; APPLE_DEV_ID_IDENTITY must match 'security find-identity' exactly."; exit 1; }
+          # briefcase accepts the identity only as the certificate's 40-hex SHA-1 or as its name
+          # exactly as quoted by `security find-identity`; check the same way, and list what the
+          # keychain actually holds when it does not match (names are not secret).
+          IDS=$(security find-identity -v -p codesigning)
+          if ! { printf '%s\n' "$IDS" | grep -qE -- "^ *[0-9]+\) $APPLE_DEV_ID_IDENTITY \"" 2>/dev/null \
+                 || printf '%s\n' "$IDS" | grep -qF -- " \"$APPLE_DEV_ID_IDENTITY\""; }; then
+            echo "::error::APPLE_DEV_ID_IDENTITY matches none of the imported identities. Set it to the 40-hex hash or the exact quoted name from 'security find-identity -v -p codesigning'."
+            printf '%s\n' "$IDS"
+            exit 1
+          fi
 
       - name: Create · build
         run: |

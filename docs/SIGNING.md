@@ -17,7 +17,7 @@ accounts are the same ones):
 
 | Secret | Value |
 |---|---|
-| `APPLE_DEV_ID_IDENTITY` | `Developer ID Application: Emil Ingerslev Walsted (TEAMID)`, exactly as `security find-identity -v -p codesigning` prints it |
+| `APPLE_DEV_ID_IDENTITY` | the certificate's 40-hex SHA-1 from `security find-identity -v -p codesigning` (recommended: cannot be mistyped), or its name exactly as quoted there, `Developer ID Application: … (TEAMID)`. briefcase accepts nothing in between: a name with one character off fails with "Invalid application signing identity" |
 | `APPLE_CERTIFICATE_P12_BASE64` | the Developer ID certificate exported *with its private key* as `.p12`, base64-encoded |
 | `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password |
 | `APPLE_ID` | the Apple ID e-mail |
@@ -41,13 +41,16 @@ base64 -i ~/path/to/DeveloperID.p12 | gh secret set APPLE_CERTIFICATE_P12_BASE64
 gh secret list -R emilwalsted/adichtion
 ```
 
-To find the identity string and the Team ID on the Mac that holds the certificate:
+To find the hash, the identity string and the Team ID on the Mac that holds the certificate:
 
 ```
 security find-identity -v -p codesigning
 ```
 
-The Team ID is the ten characters in the parentheses. If the `.p12` was never exported (the
+Take the line whose name begins with `Developer ID Application` (an `Apple Development`
+line is a different certificate, often from a different team): the 40-hex value is the hash
+for `APPLE_DEV_ID_IDENTITY`, and the Team ID is the ten characters in the parentheses of
+that same line. If the `.p12` was never exported (the
 certificate only lives in the keychain): Keychain Access ▸ *My Certificates* ▸ right-click
 the Developer ID Application certificate ▸ *Export…* ▸ format *.p12*, and choose the export
 password that becomes `APPLE_CERTIFICATE_PASSWORD`.
