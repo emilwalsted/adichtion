@@ -29,8 +29,9 @@ MUTED = "#5C6B7A"
 #: Trace colours for the channel plots (colour-blind friendly cycle, as in RespMech).
 CYCLE = [ACCENT, "#B4322A", "#1F7A4D", "#B7791F", "#7D5BA6", "#0E7C7B", "#B4507A", "#5C6B7A"]
 
-#: Fixed left-axis width (px) of the stacked channel plots, so their x-axes line up.
-PLOT_AXIS_WIDTH = 72
+#: Fixed left-axis width (px) of the stacked channel plots, so their x-axes line up:
+#: room for the rotated unit label plus tick values like "-140.0".
+PLOT_AXIS_WIDTH = 90
 #: Floor (px) of one channel row; below this a trace is a line without a shape.
 PLOT_ROW_MIN_HEIGHT = 48
 

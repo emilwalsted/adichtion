@@ -169,3 +169,22 @@ def test_cursor_keys_move_by_sample_and_second(qapp, window, synthetic):
     window.act_sec_back.trigger()
     window.act_step_back.trigger()
     assert window.stack.cursor == pytest.approx(1.0)
+
+
+def test_units_label_the_y_axis(qapp, window, synthetic):
+    window.open_file(synthetic["path"])
+    pmo = window.stack.plots[1]
+    left = pmo.item.getAxis("left")
+    assert left.labelText == "cmH2O" and left.isVisible()
+    assert window.stack.plots[0].item.getAxis("left").labelText == "V"
+    # the tick values stay in the channel's units: no SI rescaling of a cmH2O axis
+    assert left.autoSIPrefix is False and left.labelUnits == ""
+    # a row too short for the rotated unit hides it (the overlay still names the unit)
+    window.stack.set_visible_channels([0, 1, 2, 3])
+    pmo.resize(pmo.width(), 40)
+    pmo._place_overlays()
+    assert not left.label.isVisible()
+    pmo.resize(pmo.width(), 160)
+    pmo._place_overlays()
+    assert left.label.isVisible()
+    assert "cmH2O" in pmo._label_text

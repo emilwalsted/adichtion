@@ -19,7 +19,7 @@ from typing import Optional
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QPen
+from PySide6.QtGui import QBrush, QColor, QFontMetrics, QPen
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QSplitter, QToolButton, QVBoxLayout,
                                QWidget)
 
@@ -174,6 +174,11 @@ class ChannelPlot(QWidget):
         self.item.showGrid(x=True, y=True, alpha=pal["grid_alpha"])
         left = self.item.getAxis("left")
         left.setWidth(theme.PLOT_AXIS_WIDTH)
+        left.enableAutoSIPrefix(False)            # the tick values stay in the channel's own units
+        if self.units:
+            # the unit as the axis label, rotated, left of the tick values (text, not
+            # pyqtgraph's ``units=``, which would rescale the ticks with an SI prefix)
+            left.setLabel(text=self.units, **{"font-size": "9pt"})
         self.item.setContentsMargins(0, 2, 8, 0)
         if self.is_calculated:
             self.widget.setBackground(pal["bg_calc"])
@@ -243,6 +248,10 @@ class ChannelPlot(QWidget):
     def _place_overlays(self) -> None:
         x = theme.PLOT_AXIS_WIDTH + 8
         limit = max(120, int(self.widget.width() * 0.62))
+        if self.units:                                # a rotated unit needs the row's height; hide it when squeezed
+            left = self.item.getAxis("left")
+            needed = QFontMetrics(left.font()).horizontalAdvance(self.units) + 20
+            left.showLabel(self.widget.height() >= needed)
         for lbl, full in ((self.label, self._label_text), (self.calc_label, self._calc_text)):
             fm = lbl.fontMetrics()
             lbl.setText(fm.elidedText(full, Qt.ElideRight, limit))
