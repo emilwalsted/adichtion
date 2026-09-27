@@ -25,7 +25,7 @@ import numpy as np
 from . import __version__
 from .chartdata import tagged_strings
 from .container import AdichtContainer
-from .export import export_file, read_labchart_text
+from .export import export_selections, read_labchart_text, whole_file
 from .file import AdichtFile, Selection
 
 
@@ -138,23 +138,35 @@ def _parse_channels(spec: Optional[str], n: int) -> list[int]:
 
 def cmd_export(a: argparse.Namespace) -> None:
     with _open(a.file) as f:
-        rec = f.records[a.record - 1]
         channels = _parse_channels(a.channels, f.n_channels)
-        if a.between:
-            sel = rec.selection_between(a.between[0], a.between[1])
-            if sel is None:
-                sys.exit(f"error: no comment starting with {a.between[0]!r} in record {a.record}")
-        else:
-            start = 0.0 if a.start is None else a.start
-            stop = rec.duration_s if a.stop is None else a.stop
-            sel = rec.selection(start, stop)
         if a.range_volts:
             for item in a.range_volts:
                 ch, v = item.split("=")
                 f.set_range_volts(int(ch) - 1, float(v))
-        n = export_file(rec, sel, channels, a.output, fmt=a.format, header=not a.no_header,
-                        decimal=a.decimal, units=not a.raw, comments=not a.no_comments)
-        print(f"wrote {n} rows x {len(channels)} channels ({sel.start / rec.tick_rate_hz:.3f}-{sel.stop / rec.tick_rate_hz:.3f} s of record {a.record}) to {a.output}")
+        fmt = a.format or {"csv": "csv", "xlsx": "xlsx"}.get(os.path.splitext(a.output)[1].lstrip(".").lower(), "txt")
+        if a.all_records:
+            selections = whole_file(f)
+            what = f"all {len(selections)} records"
+        else:
+            if not 1 <= a.record <= len(f.records):
+                sys.exit(f"error: record {a.record} does not exist (file has {len(f.records)})")
+            rec = f.records[a.record - 1]
+            if a.between:
+                sel = rec.selection_between(a.between[0], a.between[1])
+                if sel is None:
+                    sys.exit(f"error: no comment starting with {a.between[0]!r} in record {a.record}")
+            else:
+                start = 0.0 if a.start is None else a.start
+                stop = rec.duration_s if a.stop is None else a.stop
+                sel = rec.selection(start, stop)
+            selections = [sel]
+            what = f"{sel.start / rec.tick_rate_hz:.3f}-{sel.stop / rec.tick_rate_hz:.3f} s of record {a.record}"
+        try:
+            n = export_selections(f, selections, channels, a.output, fmt=fmt, header=not a.no_header,
+                                  decimal=a.decimal, units=not a.raw, comments=not a.no_comments)
+        except (ValueError, RuntimeError) as exc:
+            sys.exit(f"error: {exc}")
+        print(f"wrote {n} rows x {len(channels)} channels ({what}) to {a.output}")
 
 
 def cmd_verify(a: argparse.Namespace) -> None:
@@ -258,7 +270,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     s.add_argument("--start", type=float, help="start time in seconds from record start")
     s.add_argument("--stop", type=float, help="stop time in seconds from record start")
     s.add_argument("--between", nargs=2, metavar=("START_TEXT", "STOP_TEXT"), help="select from a comment to the next matching comment")
-    s.add_argument("--format", choices=("txt", "csv"), default="txt")
+    s.add_argument("--format", choices=("txt", "csv", "xlsx"), help="default: from the output file's extension (txt otherwise)")
+    s.add_argument("--all-records", action="store_true", help="export every record (LabChart block) of the file")
     s.add_argument("--decimal", default=".", help="decimal separator (e.g. ',' for Danish Excel)")
     s.add_argument("--no-header", action="store_true"); s.add_argument("--no-comments", action="store_true")
     s.add_argument("--raw", action="store_true", help="write stored values (ADC counts) instead of converted units")

@@ -1,0 +1,171 @@
+"""The viewer on the synthetic documents (headless Qt)."""
+import os
+
+import numpy as np
+import pytest
+
+from adichtion import AdichtFile
+from adichtion.export import read_labchart_text
+from adichtion.ui.export_dialog import ExportDialog, ExportRequest
+from helpers import pump, wait_until
+
+
+def test_open_shows_every_channel_and_the_panels(qapp, window, synthetic):
+    assert window.open_file(synthetic["path"])
+    assert [p.index for p in window.stack.plots] == [0, 1, 2, 3]
+    assert window.stack.visible_channels == [0, 1, 2, 3]
+    assert window.stack.view_range() == pytest.approx((0.0, 45.0))
+    assert window.video_box.isVisible()                      # the document has a video stream
+    assert "not found" in window.video.frame.text() or window.video.frame.text() == "Place the cursor to see the frame"
+    assert window.info.blocks.rowCount() == 2 and window.info.channels.rowCount() == 4
+    assert window.info.comments.rowCount() == 4
+    assert window.info.channels.item(2, 2).text() == "calculated"
+    assert window.windowTitle().endswith(os.path.basename(synthetic["path"]))
+    # the calculated channels are marked and, once inferred, described
+    assert window.stack.plots[2].is_calculated and not window.stack.plots[0].is_calculated
+    assert window.stack.plots[2].calc_label.isVisible() and not window.stack.plots[0].calc_label.isVisible()
+    assert wait_until(qapp, lambda: len(window.definitions) == 2, timeout=60)
+    assert window.stack.plots[3].definition
+    # every plot got a decoded curve at pixel resolution
+    assert wait_until(qapp, lambda: all(p.level == "envelope" for p in window.stack.plots), timeout=20)
+
+
+def test_cursor_and_selection_drive_the_data_panel(qapp, window, synthetic):
+    window.open_file(synthetic["path"])
+    window.stack.set_cursor(42.5)
+    pump(qapp, 0.05)
+    assert window.readout.text().startswith("Block 2 · 2.500 s")
+    assert window.data.table.rowCount() == 4
+    with AdichtFile(synthetic["path"]) as f:
+        expected = float(f.records[1].read(1, 2500, 2501)[0])
+    assert float(window.data.table.item(1, 1).text()) == pytest.approx(expected, rel=1e-4)
+    assert "Pmo" in window.stack.plots[1].label.text() and f"{expected:.5g}"[:4] in window.stack.plots[1]._label_text
+    # Shift+click semantics: an interval from the cursor
+    window.stack.set_selection(42.5, 44.0)
+    assert window.stack.selection == (42.5, 44.0)
+    assert wait_until(qapp, lambda: window.data.table.item(1, 3) is not None and window.data.table.item(1, 3).text() != "…")
+    with AdichtFile(synthetic["path"]) as f:
+        ref = f.records[1].read(1, 2500, 4000)
+    assert float(window.data.table.item(1, 1).text()) == pytest.approx(ref.min(), rel=1e-4)
+    assert float(window.data.table.item(1, 3).text()) == pytest.approx(ref.mean(), rel=1e-3)
+    window.stack.clear_selection()
+    assert window.stack.selection is None and window.stack.cursor == 42.5
+    # the export dialog offers the selection only while there is one
+    dlg = ExportDialog(window.file, window.timeline, window.stack.visible_channels, 42.5, None, window)
+    assert not dlg.rb_sel.isEnabled() and dlg.rb_block.isChecked()
+    assert [(s.record, s.start, s.stop) for s in dlg.selections()] == [(1, 0, 5000)]
+    dlg.deleteLater()
+
+
+def test_zoom_and_channel_selection(qapp, window, synthetic):
+    window.open_file(synthetic["path"])
+    window.stack.set_cursor(20.0)
+    window.stack.zoom_in()
+    x0, x1 = window.stack.view_range()
+    assert x1 - x0 == pytest.approx(22.5) and x0 < 20.0 < x1
+    window.stack.zoom_out()
+    assert window.stack.view_range() == pytest.approx((0.0, 45.0))
+    window.stack.set_range(10.0, 10.5)
+    assert wait_until(qapp, lambda: all(p.level == "samples" for p in window.stack.plots))
+    window.stack.auto_zoom()
+    lo, hi = window.stack.plots[1].vb.viewRange()[1]
+    with AdichtFile(synthetic["path"]) as f:
+        seg = f.records[0].read(1, 10000, 10500)
+    assert lo < seg.min() < seg.max() < hi and (hi - lo) < 1.5 * (seg.max() - seg.min()) + 1e-9
+    window.stack.zoom_reset()
+    assert window.stack.view_range() == pytest.approx((0.0, 45.0))
+    # show a subset, then all again
+    window.stack.set_visible_channels([2, 0])
+    pump(qapp, 0.05)
+    assert window.stack.visible_channels == [0, 2]
+    assert window.stack.plots[1].parent() is not window.stack.splitter
+    assert window.stack.plots[2].item.getAxis("bottom").style["showValues"]
+    assert not window.stack.plots[0].item.getAxis("bottom").style["showValues"]
+    window.show_all_channels()
+    pump(qapp, 0.05)
+    assert window.stack.visible_channels == [0, 1, 2, 3]
+    sizes = window.stack.splitter.sizes()
+    assert max(sizes) - min(sizes) <= 1
+
+
+def test_exports_write_the_selection(qapp, window, synthetic, tmp_path):
+    window.open_file(synthetic["path"])
+    window.stack.set_cursor(12.0)
+    window.stack.set_selection(12.0, 13.0)
+    sels = window.timeline.selections(12.0, 13.0)
+    for fmt in ("txt", "csv", "xlsx"):
+        if fmt == "xlsx":
+            pytest.importorskip("openpyxl")
+        path = str(tmp_path / f"out.{fmt}")
+        window.run_export(ExportRequest(path=path, fmt=fmt, selections=sels, channels=[0, 1], scope_label="selection"))
+        assert wait_until(qapp, lambda: os.path.exists(path) and "Exported" in window.statusBar().currentMessage(), timeout=30)
+        assert "1,000 rows" in window.statusBar().currentMessage()
+    header, t, vals, comments = read_labchart_text(str(tmp_path / "out.txt"))
+    assert len(t) == 1000 and vals.shape == (1000, 2) and t[0] == pytest.approx(12.0)
+    with AdichtFile(synthetic["path"]) as f:
+        assert np.allclose(vals[:, 1], f.records[0].read(1, 12000, 13000), atol=1e-6)
+    lines = open(tmp_path / "out.csv", encoding="utf-8").read().splitlines()
+    assert len(lines) == 1001 and lines[0].startswith("time_s,")
+
+
+def test_mac_settings_fill_the_definitions(qapp, window, synthetic, tmp_path):
+    from test_macchart import settings_blob, write_res_file
+    window.open_file(synthetic["path"])
+    path = tmp_path / "settings"
+    write_res_file(path, [("Mcro", 30001, settings_blob())])
+    window.load_mac_settings(str(path))
+    # channel 6 of the settings is beyond this 4-channel file; nothing crashes and the message says so
+    assert "0 calculated channels" in window.statusBar().currentMessage()
+
+
+def test_open_failure_is_reported_not_raised(qapp, window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    bad = tmp_path / "bad.adicht"
+    bad.write_bytes(b"not a labchart file at all" * 100)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    assert window.open_file(str(bad)) is False
+    assert window.file is None and not window.act_export.isEnabled()
+
+
+def test_every_layout_variant_opens(qapp, window, documents):
+    for name, doc in documents.items():
+        assert window.open_file(doc["path"]), name
+        assert len(window.stack.plots) == 4
+        pump(qapp, 0.05)
+    window.close_file()
+    assert window.stack.plots == [] and window.info.name.text() == "No file open"
+
+
+def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic):
+    from PySide6.QtCore import QTimer
+    import adichtion.ui.app as appmod
+    seen = {}
+
+    def finish():
+        wins = [w for w in qapp.topLevelWidgets() if w.__class__.__name__ == "MainWindow" and w.isVisible()]
+        seen["n"] = len(wins)
+        seen["file"] = os.path.basename(wins[0].file.path) if wins and wins[0].file else None
+        for w in wins:
+            w.close()
+            w.deleteLater()
+        qapp.quit()
+
+    QTimer.singleShot(800, finish)
+    assert appmod.main(["adichtion-app", synthetic["path"]]) == 0
+    assert seen == {"n": 1, "file": os.path.basename(synthetic["path"])}
+    assert appmod.startup_path(["x", "nope.adicht"]) is None
+
+
+def test_cursor_keys_move_by_sample_and_second(qapp, window, synthetic):
+    window.open_file(synthetic["path"])
+    window.stack.set_range(0.0, 2.0)
+    window.stack.set_cursor(1.0)
+    window.act_step_fwd.trigger()
+    assert window.stack.cursor == pytest.approx(1.001)
+    window.act_sec_fwd.trigger()
+    assert window.stack.cursor == pytest.approx(2.001)
+    x0, x1 = window.stack.view_range()
+    assert x0 < 2.001 < x1                                # the view followed the cursor off its edge
+    window.act_sec_back.trigger()
+    window.act_step_back.trigger()
+    assert window.stack.cursor == pytest.approx(1.0)

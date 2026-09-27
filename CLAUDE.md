@@ -37,8 +37,9 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    standalone). Both are analysis helpers the UI may call; neither changes
    what `AdichtFile` returns.
 
-The UI (not yet written) goes in `src/adichtion/ui/` and must talk to layer 4
-only. Never put Qt imports below that layer.
+7. `ui/` — the PySide6/pyqtgraph viewer (`adichtion-app`). It talks to layers
+   4–6 only; never put Qt imports below it. `src/adichtion/ui/CLAUDE.md` has
+   its structure and the Qt rules that were learnt the hard way.
 
 ## Non-negotiable rules
 
@@ -86,4 +87,8 @@ only. Never put Qt imports below that layer.
   (`docs/CALCULATED_CHANNELS.md`). The reader never recomputes a calculated
   channel on its own: the stored values are LabChart's and stay the reference.
 - `pytest` (unit + synthetic) stays under a few seconds; the inference tests
-  build their own synthetic document with derived channels.
+  build their own synthetic document with derived channels, the viewer tests
+  run headless (`tests/ui/`, `QT_QPA_PLATFORM=offscreen`).
+- UI wording: LabChart's blocks are "blocks" in the app (Emil's call,
+  27-09-2026), `Record` in the code. The app never recomputes a calculated
+  channel; it shows LabChart's values and the recovered definition.

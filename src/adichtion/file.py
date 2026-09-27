@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import struct
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
@@ -60,24 +61,31 @@ class Selection:
 
 
 class _BlockCache:
+    """LRU cache of decoded blocks.  Guarded by a lock so a UI can decode in a
+    worker thread while its GUI thread reads values under the cursor."""
+
     def __init__(self, capacity: int):
         self.capacity = capacity
         self._d: "OrderedDict[int, np.ndarray]" = OrderedDict()
+        self._lock = threading.Lock()
 
     def get(self, key: int) -> Optional[np.ndarray]:
-        v = self._d.get(key)
-        if v is not None:
-            self._d.move_to_end(key)
-        return v
+        with self._lock:
+            v = self._d.get(key)
+            if v is not None:
+                self._d.move_to_end(key)
+            return v
 
     def put(self, key: int, value: np.ndarray) -> None:
-        self._d[key] = value
-        self._d.move_to_end(key)
-        while len(self._d) > self.capacity:
-            self._d.popitem(last=False)
+        with self._lock:
+            self._d[key] = value
+            self._d.move_to_end(key)
+            while len(self._d) > self.capacity:
+                self._d.popitem(last=False)
 
     def clear(self) -> None:
-        self._d.clear()
+        with self._lock:
+            self._d.clear()
 
 
 def _subblocks_from_map(blocks: bytes, chart: ChartData) -> list[SubBlock]:
@@ -429,31 +437,38 @@ class Record:
         return t0, t1, mins, maxs
 
     def overview(self, channel: int, n_points: int = 2000, start: int = 0, stop: Optional[int] = None,
-                 units: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                 units: bool = True, coarse: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """``(time, min, max)`` envelope of ``channel`` over ``[start, stop)`` in
         ``n_points`` buckets, for drawing a long record at screen resolution.
         Buckets of a whole block or more are served from the Map stream's
-        block index without decoding."""
+        block index without decoding; with ``coarse=True`` the index is used
+        whenever the range holds at least one block, each block's min/max then
+        covering every bucket it overlaps (a quick first picture a viewer can
+        refine once the samples are decoded)."""
         stop = self.ticks if stop is None else min(stop, self.ticks)
         start = max(0, start)
         t0 = start / self.tick_rate_hz
         t1 = stop / self.tick_rate_hz
         cr = self.file.channel_record(self.index, channel)
         span = stop - start
-        if cr is not None and n_points > 0 and span >= n_points * BLOCK_TICKS:
+        if cr is not None and n_points > 0 and (span >= n_points * BLOCK_TICKS or (coarse and span >= BLOCK_TICKS)):
             b0, b1, mins, maxs = self.block_envelope(channel, units)
             edges = np.linspace(t0, t1, n_points + 1)
-            lo = np.full(n_points, np.nan)
-            hi = np.full(n_points, np.nan)
+            lo = np.full(n_points, np.inf)
+            hi = np.full(n_points, -np.inf)
             width = (t1 - t0) / n_points
-            for s, e, m, x in zip(b0, b1, mins, maxs):
-                if e <= t0 or s >= t1:
-                    continue
-                k0 = int(max(0, (s - t0) // width))
-                k1 = int(min(n_points - 1, (e - t0 - 1e-9) // width))
-                for k in range(k0, k1 + 1):           # a block feeds every bucket it overlaps
-                    lo[k] = m if np.isnan(lo[k]) else min(lo[k], m)
-                    hi[k] = x if np.isnan(hi[k]) else max(hi[k], x)
+            keep = (b1 > t0) & (b0 < t1)
+            b0, b1, mins, maxs = b0[keep], b1[keep], mins[keep], maxs[keep]
+            k0 = np.clip(np.floor((b0 - t0) / width), 0, n_points - 1).astype(np.int64)
+            k1 = np.clip(np.floor((b1 - t0 - 1e-9) / width), 0, n_points - 1).astype(np.int64)
+            # a block feeds every bucket it overlaps (one or two when the buckets are wider than
+            # a block, a run of them in the coarse case)
+            counts = k1 - k0 + 1
+            idx = np.repeat(k0, counts) + (np.arange(int(counts.sum())) - np.repeat(np.cumsum(counts) - counts, counts))
+            np.minimum.at(lo, idx, np.repeat(mins, counts))
+            np.maximum.at(hi, idx, np.repeat(maxs, counts))
+            lo[~np.isfinite(lo)] = np.nan
+            hi[~np.isfinite(hi)] = np.nan
             t = (edges[:-1] + edges[1:]) / 2
             return t, lo, hi
         x = self.read(channel, start, stop, units=units)

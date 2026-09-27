@@ -28,11 +28,15 @@ classifiers = [
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
-# the UI layer will add e.g. PySide6 + pyqtgraph here (see docs/beslutninger.md)
+# the desktop viewer (adichtion-app); openpyxl for Excel export, OpenCV for the video frames
+ui = ["PySide6>=6.6", "pyqtgraph>=0.13", "openpyxl>=3.1", "opencv-python-headless>=4.8"]
+dev = ["pytest>=7.0", "openpyxl>=3.1"]
 
 [project.scripts]
 adichtion = "adichtion.cli:main"
+
+[project.gui-scripts]
+adichtion-app = "adichtion.ui.app:main"
 
 [project.urls]
 Repository = "https://github.com/emilwalsted/adichtion"
@@ -43,6 +47,7 @@ path = "src/adichtion/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/adichtion"]
+exclude = ["**/CLAUDE.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

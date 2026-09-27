@@ -144,3 +144,59 @@ def test_export_roundtrip(synthetic):
         assert np.allclose(t[:2], [15.99, 15.991])
         assert np.allclose(vals[:, 1], rec.read(1, sel.start, sel.stop), rtol=1e-6)
         assert comments == [(15, "15,5 inH2O")]
+
+
+def test_export_whole_file_txt_csv_xlsx(synthetic, tmp_path):
+    from adichtion.export import XLSX_MAX_ROWS, export_selections, whole_file
+    with AdichtFile(synthetic["path"]) as f:
+        sels = whole_file(f)
+        assert [(s.record, s.start, s.stop) for s in sels] == [(0, 0, 40000), (1, 0, 5000)]
+        # txt: the header lines are repeated at the start of every record
+        p = tmp_path / "all.txt"
+        n = export_selections(f, sels, [0, 1], p, fmt="txt")
+        assert n == 45000
+        text = p.read_text()
+        assert text.count("Interval=\t") == 2 and text.count("ChannelTitle=\t") == 2
+        header, t, vals, comments = read_labchart_text(p)
+        assert len(t) == 45000 and vals.shape == (45000, 2)
+        assert [c[1] for c in comments] == ["start", "15,5 inH2O", "stop", "short"]
+        # csv: one header, a block column, comments in their own column
+        p = tmp_path / "all.csv"
+        export_selections(f, sels, [0, 1], p, fmt="csv")
+        lines = p.read_text().splitlines()
+        assert lines[0] == "block,time_s,Flow [V],Pmo [cmH2O],comment"
+        assert lines[1].startswith("1,0,") and lines[-1].startswith("2,4.999,")
+        assert sum(1 for ln in lines if ln.endswith(",start")) == 1
+        # xlsx: one sheet per record
+        pytest.importorskip("openpyxl")
+        p = tmp_path / "all.xlsx"
+        n = export_selections(f, sels, [0, 1], p, fmt="xlsx")
+        assert n == 45000
+        from openpyxl import load_workbook
+        wb = load_workbook(p, read_only=True)
+        assert wb.sheetnames == ["Block 1", "Block 2"]
+        ws = wb["Block 2"]
+        rows = list(ws.iter_rows(min_row=1, max_row=4, values_only=True))
+        assert rows[1][:3] == ("time_s", "Flow [V]", "Pmo [cmH2O]") and rows[1][3] == "comment"
+        assert rows[2][0] == 0.0 and abs(rows[3][0] - 0.001) < 1e-9
+        # a selection longer than a worksheet is refused up front
+        rec = f.records[0]
+        with pytest.raises(ValueError, match="rows do not fit"):
+            _refuse(f, XLSX_MAX_ROWS)
+        # two selections of the same record get distinct sheet names
+        p = tmp_path / "two.xlsx"
+        export_selections(f, [rec.selection(0, 1), rec.selection(2, 3)], [0], p, fmt="xlsx")
+        assert load_workbook(p, read_only=True).sheetnames == ["Block 1", "Block 1 (2)"]
+
+
+def _refuse(f, max_rows):
+    """A fake record longer than a sheet, checked without decoding anything."""
+    from adichtion.export import write_xlsx
+    from adichtion.file import Selection
+    rec = f.records[0]
+    big = Selection(0, 0, max_rows + 5)
+    rec.info.ticks, saved = big.stop, rec.info.ticks     # ticks are what the row count is derived from
+    try:
+        write_xlsx(f, [big], [0], "unused.xlsx")
+    finally:
+        rec.info.ticks = saved

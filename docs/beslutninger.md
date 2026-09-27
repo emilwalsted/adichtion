@@ -2,6 +2,32 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-27 (sen aften) — UI'ets grundform
+
+Afgjort med Emil ved spørgsmål inden byggeriet:
+
+- **Alle blokke vises i forlængelse af hinanden** på én tidsakse (som LabChart),
+  med blokgrænser og bloklabels i en stribe over kanalerne; ikke én blok ad
+  gangen. Filtid = sekunder fra første bloks start med blokkene stødende op
+  til hinanden; datapanelet nævner blok, tid i blokken og klokkeslæt.
+- **Ordet i UI'et er "block"** (LabCharts eget), `Record` i koden.
+- **Video: OpenCV (opencv-python-headless), stillbillede ved markøren**, fast
+  afhængighed i `[ui]`-ekstraen. Afspilning kan komme senere.
+- **Markering: klik = punkt, Shift+klik = interval** fra markøren til klikket;
+  venstre-træk panorerer som i RespMech.
+- Øvrigt fra spec'en: menulinje + toolbar + arbejdsområde, maksimeret start
+  med åbn-dialog, x-akser altid låst sammen, individuel y-zoom, kanalhøjder
+  der kan trækkes og udlignes ved kanalvalg, beregnede kanaler tonet med
+  definitionen som overlay, tre paneler under kanalerne (fil, data ved
+  markøren, video).
+- **Tegning**: blokindeksets min/max tegnes straks, dekodede samples følger
+  fra en arbejdstråd; brede visninger bruger indekset direkte (ingen
+  dekodning, når en pixel dækker en kvart blok eller mere). Viseren
+  genberegner aldrig en beregnet kanal.
+- **Udtryk**: RespMechs tema (palet, QSS, pyqtgraph-farver) er portet til
+  `ui/theme.py`; panelerne, splitterne og kanalstakken følger RespMechs
+  opbygning.
+
 ## 2026-09-27 (nat) — beregnede kanalers definitioner og videoens offset
 
 - **Definitionerne på beregnede kanaler hentes ad to veje, og filens data er
@@ -100,7 +126,8 @@ Daterede beslutninger og afgjorte punkter. Nyeste øverst.
   ovenfor.)*
 - **Terminologi i UI'et**: filens "Record<N>.wmv" viser, at ADI selv kalder
   LabCharts blokke *records* i filsystemet; det taler for at bruge "record" i
-  UI'et og nævne "block" som LabCharts ord.
+  UI'et og nævne "block" som LabCharts ord. *(Omgjort senere samme dag: UI'et
+  siger "block", se ovenfor.)*
 
 ## 2026-09-27 — grundlaget
 

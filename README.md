@@ -14,15 +14,48 @@ from the data (Arithmetic, RMS, Integral, Spirometry Flow and Volume) and
 `adichtion macsettings` reads them from a LabChart for Mac document or
 settings file, see [`docs/CALCULATED_CHANNELS.md`](docs/CALCULATED_CHANNELS.md).
 
-This repository is the foundation of the *adichtion* desktop app (a channel
-viewer and exporter in the mould of [RespMech](https://github.com/emilwalsted/respmech));
-the UI is not here yet.
+The *adichtion* desktop app (a channel viewer and exporter in the mould of
+[RespMech](https://github.com/emilwalsted/respmech)) is built on it, see below.
 
 ## Install
 
 ```
-pip install -e ".[dev]"
+pip install -e ".[dev]"        # the library and the command line
+pip install -e ".[ui,dev]"     # plus the viewer (PySide6, pyqtgraph, openpyxl, OpenCV)
 ```
+
+## The viewer
+
+```
+adichtion-app [recording.adicht]
+```
+
+Opens maximised with a file dialog (or the file given) and shows every channel
+of the file on one time axis, the blocks laid end to end as LabChart shows
+them, with the block labels and comment flags in a strip above the channels.
+
+* Click a channel to place the cursor on all of them; each channel's overlay
+  shows its value there, the *Data at cursor* panel lists them all, and the
+  *Video* panel shows the frame the block's video clip has at that moment
+  (camera delay compensated). Shift+click extends the cursor to an interval,
+  and the data panel then gives min, max and mean per channel.
+* Scroll or drag to zoom and pan the time axis (all channels follow); the
+  toolbar has zoom in/out/reset. *Auto zoom* fits every channel's y-axis to
+  the visible data; the wheel over a y-axis, or the small `+ − A` buttons in a
+  channel's corner, zoom one channel's y-axis alone. Drag the handles between
+  channels to give one more height; *Show channels…* picks the channels shown
+  and makes the heights equal again.
+* Calculated channels are tinted and carry their definition in the overlay,
+  recovered from the data in the background (or read from a LabChart for Mac
+  document or settings file via *File > Load LabChart for Mac settings…*).
+* *Export…* writes the whole file, the block under the cursor or the selected
+  interval as LabChart-style text, CSV or an Excel workbook, for the channels
+  shown, all channels or a choice.
+
+The traces are drawn from the file's own per-block min/max index first and
+refined from the decoded samples in a worker thread, so a 300 MB file pans
+and zooms without waiting; nothing is recomputed: what is shown is what
+LabChart stored.
 
 ## Library
 
@@ -62,6 +95,7 @@ adichtion comments FILE [--record N]      comment list with times
 adichtion videos FILE                     video clips of the records and their offsets
 adichtion export FILE -o out.txt --record 2 --channels 1,2 --between "start" "stop"
 adichtion export FILE -o out.csv --format csv --start 355.2 --stop 385.9 --decimal ,
+adichtion export FILE -o all.xlsx --all-records      # every block; format from the extension
 adichtion check FILE                      decode every block and compare with the min/max LabChart stored
 adichtion infer FILE --record 14          recover the definitions of the calculated channels from the data
 adichtion macsettings MACFILE             channel settings of a LabChart 7 for Mac document or settings file
@@ -71,14 +105,17 @@ adichtion strings FILE                    tagged strings of the Map stream (debu
 ```
 
 `export` writes LabChart-style text (with `Interval=`, `ChannelTitle=` …
-header lines and `#* comment` markers) or CSV, both readable by RespMech.
+header lines and `#* comment` markers), CSV or an Excel workbook (one sheet
+per block); the text and CSV flavours are readable by RespMech.
 
 ## Tests
 
 `pytest` runs unit tests and end-to-end tests on synthetic files written by
 `adichtion.synth` (v26 and v29 flavours, and the legacy layout for the
 fallback parser), including a document whose calculated channels are built
-with the standard calculations and must be recovered by `adichtion.infer`.
+with the standard calculations and must be recovered by `adichtion.infer`,
+and the viewer's tests (`tests/ui/`, headless with `QT_QPA_PLATFORM=offscreen`,
+skipped when PySide6 is not installed).
 Real recordings are private and never committed; point `ADICHTION_SAMPLES`
 at a folder with them to run the integration tests
 (`tests/test_integration_samples.py`: every file must parse by the grammar,
