@@ -93,11 +93,17 @@ class MainWindow(QMainWindow):
         self.stack.cursorChanged.connect(self._on_cursor)
         self.stack.selectionChanged.connect(self._on_selection)
         self.stack.rangeChanged.connect(self._on_range)
-        # statistics, inference and exports run on their own thread so they never delay a render
+        # statistics and exports run on their own thread so they never delay a render, and the
+        # inference of calculated-channel definitions (seconds per channel) on a third, so the
+        # data panel never waits behind it
         self.runner = JobRunner(self)
         self.runner.progress.connect(self._on_progress)
         self.runner.done.connect(self._on_done)
         self.runner.start()
+        self.infer_runner = JobRunner(self)
+        self.infer_runner.progress.connect(self._on_progress)
+        self.infer_runner.done.connect(self._on_done)
+        self.infer_runner.start()
         self.info.blockActivated.connect(self.go_to_block)
         self.info.commentActivated.connect(self.stack.set_cursor)
         self.video.positionChanged.connect(self._on_playback_position)
@@ -286,7 +292,7 @@ class MainWindow(QMainWindow):
         if not targets or not f.records:
             return
         rec = max(f.records, key=lambda r: r.ticks)
-        self._infer_job = self.runner.submit("infer", partial(_infer_job, rec, targets))
+        self._infer_job = self.infer_runner.submit("infer", partial(_infer_job, rec, targets))
 
     def set_definition(self, channel: int, text: Optional[str]) -> None:
         if text:
@@ -462,6 +468,7 @@ class MainWindow(QMainWindow):
         try:
             self.stack.close()
             self.runner.stop()
+            self.infer_runner.stop()
             self.video.close()
             if self.file is not None:
                 self.file.close()
