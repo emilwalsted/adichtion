@@ -7,7 +7,8 @@ def test_known_vectors():
     assert packbits_decode(bytes([0x7F]) + bytes(range(128))) == bytes(range(128))
     assert packbits_decode(bytes([0x81, 0x00])) == bytes(128)
     assert packbits_decode(bytes([0xFE, 0xAB])) == b"\xab" * 3
-    assert packbits_decode(bytes([0x80, 0x00, 0x41])) == b"A"  # 0x80 is a no-op
+    # 0x80 is a run of 129 in LabChart's PackBits (Apple's spec makes it a no-op); seen in real files
+    assert packbits_decode(bytes([0x80, 0x00, 0x00, 0x41])) == bytes(129) + b"A"
 
 
 def test_roundtrip_random_and_runs():

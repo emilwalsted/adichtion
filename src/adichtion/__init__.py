@@ -9,16 +9,20 @@ Public API::
         f.channels           # list[ChannelInfo]
         f.comments           # list[Comment]
         rec = f.records[0]
-        rec.read(channel, start_tick, stop_tick)   # numpy float64, converted to units when possible
+        rec.read(channel, start_tick, stop_tick)   # numpy float64 in the channel's units (or volts)
+        rec.block_envelope(channel)                # per-block min/max from the file's own index
+        rec.video                                  # the video clip recorded with the record, if any
 """
 from .container import AdichtContainer, AdichtFormatError
 from .file import AdichtFile, Record, Selection
-from .model import BlockInfo, ChannelInfo, ChannelSetup, ChartData, Comment, RecordInfo, UnitsConversion
+from .model import (BlockInfo, ChannelBlock, ChannelInfo, ChannelRecordInfo, ChannelSetup, ChartData, Comment,
+                    RecordInfo, UnitsConversion, VideoClip)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "AdichtFile", "Record", "Selection", "AdichtContainer", "AdichtFormatError",
-    "BlockInfo", "ChannelInfo", "ChannelSetup", "ChartData", "Comment", "RecordInfo", "UnitsConversion",
+    "BlockInfo", "ChannelBlock", "ChannelInfo", "ChannelRecordInfo", "ChannelSetup", "ChartData", "Comment",
+    "RecordInfo", "UnitsConversion", "VideoClip",
     "__version__",
 ]

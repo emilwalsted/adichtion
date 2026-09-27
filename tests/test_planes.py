@@ -27,22 +27,26 @@ def test_int16_roundtrip_with_wrap():
     assert np.array_equal(decode_int16_planes(encode_int16(x), 16000), x)
 
 
-def test_float32_roundtrip_and_rebase():
+def test_float32_roundtrip_is_exact_and_self_contained():
     rng = np.random.default_rng(2)
     a = (np.cumsum(rng.normal(0, 1, 16000)) + 1000).astype(np.float32)
-    b = (a[-1] + np.cumsum(rng.normal(0, 1, 7200))).astype(np.float32)
-    da = decode_float32_deltas(encode_float32(a, 0.0), 16000)
-    xa = decode_float32(da, 0.0)
-    assert np.allclose(xa, a, rtol=1e-6, atol=1e-3)
-    db = decode_float32_deltas(encode_float32(b, float(a[-1])), 7200)
-    xb = decode_float32(db, float(a[-1]))
-    assert np.allclose(xb, b, rtol=1e-6, atol=1e-3)
-    # the block is self-contained from sample 31 on: decoding with the wrong prev_last only hurts 0..30
-    xb_wrong = decode_float32(db, 0.0)
-    assert np.allclose(xb_wrong[31:], b[31:], rtol=1e-6, atol=1e-3)
-    assert not np.allclose(xb_wrong[:31], b[:31])
-    # and the stored deltas sum to the last value
-    assert abs(float(np.sum(db.astype(np.float64))) - float(b[-1])) < 1e-2
+    b = (a[-1] + np.cumsum(rng.normal(0, 1, 7200))).astype(np.float32)   # 7200 is not a multiple of 32
+    da = decode_float32_deltas(encode_float32(a), 16000)
+    assert np.array_equal(decode_float32(da), a)                          # bit-exact: float32 running sum
+    db = decode_float32_deltas(encode_float32(b), 7200)
+    assert np.array_equal(decode_float32(db), b)
+    assert db[0] == b[0]                                                  # the first sample is stored as-is
+    # samples are reversed within every 32-bit word: a shuffle of the stored order breaks the values
+    bits = unpack_planes(encode_float32(a), 32, 16000, word_reversed=False)
+    assert not np.array_equal(bits, unpack_planes(encode_float32(a), 32, 16000, word_reversed=True))
+
+
+def test_pack_unpack_planes_word_reversed():
+    sym = np.arange(70, dtype=np.uint64) * 3
+    buf = pack_planes(sym, 9, msb_first=True, word_reversed=True)
+    bits = unpack_planes(buf, 9, len(sym), word_reversed=True).astype(np.uint64)[::-1]
+    back = sum(bits[p] << np.uint64(p) for p in range(9))
+    assert list(back) == list(sym)
 
 
 def test_subblock_chain_and_flags():

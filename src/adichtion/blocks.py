@@ -15,7 +15,10 @@ Sub-block header (16 bytes)::
 followed by the *body* (``n - 12`` bytes).  For packed sub-blocks the body
 starts with ``int32 raw_size`` (= samples * bytes per sample) and continues
 with the PackBits-compressed bit planes; for unpacked sub-blocks the body is
-the little-endian sample array itself.
+the little-endian sample array itself.  Unpacked sub-blocks do *not* carry
+FLAG_32BIT even for float32 channels: their data type is the channel's
+(:class:`SubBlockIndex` fixes this up from the Map stream or from the
+channel's packed sub-blocks).
 
 Bit-plane coding (see ``docs/FORMAT.md`` for the full description):
 
@@ -24,10 +27,10 @@ Bit-plane coding (see ``docs/FORMAT.md`` for the full description):
 * int16 channels: P = 17, symbol = ``2 * |d| + (d < 0)`` where ``d`` is the
   difference to the previous sample (the first sample is stored as-is);
 * float32 channels: P = 32, symbol = IEEE-754 bit pattern of a float32
-  *difference* to the previous sample, planes stored from bit 31 down to bit 0.
-  Sample 31 re-bases the chain: ``d[31]`` also contains the previous block's
-  last value, so a block is self-contained from sample 31 on and only the
-  first 31 samples need the previous block (see :func:`decode_float32`).
+  *difference* to the previous sample (the first sample of the block is
+  stored as-is), planes stored from bit 31 down to bit 0, and the samples
+  of every 32-sample word in *reverse* order (sample ``32k + j`` sits at bit
+  ``31 - j`` of word ``k``).  A float32 block is therefore self-contained.
 
 All decoders are pure numpy and stateless; :class:`SubBlockIndex` maps the
 sub-blocks of a file to ``(record, block, channel)`` without decoding anything.
@@ -35,8 +38,8 @@ sub-blocks of a file to ``(record, block, channel)`` without decoding anything.
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass
-from typing import Iterator, Sequence
+from dataclasses import dataclass, replace
+from typing import Iterator, Optional, Sequence
 
 import numpy as np
 
@@ -51,7 +54,7 @@ FLAG_UNPACKED = 0x80000000
 
 INT16_PLANES = 17
 FLOAT32_PLANES = 32
-REBASE_INDEX = 31  # float32 blocks re-base their delta chain at this sample
+WORD_SAMPLES = 32  # samples per 32-bit word of a bit plane
 
 
 class BlocksFormatError(ValueError):
@@ -115,8 +118,11 @@ def iter_subblocks(stream: bytes | memoryview) -> Iterator[SubBlock]:
 
 # -- PackBits ------------------------------------------------------------------
 def packbits_decode(src: bytes | memoryview) -> bytes:
-    """Apple PackBits (TN1023): header ``k``: 0..127 copy ``k+1`` literal bytes,
-    129..255 repeat the next byte ``257-k`` times, 128 is a no-op."""
+    """PackBits as LabChart writes it: header ``k``: 0..127 copy ``k+1`` literal
+    bytes, 128..255 repeat the next byte ``257-k`` times.  Unlike Apple's
+    TN1023, ``k = 128`` is *not* a no-op but a run of 129 (a signed count of
+    -128 -> ``1 - n`` repeats); LabChart emits it, and treating it as a no-op
+    loses 129 bytes and corrupts the upper bit planes of the block."""
     src = bytes(src)
     out = bytearray()
     i, n = 0, len(src)
@@ -126,7 +132,7 @@ def packbits_decode(src: bytes | memoryview) -> bytes:
         if k < 128:
             out += src[i:i + k + 1]
             i += k + 1
-        elif k > 128:
+        else:
             out += src[i:i + 1] * (257 - k)
             i += 1
     return bytes(out)
@@ -163,9 +169,12 @@ def plane_bytes(n_samples: int) -> int:
     return 4 * ((n_samples + 31) // 32)
 
 
-def unpack_planes(buf: bytes, n_planes: int, n_samples: int) -> np.ndarray:
+def unpack_planes(buf: bytes, n_planes: int, n_samples: int, word_reversed: bool = False) -> np.ndarray:
     """Return an ``(n_planes, n_samples)`` uint8 array of bits.  Plane order is
-    the storage order (the caller decides what plane 0 means)."""
+    the storage order (the caller decides what plane 0 means).  With
+    ``word_reversed`` sample ``32k + j`` is read from bit ``31 - j`` of the
+    k-th little-endian 32-bit word (the float32 convention), otherwise from
+    bit ``j`` (the int16 convention)."""
     pb = plane_bytes(n_samples)
     if len(buf) % n_planes == 0 and len(buf) // n_planes != pb:
         pb = len(buf) // n_planes  # trust the buffer if the padding rule ever differs
@@ -173,7 +182,11 @@ def unpack_planes(buf: bytes, n_planes: int, n_samples: int) -> np.ndarray:
     if len(buf) < need:
         buf = buf + bytes(need - len(buf))
     planes = np.frombuffer(buf, dtype=np.uint8, count=need).reshape(n_planes, pb)
-    return np.unpackbits(planes, axis=1, bitorder="little")[:, :n_samples]
+    bits = np.unpackbits(planes, axis=1, bitorder="little")
+    if word_reversed:
+        n_words = bits.shape[1] // WORD_SAMPLES
+        bits = bits[:, : n_words * WORD_SAMPLES].reshape(n_planes, n_words, WORD_SAMPLES)[:, :, ::-1].reshape(n_planes, -1)
+    return bits[:, :n_samples]
 
 
 def decode_int16_planes(buf: bytes, n_samples: int) -> np.ndarray:
@@ -188,8 +201,10 @@ def decode_int16_planes(buf: bytes, n_samples: int) -> np.ndarray:
 
 
 def decode_float32_deltas(buf: bytes, n_samples: int) -> np.ndarray:
-    """Return the stored float32 differences of a 32-plane buffer (plane 0 = bit 31)."""
-    bits = unpack_planes(buf, FLOAT32_PLANES, n_samples).astype(np.uint32)[::-1]
+    """Return the stored float32 differences of a 32-plane buffer (plane 0 = bit
+    31; samples reversed within each 32-bit word).  ``d[0]`` is the first
+    sample itself."""
+    bits = unpack_planes(buf, FLOAT32_PLANES, n_samples, word_reversed=True).astype(np.uint32)[::-1]
     v = np.zeros(n_samples, dtype=np.uint32)
     for p in range(FLOAT32_PLANES):
         v |= bits[p] << np.uint32(p)
@@ -197,19 +212,12 @@ def decode_float32_deltas(buf: bytes, n_samples: int) -> np.ndarray:
 
 
 def decode_float32(deltas: np.ndarray, prev_last: float = 0.0) -> np.ndarray:
-    """Turn stored float32 differences into sample values.
-
-    ``prev_last`` is the last value of the previous block of the same record
-    (0 for the first block).  The chain re-bases at sample :data:`REBASE_INDEX`:
-    the stored ``d[31]`` includes ``prev_last``, so ``cumsum`` from zero is
-    correct from sample 31 on and only samples 0..30 need ``prev_last`` added.
-    """
-    x = np.cumsum(deltas.astype(np.float64))
-    if len(x) > REBASE_INDEX:
-        x[:REBASE_INDEX] += prev_last
-    else:
-        x += prev_last
-    return x.astype(np.float32)
+    """Turn stored float32 differences into sample values: a running sum in
+    float32 arithmetic, as LabChart does it (the values are bit-exact to the
+    stored block minima/maxima).  ``prev_last`` is accepted for backwards
+    compatibility and ignored: a block starts with its first sample stored
+    as-is."""
+    return np.cumsum(deltas.astype(np.float32), dtype=np.float32)
 
 
 # -- sub-block decoding ----------------------------------------------------------
@@ -234,7 +242,8 @@ class SubBlockIndex:
     sub-blocks must be ``n_channels * total_blocks``.
     """
 
-    def __init__(self, subblocks: Sequence[SubBlock], blocks_per_record: Sequence[Sequence[int]]):
+    def __init__(self, subblocks: Sequence[SubBlock], blocks_per_record: Sequence[Sequence[int]],
+                 channel_dtypes: Optional[Sequence[str]] = None):
         self.subblocks = list(subblocks)
         self.blocks_per_record = [list(b) for b in blocks_per_record]
         total_blocks = sum(len(b) for b in self.blocks_per_record)
@@ -248,7 +257,30 @@ class SubBlockIndex:
         for blocks in self.blocks_per_record:
             self._record_base.append(base)
             base += len(blocks) * self.n_channels
+        self._fix_unpacked_dtypes(channel_dtypes)
         self._check_sample_counts()
+
+    def _fix_unpacked_dtypes(self, channel_dtypes: Optional[Sequence[str]]) -> None:
+        """Unpacked sub-blocks carry no 32-bit flag; give them the data type of
+        their channel (from the Map stream, else from the channel's packed
+        sub-blocks) so that ``n_samples`` and ``is_float`` are right."""
+        for ch in range(self.n_channels):
+            if channel_dtypes is not None and ch < len(channel_dtypes):
+                is_float = channel_dtypes[ch] == "float32"
+            else:
+                packed = [sb for r in range(len(self.blocks_per_record))
+                          for sb in self.channel_subblocks(r, ch) if sb.is_packed]
+                if not packed:
+                    continue
+                is_float = packed[0].is_float
+            if not is_float:
+                continue
+            for r in range(len(self.blocks_per_record)):
+                for b in range(len(self.blocks_per_record[r])):
+                    i = self._record_base[r] + b * self.n_channels + ch
+                    sb = self.subblocks[i]
+                    if not sb.is_packed and not sb.is_float:
+                        self.subblocks[i] = replace(sb, flags=sb.flags | FLAG_32BIT, n_samples=sb.body_size // 4)
 
     def _check_sample_counts(self) -> None:
         for r, blocks in enumerate(self.blocks_per_record):

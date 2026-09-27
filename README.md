@@ -5,10 +5,10 @@ Windows and Linux, in pure Python (numpy is the only dependency).
 
 The file format was reverse engineered from the files themselves; the byte
 level description lives in [`docs/FORMAT.md`](docs/FORMAT.md). Raw (int16)
-channels are decoded sample-exact (verified against LabChart's own text
-exports); comments, record start times, channel titles, input ranges and the
-two-point units conversion are read as well. Calculated (float32) channels are
-decoded too, verified by internal consistency only so far.
+and calculated (float32) channels are decoded sample-exact (verified against
+LabChart's own text and MATLAB exports); comments, record start times,
+channel titles, input ranges, the two-point units conversion, the per-block
+min/max index and the video-capture clips are read as well.
 
 This repository is the foundation of the *adichtion* desktop app (a channel
 viewer and exporter in the mould of [RespMech](https://github.com/emilwalsted/respmech));
@@ -31,22 +31,29 @@ with AdichtFile("recording.adicht") as f:
         print(rec.start_local, rec.duration_s, [(c.tick, c.text) for c in rec.comments])
     rec = f.records[0]
     t = rec.time(0, 4000)                   # seconds from record start
-    pmo = rec.read(1, 0, 4000)              # channel 2 in its units (cmH2O) when the file says how
+    pmo = rec.read(1, 0, 4000)              # channel 2 in its units (cmH2O) when the file says so
     raw = rec.read_raw(1, 0, 4000)          # int16 ADC counts as stored
+    rec.value_label(1)                      # 'cmH2O', 'V', 'converted' or 'counts'
     sel = rec.selection_between("start", "stop")            # tick range between two comments
+    t0, t1, lo, hi = rec.block_envelope(0)  # min/max per 16000-tick block, straight from the file's index
     t_env, lo, hi = rec.overview(0, 2000)   # min/max envelope for drawing a whole record
+    rec.video                               # VideoClip(file_name='Record1.wmv', offset_s=0.46, ...) or None
+    rec.video_file                          # path in '<name> movies' next to the file, if it exists
 ```
 
 Opening a file only parses metadata; samples are decoded per 16000-tick block
-on demand and cached, so a viewer can page through a 200 MB file freely.
+on demand (every block is self-contained) and cached, so a viewer can page
+through a 300 MB file freely. Units are per record, as LabChart stores them.
 
 ## Command line
 
 ```
-adichtion info FILE                       records, channels, comment counts
+adichtion info FILE                       records, channels (units, LSB, conversion), videos
 adichtion comments FILE [--record N]      comment list with times
+adichtion videos FILE                     video clips of the records and their offsets
 adichtion export FILE -o out.txt --record 2 --channels 1,2 --between "start" "stop"
 adichtion export FILE -o out.csv --format csv --start 355.2 --stop 385.9 --decimal ,
+adichtion check FILE                      decode every block and compare with the min/max LabChart stored
 adichtion verify FILE export.txt --record 24 --channels 1,2,3 [--fit]   # compare with a LabChart text export
 adichtion tree FILE                       container storages and streams
 adichtion strings FILE                    tagged strings of the Map stream (debugging)
@@ -57,10 +64,13 @@ header lines and `#* comment` markers) or CSV, both readable by RespMech.
 
 ## Tests
 
-`pytest` runs unit tests and an end-to-end test on a synthetic file written by
-`adichtion.synth`. Real recordings are private and never committed; point
+`pytest` runs unit tests and end-to-end tests on synthetic files written by
+`adichtion.synth` (v26 and v29 flavours, and the legacy layout for the
+fallback parser). Real recordings are private and never committed; point
 `ADICHTION_SAMPLES` at a folder with them to run the integration tests
-(`tests/test_integration_samples.py`).
+(`tests/test_integration_samples.py`: every file must parse by the grammar,
+its block index must match the data, and the files with LabChart exports
+next to them must decode sample-exact).
 
 ## Licence
 

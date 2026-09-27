@@ -20,13 +20,15 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 1. `container.py` — the compound-file container: header, cluster map,
    storages, streams. Pure `struct` + `mmap`, no numpy.
 2. `serialization.py`, `chartdata.py`, `model.py` — the `Map` stream
-   (records, blocks, comments, titles, units records, channel-setup XML) into
-   plain dataclasses that carry no file handles or arrays.
+   (records, blocks, comments, channel entries with units objects, block
+   index and channel-setup XML, titles) into plain dataclasses that carry no
+   file handles or arrays; sequential grammar first, scanning as a fallback.
 3. `blocks.py` — sub-block index and the PackBits/bit-plane decoders
    (int16 and float32). Stateless numpy.
-4. `file.py` (`AdichtFile`, `Record`, `Selection`) + `decimate.py` — the API the
-   UI will use: lazy per-block decoding with an LRU cache, unit conversion,
-   selections by time or comments, min/max envelopes for plotting.
+4. `file.py` (`AdichtFile`, `Record`, `Selection`) + `decimate.py` + `video.py` — the
+   API the UI will use: lazy per-block decoding with an LRU cache, unit
+   conversion per record, selections by time or comments, min/max envelopes
+   for plotting (from the file's block index when possible), video clips.
 5. `export.py`, `cli.py` — text/CSV export and the command line.
 
 The UI (not yet written) goes in `src/adichtion/ui/` and must talk to layer 4
@@ -44,10 +46,11 @@ only. Never put Qt imports below that layer.
   from them stay out of git (see `.gitignore`); tests use synthetic files.
   Do not paste real comment texts, dates or subject identifiers into code,
   tests, docs or commit messages.
-- **Distinguish verified from inferred** in docs and docstrings: int16 = verified
-  against exports; float32 (calculated channels) = verified by internal
-  consistency only; anything else = inferred. Update `docs/FORMAT.md` §6/§7
-  when the status changes.
+- **Distinguish verified from inferred** in docs and docstrings: int16 and
+  float32 decoding and the units scaling are verified sample-exact against
+  LabChart text/MATLAB exports; the Map grammar and block index are
+  consistent across all sample files; the rest is inferred. Update
+  `docs/FORMAT.md` §7/§8 when the status changes.
 - **Ask before any upload to a live site or a release tag.**
 - Work language with Emil is Danish; code, docs and UI are English.
 
@@ -57,6 +60,14 @@ only. Never put Qt imports below that layer.
   16000-tick storage chunks are "blocks" here. Don't mix the two in the UI.
 - `pytest` is fast (< 2 s). The integration tests need `ADICHTION_SAMPLES`
   pointing at a folder with real files (they skip otherwise).
-- The 2016-style files (format v26) carry no input ranges: `AdichtFile.set_range_volts`
-  (or `--range-volts` on the CLI) is how a user supplies them. Their units
-  records cannot yet be mapped to channels (`docs/FORMAT.md` §6).
+- Every channel's units object carries its LSB (volts per count, or the scale
+  of a calculated channel), per record; `set_range_volts`/`--range-volts` is
+  only a fallback for files the sequential parser cannot read
+  (`AdichtFile.parse_mode == "scan"`).
+- `adichtion check FILE` decodes every block and compares with the min/max
+  LabChart stored in the Map stream: run it on any new kind of file before
+  trusting the decoders with it.
+- Unpacked sub-blocks carry no 32-bit flag and PackBits code 128 is a run of
+  129; both are covered by tests, don't "fix" them back.
+- Video clips live in `<name> movies/Record<N>.wmv`; `Record.video` gives
+  LabChart's own offset of the record start within the file.

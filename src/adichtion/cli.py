@@ -7,11 +7,14 @@ tree      the container's storages and streams
 comments  comment list (all records or one)
 export    write a selection of a record as LabChart-style text or CSV
 verify    compare decoded samples with a LabChart text export (the oracle)
+check     decode every block and compare with the min/max LabChart stored
+videos    the video clips recorded with the records
 strings   dump the tagged UTF-16 strings of the Map stream (debugging)
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import Optional
 
@@ -34,16 +37,66 @@ def _open(path: str) -> AdichtFile:
 def cmd_info(a: argparse.Namespace) -> None:
     with _open(a.file) as f:
         print(f"{a.file}: format v{f.format_version}, {len(f.records)} records, {f.n_channels} channels, "
-              f"Chart Data {'.'.join(map(str, f.chart.format_version))}")
-        print("channels:")
+              f"Chart Data {'.'.join(map(str, f.chart.format_version))}, Map parsed by {f.parse_mode}"
+              + (f", {sum(1 for v in f.videos if v.has_video)} videos in '{os.path.basename(f.movies_folder)}'" if f.videos else ""))
+        print("channels (units of record 1):")
+        rec0 = f.records[0] if f.records else None
         for ci in f.channels:
-            rate = f.records[0].sample_rate_hz(ci.index) if f.records else float("nan")
-            units = ci.units.units if ci.units and ci.units.units else ("V" if ci.range_volts and ci.dtype == "int16" else "")
-            print(f"  {ci.index + 1:3d} {ci.title:20} {ci.dtype:8} {rate:8g} Hz  range {ci.range_volts if ci.range_volts is not None else '?':>6} V  units {units}")
+            rate = rec0.sample_rate_hz(ci.index) if rec0 else float("nan")
+            u = ci.units
+            conv = ""
+            if u is not None:
+                conv = (f"{u.slope:.6g} * V + {u.offset:.6g} -> {u.units or '?'}" if u.enabled else "off")
+                if u.calibration[0]:
+                    conv += f"  [{u.calibration[0]} -> {u.calibration[2]}, {u.calibration[1]} -> {u.calibration[3]}]"
+            rng = f"{ci.range_volts:g} V" if ci.range_volts is not None else ("-" if ci.dtype == "float32" else "?")
+            lsb = f"{u.lsb:.4g}" if u is not None and u.has_lsb else "?"
+            label = rec0.value_label(ci.index) if rec0 else ""
+            print(f"  {ci.index + 1:3d} {ci.title:20} {ci.dtype:8} {rate:8g} Hz  range {rng:>7}  lsb {lsb:>9}  values in {label or '(stored units)':10}  conversion {conv}")
         print("records:")
         for r in f.records:
+            vid = ""
+            if r.video is not None:
+                vid = f"  video {r.video.file_name or '-'}" + (f" (offset {r.video.offset_s:.3f} s)" if r.video.has_video else "")
             print(f"  {r.index + 1:3d} {r.start_local:%Y-%m-%d %H:%M:%S}  {r.duration_s:9.2f} s  {r.ticks:>9} ticks @ {r.tick_rate_hz:g} Hz  "
-                  f"{len(r.block_ticks)} blocks  {len(r.comments)} comments")
+                  f"{len(r.block_ticks)} blocks  {len(r.comments)} comments{vid}")
+
+
+def cmd_videos(a: argparse.Namespace) -> None:
+    with _open(a.file) as f:
+        if not f.videos:
+            print("no video stream in this document")
+            return
+        print(f"movies folder: {f.movies_folder}" + ("" if os.path.isdir(f.movies_folder) else "  (not found)"))
+        for v in f.videos:
+            rec = f.records[v.record_index] if v.record_index < len(f.records) else None
+            path = f.records[v.record_index].video_file if rec else None
+            print(f"  record {v.record_index + 1:3d}  {v.file_name or '-':16}  record start at video time {v.offset_s:8.3f} s  "
+                  f"video clock {v.start_s:10.3f} .. {v.stop_s:10.3f} s  file {'present' if path else ('missing' if v.has_video else '-')}")
+
+
+def cmd_check(a: argparse.Namespace) -> None:
+    """Decode every block and compare with the min/max LabChart stored in the Map stream."""
+    with _open(a.file) as f:
+        if f.parse_mode != "sequential":
+            sys.exit("the Map stream was not parsed by the full grammar; nothing to check against")
+        walk = f.walk_subblocks()
+        if [(s.offset, s.body_size) for s in walk] != [(s.offset, s.body_size) for s in f.index.subblocks]:
+            sys.exit("MISMATCH: the block index of the Map stream and the Blocks_0 chain disagree")
+        n = bad = 0
+        for rec in f.records:
+            for ch in range(f.n_channels):
+                for b, blk in enumerate(f.channel_record(rec.index, ch).blocks):
+                    x = f.decode_block(rec.index, b, ch)
+                    mn, mx = float(x.min()), float(x.max())
+                    tol = 0.0 if x.dtype == np.int32 else 1e-6 * max(1.0, abs(mn), abs(mx))
+                    n += 1
+                    if abs(mn - blk.min) > tol or abs(mx - blk.max) > tol:
+                        bad += 1
+                        print(f"record {rec.index + 1} channel {ch + 1} block {b + 1}: decoded {mn:g}..{mx:g}, stored {blk.min:g}..{blk.max:g}")
+        print(f"{n} blocks checked, {bad} mismatches")
+        print("VERDICT:", "match" if bad == 0 else "MISMATCH")
+        sys.exit(0 if bad == 0 else 1)
 
 
 def cmd_tree(a: argparse.Namespace) -> None:
@@ -149,6 +202,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     s = sub.add_parser("tree", help="container storages and streams"); s.add_argument("file"); s.set_defaults(fn=cmd_tree)
     s = sub.add_parser("comments", help="list comments"); s.add_argument("file"); s.add_argument("--record", type=int); s.set_defaults(fn=cmd_comments)
     s = sub.add_parser("strings", help="dump tagged strings of the Map stream"); s.add_argument("file"); s.set_defaults(fn=cmd_strings)
+    s = sub.add_parser("videos", help="video clips of the records (LabChart video capture)"); s.add_argument("file"); s.set_defaults(fn=cmd_videos)
+    s = sub.add_parser("check", help="decode every block and compare with the min/max stored in the file"); s.add_argument("file"); s.set_defaults(fn=cmd_check)
 
     s = sub.add_parser("export", help="export a selection of one record")
     s.add_argument("file"); s.add_argument("-o", "--output", required=True)
@@ -161,7 +216,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     s.add_argument("--decimal", default=".", help="decimal separator (e.g. ',' for Danish Excel)")
     s.add_argument("--no-header", action="store_true"); s.add_argument("--no-comments", action="store_true")
     s.add_argument("--raw", action="store_true", help="write stored values (ADC counts) instead of converted units")
-    s.add_argument("--range-volts", action="append", metavar="CH=VOLTS", help="input range of a channel for v26 files, e.g. 7=10")
+    s.add_argument("--range-volts", action="append", metavar="CH=VOLTS", help="override the input range of a channel, e.g. 7=10 (rarely needed)")
     s.set_defaults(fn=cmd_export)
 
     s = sub.add_parser("verify", help="compare decoded samples with a LabChart text export of the same record")
