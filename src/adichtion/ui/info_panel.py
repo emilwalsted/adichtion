@@ -86,10 +86,15 @@ class InfoPanel(QWidget):
         self.path.setText(f.path)
         n_video = sum(1 for v in f.videos if v.has_video)
         size_mb = os.path.getsize(f.path) / 1e6 if os.path.exists(f.path) else 0.0
-        parts = [f"LabChart format v{f.format_version}", f"{len(f.records)} block{'s' if len(f.records) != 1 else ''}",
+        parts = [f.format_label, f"{len(f.records)} block{'s' if len(f.records) != 1 else ''}",
                  f"{f.n_channels} channels", _hms(timeline.duration_s) + " recorded", f"{size_mb:.1f} MB"]
         if f.videos:
             parts.append(f"{n_video} video clip{'s' if n_video != 1 else ''}")
+        if f.movie_files:
+            parts.append(f"{len(f.movie_files)} movie file{'s' if len(f.movie_files) != 1 else ''} named (not shown yet)")
+        n_missing = sum(1 for c in range(f.n_channels) if not f.has_data(c))
+        if n_missing:
+            parts.append(f"{n_missing} calculated channel{'s' if n_missing != 1 else ''} not stored")
         if f.parse_mode != "sequential":
             parts.append("read by the fallback scanner: block index and LSBs unknown")
         self.summary.setText(" · ".join(parts))
@@ -107,8 +112,13 @@ class InfoPanel(QWidget):
         for c in range(f.n_channels):
             dtype = f.index.channel_dtype(c)
             rng = f.range_volts(c)
-            vals = [c + 1, f.channel_titles[c], "calculated" if dtype == "float32" else "raw",
-                    f"{rec0.sample_rate_hz(c):g}" if rec0 else "", rec0.value_label(c) if rec0 else "",
+            if not f.has_data(c):
+                kind = "calculated, not stored" if f.channel_definition(c) else "no data"
+            else:
+                kind = "calculated" if dtype == "float32" else "raw"
+            stored = f.has_data(c) and rec0 is not None
+            vals = [c + 1, f.channel_titles[c], kind,
+                    f"{rec0.sample_rate_hz(c):g}" if stored else "", rec0.value_label(c) if stored else "",
                     f"±{rng:g} V" if rng is not None else "", ""]
             for col, val in enumerate(vals):
                 self.channels.setItem(c, col, _item(val, Qt.AlignRight if col in (0, 3) else Qt.AlignLeft))

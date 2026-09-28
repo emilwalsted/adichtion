@@ -1,13 +1,18 @@
 """The "Show channels…" dialog: which channels the stack shows."""
 from __future__ import annotations
 
+from typing import Optional
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QScrollArea,
                                QVBoxLayout, QWidget)
 
 
 class ChannelDialog(QDialog):
-    def __init__(self, titles: list[str], calculated: list[bool], shown: list[int], parent=None):
+    def __init__(self, titles: list[str], calculated: list[bool], shown: list[int], parent=None,
+                 available: Optional[list[bool]] = None, notes: Optional[list[str]] = None):
+        """``available`` False greys a channel out (a Mac document's calculated channel,
+        whose samples the file does not store); ``notes`` becomes its tooltip."""
         super().__init__(parent)
         self.setWindowTitle("Show channels")
         self.setAttribute(Qt.WA_DeleteOnClose, False)
@@ -23,9 +28,15 @@ class ChannelDialog(QDialog):
         col.setSpacing(4)
         self.boxes: list[QCheckBox] = []
         for i, title in enumerate(titles):
-            label = f"Ch {i + 1} · {title}" + ("   (calculated)" if calculated[i] else "")
+            stored = available is None or available[i]
+            label = f"Ch {i + 1} · {title}" + ("   (calculated)" if calculated[i] and stored else "")
+            if not stored:
+                label += "   (calculated, not stored in the file)" if calculated[i] else "   (no data)"
             box = QCheckBox(label)
-            box.setChecked(i in shown)
+            box.setChecked(i in shown and stored)
+            box.setEnabled(stored)
+            if notes is not None and notes[i]:
+                box.setToolTip(notes[i])
             col.addWidget(box)
             self.boxes.append(box)
         col.addStretch(1)
@@ -53,7 +64,8 @@ class ChannelDialog(QDialog):
 
     def _set_all(self, on: bool) -> None:
         for b in self.boxes:
-            b.setChecked(on)
+            if b.isEnabled():
+                b.setChecked(on)
 
     def selected(self) -> list[int]:
-        return [i for i, b in enumerate(self.boxes) if b.isChecked()]
+        return [i for i, b in enumerate(self.boxes) if b.isChecked() and b.isEnabled()]

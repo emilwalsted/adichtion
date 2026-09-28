@@ -50,9 +50,31 @@ KEY_SPIRO_FLOW_SOURCE = 0x2E4B  # Spirometry flow: raw flow channel (1-based)
 KEY_SPIRO_FLOW_CAL = 0x2E4E     # Spirometry flow: L/s per V of the raw channel
 KEY_SPIRO_VOL_SOURCE = 0x2E55   # Spirometry volume: flow channel (1-based)
 KEY_SPIRO_VOL_RATIO = 0x2E58    # Spirometry volume: volume ratio k (the BTPS factor, 1.09, by default)
-KEY_N_CHANNELS = 0x2849         # document: number of channels (channel 0)
+KEY_N_CHANNELS = 0x287F         # document (channel 0), int16: number of channels = the Map4 chunks of every document seen
+                                # (0x2849, read as the count at first, is 21 in every file whatever the count: MAC_FORMAT.md)
 
 SOURCE_KEYS = {"RMS": KEY_RMS_SOURCE, "Spiro. Flow": KEY_SPIRO_FLOW_SOURCE, "Spiro. Volume": KEY_SPIRO_VOL_SOURCE}
+
+# The keys of an extension's settings are not fixed.  LabChart gives every extension it
+# loads a range of keys, and the ranges move from one installation to the next; the
+# ``McrE`` chunk records them per file (268-byte entries: uint16 first, uint16 last,
+# uint16 count, Str255 name, 6 bytes).  A channel property of an extension has the key
+# 0x2000 + a key of its range.  The KEY_* constants above are the keys under the ranges of
+# the 2016 files; ``extension_keys`` finds the keys of any file.
+EXTENSION_ENTRY_SIZE = 268
+CHANNEL_KEY_OFFSET = 0x2000
+EXTENSION_KEY_OFFSETS: dict[str, dict[str, int]] = {        # extension name prefix -> key -> offset in its range
+    "Arithmetic": {"arith_expression": 0, "arith_top": 1, "arith_bottom": 2, "arith_units": 3},
+    "Root Mean Square": {"rms_source": 1},
+    "Respiratory Flow": {"spiro_flow_source": 1, "spiro_flow_cal": 4},
+    "Respiratory Volume": {"spiro_vol_source": 1, "spiro_vol_ratio": 4},
+}
+DEFAULT_EXTENSION_KEYS: dict[str, int] = {
+    "arith_expression": KEY_ARITH_EXPRESSION, "arith_top": KEY_ARITH_TOP, "arith_bottom": KEY_ARITH_BOTTOM,
+    "arith_units": KEY_ARITH_UNITS, "rms_source": KEY_RMS_SOURCE,
+    "spiro_flow_source": KEY_SPIRO_FLOW_SOURCE, "spiro_flow_cal": KEY_SPIRO_FLOW_CAL,
+    "spiro_vol_source": KEY_SPIRO_VOL_SOURCE, "spiro_vol_ratio": KEY_SPIRO_VOL_RATIO,
+}
 
 CALCULATION_LABELS = {
     "Arithmetic": "Arithmetic",
@@ -219,12 +241,42 @@ def iter_properties(blob: bytes, base_offset: int = 0) -> Iterator[MacProperty]:
         p = q + size
 
 
+def extension_ranges(source: Union[str, os.PathLike, MacResFile]) -> dict[str, tuple[int, int]]:
+    """Extension name -> (first, last) key of the range LabChart gave it, from the file's
+    ``McrE`` registry; empty when the file has none."""
+    f = source if isinstance(source, MacResFile) else MacResFile(source)
+    out: dict[str, tuple[int, int]] = {}
+    for c in f.find("McrE"):
+        blob = f.read(c)
+        for o in range(0, len(blob) - EXTENSION_ENTRY_SIZE + 1, EXTENSION_ENTRY_SIZE):
+            first, last, count = struct.unpack_from(">HHH", blob, o)
+            n = blob[o + 6]
+            if n == 0 or last < first or count != last - first + 1:
+                continue
+            out.setdefault(blob[o + 7:o + 7 + n].decode("mac_roman", "replace"), (first, last))
+    return out
+
+
+def extension_keys(source: Union[str, os.PathLike, MacResFile]) -> dict[str, int]:
+    """The keys of the extension settings read here (names as in ``DEFAULT_EXTENSION_KEYS``)
+    in this file: from its registry, or the 2016 keys for an extension it does not list."""
+    keys = dict(DEFAULT_EXTENSION_KEYS)
+    ranges = extension_ranges(source)
+    for prefix, offsets in EXTENSION_KEY_OFFSETS.items():
+        first = next((r[0] for name, r in ranges.items() if name.startswith(prefix)), None)
+        if first is not None:
+            for name, off in offsets.items():
+                keys[name] = CHANNEL_KEY_OFFSET + first + off
+    return keys
+
+
 def channel_settings(source: Union[str, os.PathLike, MacResFile]) -> dict[int, MacChannelSettings]:
     """Per-channel settings (1-based keys) of a document or settings file."""
     f = source if isinstance(source, MacResFile) else MacResFile(source)
     chunks = f.settings_chunks()
     if not chunks:
         raise MacChartError("no settings chunks (Mcro 30001/30002) in this file")
+    keys = extension_keys(f)
     props: list[MacProperty] = []
     for c in chunks:
         props.extend(iter_properties(f.read(c), c.offset))
@@ -238,18 +290,20 @@ def channel_settings(source: Union[str, os.PathLike, MacResFile]) -> dict[int, M
             s.title = pr.value
         elif pr.key == KEY_CALCULATION and isinstance(pr.value, str):
             s.calculation = pr.value.rstrip("\u2026")        # stored as the menu label, e.g. "Arithmetic…"
-        elif pr.key == KEY_ARITH_EXPRESSION and isinstance(pr.value, str):
+        elif pr.key == keys["arith_expression"] and isinstance(pr.value, str):
             s.expression = pr.value
-        elif pr.key == KEY_ARITH_UNITS and isinstance(pr.value, str):
+        elif pr.key == keys["arith_units"] and isinstance(pr.value, str):
             s.units = pr.value
-        elif pr.key == KEY_SPIRO_FLOW_CAL and isinstance(pr.value, float):
+        elif pr.key == keys["spiro_flow_cal"] and isinstance(pr.value, float):
             s.flow_calibration = pr.value
-        elif pr.key == KEY_SPIRO_VOL_RATIO and isinstance(pr.value, float):
+        elif pr.key == keys["spiro_vol_ratio"] and isinstance(pr.value, float):
             s.volume_ratio = pr.value
     # every extension's dialog leaves its own keys behind on a channel; only those of the
     # calculation the channel actually uses mean anything
+    source_keys = {"RMS": keys["rms_source"], "Spiro. Flow": keys["spiro_flow_source"],
+                   "Spiro. Volume": keys["spiro_vol_source"]}
     for s in out.values():
-        key = SOURCE_KEYS.get(s.calculation)
+        key = source_keys.get(s.calculation)
         src = s.properties.get(key) if key is not None else None
         s.source = src if isinstance(src, int) and src > 0 else None
         if s.calculation != "Spiro. Flow":

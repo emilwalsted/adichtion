@@ -44,8 +44,9 @@ files in one container, big-endian throughout:
 Chunk types seen: `CntD`, `Cnt1`, `Alc2`, `CmtM`, `UntA`, `Gain`, `SetI`,
 `mTim`, `vers`, `Map4` (the sample data, documents only), `FInf`, `McrV`,
 `McrE`, `Mcro`, `STR `, `FinS`, `wndS`. Only the `Mcro` chunks with ids
-**30001/30002** (the document's own settings; user macros have small ids) and
-the `STR ` resources from id 1100 (channel titles) are read.
+**30001/30002** (the document's own settings; user macros have small ids), the
+`McrE` extension registry (below) and the `STR ` resources from id 1100
+(channel titles) are read.
 
 The settings are a stream of **property records**:
 
@@ -56,7 +57,24 @@ u8 0, u8 type, uint16 key, uint32 channel (1-based; 0 = document), payload
 with the payload given by the type: `0x01` int16, `0x0A` uint16, `0x04`
 int32, `0x0C` 4 bytes, `0x0E` 6 bytes, `0x10` 8 bytes, `0x18` float64,
 `0x08` Pascal string (Mac Roman). Anything else is skipped byte by byte until
-the next record. Keys with an established meaning:
+the next record.
+
+**The keys of the extensions' settings move.** LabChart gives every extension
+it loads a range of keys, in load order, so the ranges differ between
+installations; `McrE` records them per file as 268-byte entries `uint16 first,
+uint16 last, uint16 count, Str255 name, 6 bytes`. A channel property of an
+extension has the key `0x2000 +` a key of its range (the Arithmetic expression
+is the range's first key, the RMS and spirometry sources its second, the
+spirometry calibration and volume ratio its fifth); `0x1000 +` a key appears in
+chunk 30001. Of the 24 Mac files of the study, 19 use the ranges the table
+below was read from (Arithmetic from `0x0BB8`); four (three documents and a
+settings file from 2017) have Arithmetic at `0x0CB6`, RMS at `0x0E04` and the
+spirometry extensions at `0x0EAE`/`0x0EB8`, and one template yet other ranges.
+`macchart.extension_keys` resolves the keys through the registry (the table's
+keys when a file has none), which completes the definitions of all 24 files;
+read with the fixed keys, the moved ones lost their expressions and sources.
+**Consistent.** LabChart's own keys (title, calculation, channel count) do not
+move. Keys with an established meaning (extension keys as in the 2016 files):
 
 | key | scope | meaning |
 |---|---|---|
@@ -68,7 +86,7 @@ the next record. Keys with an established meaning:
 | `0x2DC4` | channel | RMS source channel (1-based) |
 | `0x2E4B`, `0x2E4E` | channel | Spirometry Flow: raw flow channel; calibration in L/s per V |
 | `0x2E55`, `0x2E58` | channel | Spirometry Volume: flow channel; volume ratio *k* (1.09 in every file seen) |
-| `0x2849` | document | number of channels |
+| `0x287F` | document | number of channels (int16; equal to the `Map4` chunks of every document, `MAC_FORMAT.md` §1.1). `0x2849`, read as the count at first, is 21 in every file |
 
 Every extension's dialog leaves its own keys on a channel whether or not that
 channel uses the extension (a Spirometry Flow channel carries an RMS source

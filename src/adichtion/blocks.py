@@ -312,3 +312,12 @@ class SubBlockIndex:
             return 1.0
         sb = self.get(record, 0, 0 if self.n_channels == 0 else channel)
         return sb.n_samples / blocks[0]
+
+    def tick_to_sample(self, record: int, channel: int, tick: int) -> int:
+        """Number of the channel's samples before ``tick`` (rounded; every channel of
+        the files seen so far is sampled at the tick rate)."""
+        return int(round(tick * self.samples_per_tick(record, channel)))
+
+    def has_data(self, channel: int) -> bool:
+        """Every channel of a ``.adicht`` file stores its samples."""
+        return 0 <= channel < self.n_channels

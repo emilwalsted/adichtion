@@ -54,6 +54,9 @@ class DataPanel(QWidget):
         self.table.setRowCount(0)
         self._mode = "none"
         self._units = []
+        # one row per channel with stored samples (a Mac document's calculated channels have none)
+        self._rows = [c for c in range(f.n_channels) if f.has_data(c)] if f is not None else []
+        self._row_of = {c: i for i, c in enumerate(self._rows)}
         if f is not None and f.records:
             rec0 = f.records[0]
             self._units = [rec0.value_label(c) for c in range(f.n_channels)]
@@ -76,11 +79,10 @@ class DataPanel(QWidget):
         self.where.setText(f"Cursor: {self.timeline.describe(t)}   (file time {t:.3f} s)")
         self._mode = "point"
         self._set_headers(["Channel", "Value", "Units"])
-        n = self.file.n_channels
-        self.table.setRowCount(n)
-        for c in range(n):
+        self.table.setRowCount(len(self._rows))
+        for row, c in enumerate(self._rows):
             v = lod.value_at(self.file, self.timeline, c, t)
-            self._set(c, [self._channel_name(c), _num(v), self._units[c]])
+            self._set(row, [self._channel_name(c), _num(v), self._units[c]])
 
     def show_interval(self, t0: float, t1: float) -> None:
         """Header for an interval; the statistics arrive per channel via :meth:`set_stats`."""
@@ -91,17 +93,17 @@ class DataPanel(QWidget):
         blocks = f"Block {a.block.number}" if a.block is b.block else f"Blocks {a.block.number}–{b.block.number}"
         self.where.setText(f"Selection: {t0:.3f} s → {t1:.3f} s  ({t1 - t0:.3f} s, {blocks})")
         self._set_headers(["Channel", "Min", "Max", "Mean", "Units"])
-        n = self.file.n_channels
-        self.table.setRowCount(n)
-        for c in range(n):
-            self._set(c, [self._channel_name(c), "…", "…", "…", self._units[c]])
+        self.table.setRowCount(len(self._rows))
+        for row, c in enumerate(self._rows):
+            self._set(row, [self._channel_name(c), "…", "…", "…", self._units[c]])
 
     def set_stats(self, channel: int, stats: dict) -> None:
-        if self._mode != "interval" or channel >= self.table.rowCount():
+        row = self._row_of.get(channel)
+        if self._mode != "interval" or row is None or row >= self.table.rowCount():
             return
         mean = _num(stats.get("mean")) if stats.get("decoded", True) else "(too long)"
-        self._set(channel, [self._channel_name(channel), _num(stats.get("min")), _num(stats.get("max")), mean,
-                            self._units[channel]])
+        self._set(row, [self._channel_name(channel), _num(stats.get("min")), _num(stats.get("max")), mean,
+                        self._units[channel]])
 
     def _set(self, row: int, values: list[str]) -> None:
         for col, val in enumerate(values):

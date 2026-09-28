@@ -12,6 +12,9 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   the open questions. Every decoder change must keep it accurate.
 - `docs/CALCULATED_CHANNELS.md` — how LabChart's calculations behave at sample
   level, the Mac settings file format and how definitions are recovered.
+- `docs/MAC_FORMAT.md` — LabChart for Mac documents ("ADInst Data Res File"):
+  the format, its verification against WinChart exports, and how the reader
+  maps a document onto the API (§9). Keep it current with every finding.
 - `docs/beslutninger.md` — dated decisions and "settled, don't reopen" points.
 - `src/adichtion/synth.py` — the executable form of the spec: it writes
   synthetic files that the reader must round-trip exactly (`tests/`).
@@ -27,6 +30,9 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    file handles or arrays; sequential grammar first, scanning as a fallback.
 3. `blocks.py` — sub-block index and the PackBits/bit-plane decoders
    (int16 and float32). Stateless numpy.
+   `macdoc.py` is layers 1–3 for LabChart for Mac documents: their chunks into
+   the same `ChartData`, a `MacBlockIndex` with the interface `AdichtFile` uses,
+   and the Mac block decoder (`struct` + numpy, no file handles).
 4. `file.py` (`AdichtFile`, `Record`, `Selection`) + `decimate.py` + `video.py` — the
    API the UI will use: lazy per-block decoding with an LRU cache, unit
    conversion per record, selections by time or comments, min/max envelopes
@@ -91,6 +97,17 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   `adichtion macsettings` reads them from the Mac document or settings file
   (`docs/CALCULATED_CHANNELS.md`). The reader never recomputes a calculated
   channel on its own: the stored values are LabChart's and stay the reference.
+- `AdichtFile.kind` is `"adicht"` or `"mac"`. Above layer 3, never assume that
+  every channel has samples or one sample per tick: ask `has_data(c)` (a Mac
+  document's calculated channels have dtype `"none"`), use
+  `Record.tick_to_sample`/`n_samples`/`sample_at` (Mac channels can store every
+  40th tick), and read a NaN min/max in the index as "not stored"
+  (`block_minmax(..., fill=False)` never decodes; `fill=True` does and caches).
+- Mac documents: calculated channels are listed with `channel_definition(c)` and
+  never recomputed; the movies are names only (`movie_files`,
+  `mac.record_movies`) until their timing is known (`docs/MAC_FORMAT.md` §7).
+  `tests/test_integration_macdocs.py` finds the documents below
+  `ADICHTION_SAMPLES` by their first bytes and pairs them with their exports.
 - `pytest` (unit + synthetic) stays under a few seconds; the inference tests
   build their own synthetic document with derived channels, the viewer tests
   run headless (`tests/ui/`, `QT_QPA_PLATFORM=offscreen`).

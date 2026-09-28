@@ -1,4 +1,4 @@
-"""High-level, UI-oriented access to ``.adicht`` files.
+"""High-level, UI-oriented access to ``.adicht`` files and LabChart for Mac documents.
 
 ::
 
@@ -41,6 +41,7 @@ from .blocks import (BLOCK_TICKS, FLAG_32BIT, FLAG_PACKED, FLAG_UNPACKED, HEADER
 from .chartdata import parse_chart_data
 from .container import AdichtContainer, AdichtFormatError
 from .decimate import minmax_envelope
+from .macdoc import MacDocument, decode_mac_block, is_mac_document, read_mac_document
 from .model import ChannelInfo, ChannelRecordInfo, ChartData, Comment, RecordInfo, UnitsConversion, VideoClip
 from .video import movies_folder, read_videos, video_path
 
@@ -116,10 +117,34 @@ def _subblocks_from_map(blocks: bytes, chart: ChartData) -> list[SubBlock]:
 
 
 class AdichtFile:
-    """A LabChart ``.adicht`` file opened for reading."""
+    """A LabChart ``.adicht`` file, or a LabChart for Mac document, opened for reading.
+
+    Both give the same API.  :attr:`kind` says which it is; a Mac document
+    (``docs/MAC_FORMAT.md``) does not store its calculated channels, which then
+    have no data (:meth:`has_data` False, dtype ``"none"``) and a stored
+    definition (:meth:`channel_definition`)."""
 
     def __init__(self, path: str | os.PathLike, cache_blocks: int = 256):
         self.path = os.fspath(path)
+        self.mac: Optional[MacDocument] = None
+        self._container: Optional[AdichtContainer] = None
+        self._envelopes: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+        if is_mac_document(self.path):
+            self.kind = "mac"
+            with open(self.path, "rb") as fh:
+                self._blocks = fh.read()
+            self.mac = read_mac_document(self.path, self._blocks)
+            self.chart = self.mac.chart
+            self.index = self.mac.index
+            self.videos: list[VideoClip] = []
+        else:
+            self.kind = "adicht"
+            self._open_adicht()
+        self._cache = _BlockCache(cache_blocks)
+        self._range_override: dict[int, float] = {}
+        self.records: list[Record] = [Record(self, r) for r in self.chart.records]
+
+    def _open_adicht(self) -> None:
         self._container = AdichtContainer(self.path)
         try:
             self._map_entry = self._container.find_stream("Map")
@@ -138,18 +163,17 @@ class AdichtFile:
             if self.chart.parse_mode == "sequential" and self.index.n_channels != self.chart.n_channels:
                 raise AdichtFormatError(f"{self.index.n_channels} channels of sample data for "
                                         f"{self.chart.n_channels} channel entries")
-            self.videos: list[VideoClip] = read_videos(self._container)
+            self.videos = read_videos(self._container)
         except Exception:
             self._container.close()
             raise
-        self._cache = _BlockCache(cache_blocks)
-        self._range_override: dict[int, float] = {}
-        self.records: list[Record] = [Record(self, r) for r in self.chart.records]
 
     # -- lifecycle -----------------------------------------------------------
     def close(self) -> None:
         self._cache.clear()
-        self._container.close()
+        self._envelopes.clear()
+        if self._container is not None:
+            self._container.close()
 
     def __enter__(self) -> "AdichtFile":
         return self
@@ -162,7 +186,17 @@ class AdichtFile:
     # -- static description --------------------------------------------------
     @property
     def format_version(self) -> int:
-        return self._container.version
+        """The ``.adicht`` container version (26, 29, ...); 0 for a Mac document."""
+        return self._container.version if self._container is not None else 0
+
+    @property
+    def format_label(self) -> str:
+        """What kind of file this is, for people: ``"LabChart format v29"`` or
+        ``"LabChart for Mac document (7.2)"``."""
+        if self.mac is not None:
+            major, minor, bugfix = self.mac.version
+            return f"LabChart for Mac document ({major}.{minor}" + (f".{bugfix}" if bugfix else "") + ")"
+        return f"LabChart format v{self.format_version}"
 
     @property
     def parse_mode(self) -> str:
@@ -183,6 +217,23 @@ class AdichtFile:
     @property
     def comments(self) -> list[Comment]:
         return self.chart.comments
+
+    def has_data(self, channel: int) -> bool:
+        """False for a channel whose samples the file does not store: a calculated
+        channel of a Mac document (LabChart for Mac computed those when drawing)."""
+        return self.index.has_data(channel)
+
+    def channel_definition(self, channel: int) -> Optional[str]:
+        """The calculation a Mac document stores for a calculated channel, in
+        LabChart's terms (``"Arithmetic: Ch9-Ch8 [cmH2O]"``); None otherwise.  A
+        ``.adicht`` file stores no definitions (see :mod:`adichtion.infer`)."""
+        return self.mac.definition(channel) if self.mac is not None else None
+
+    @property
+    def movie_files(self) -> list[str]:
+        """Movie files a Mac document names (its video capture); their timing is not
+        decoded yet, so they are not :attr:`videos`."""
+        return list(self.mac.movie_files) if self.mac is not None else []
 
     def set_range_volts(self, channel: int, range_volts: float) -> None:
         """Override the input range of an ADC channel (only needed for files whose
@@ -246,6 +297,16 @@ class AdichtFile:
     def decode_block(self, record: int, block: int, channel: int) -> np.ndarray:
         """Decoded samples of one block: int32 counts or float32 values (cached).
         Every block is self-contained, so this is O(1) blocks."""
+        if self.mac is not None:
+            mb = self.index.get(record, block, channel)
+            if mb is None:
+                return np.zeros(0, dtype=np.int32)
+            hit = self._cache.get(mb.key)
+            if hit is not None:
+                return hit
+            data = decode_mac_block(memoryview(self._blocks)[mb.offset: mb.offset + mb.length], mb)
+            self._cache.put(mb.key, data)
+            return data
         sb = self.index.get(record, block, channel)
         hit = self._cache.get(sb.index)
         if hit is not None:
@@ -256,8 +317,33 @@ class AdichtFile:
 
     # -- consistency checks (for tests and the "verify" command) ----------------------
     def walk_subblocks(self) -> list[SubBlock]:
-        """Sub-blocks found by walking the Blocks_0 chain (independent of the Map index)."""
+        """Sub-blocks found by walking the Blocks_0 chain (independent of the Map index);
+        empty for a Mac document, which has no such chain."""
+        if self.mac is not None:
+            return []
         return list(iter_subblocks(self._blocks))
+
+    def block_minmax(self, record: int, channel: int, fill: bool = True) -> tuple[np.ndarray, np.ndarray]:
+        """Stored min/max per block of a record.  Blocks whose min/max the index does
+        not hold (some Mac documents, MAC_FORMAT.md §3) are NaN, or with ``fill`` are
+        decoded once and remembered; a viewer's GUI thread passes ``fill=False`` and
+        gets the filled values once a worker has filled them."""
+        key = (record, channel)
+        if key in self._envelopes:
+            mins, maxs = self._envelopes[key]
+            return mins.copy(), maxs.copy()
+        cr = self.channel_record(record, channel)
+        mins = np.array([b.min for b in cr.blocks], dtype=np.float64)
+        maxs = np.array([b.max for b in cr.blocks], dtype=np.float64)
+        missing = np.flatnonzero(np.isnan(mins) | np.isnan(maxs))
+        if len(missing) and not fill:
+            return mins, maxs
+        for b in missing:
+            x = self.decode_block(record, int(b), channel)
+            if len(x):
+                mins[b], maxs[b] = float(x.min()), float(x.max())
+        self._envelopes[key] = (mins, maxs)
+        return mins.copy(), maxs.copy()
 
 
 class Record:
@@ -322,10 +408,11 @@ class Record:
         return self.tick_rate_hz * self.samples_per_tick(channel)
 
     def n_samples(self, channel: int) -> int:
-        return int(round(self.ticks * self.samples_per_tick(channel)))
+        return self.tick_to_sample(self.ticks, channel)
 
     def tick_to_sample(self, tick: int, channel: int) -> int:
-        return int(round(tick * self.samples_per_tick(channel)))
+        """Number of the channel's samples before ``tick`` (each format's own rule)."""
+        return self.file.index.tick_to_sample(self.index, channel, tick)
 
     def time(self, start: int = 0, stop: Optional[int] = None, channel: int = 0) -> np.ndarray:
         """Time (s from record start) of the samples of ``channel`` in tick range ``[start, stop)``."""
@@ -356,14 +443,17 @@ class Record:
     # -- data ------------------------------------------------------------------
     def read_raw(self, channel: int, start: int = 0, stop: Optional[int] = None) -> np.ndarray:
         """Stored values in tick range ``[start, stop)``: int32 counts for ADC
-        channels, float32 for calculated channels."""
-        s0, s1 = self._sample_range(start, stop, channel)
-        spt = self.samples_per_tick(channel)
+        channels, float32 for calculated channels (empty for a channel the file
+        does not store)."""
+        return self._read_samples(channel, *self._sample_range(start, stop, channel))
+
+    def _read_samples(self, channel: int, s0: int, s1: int) -> np.ndarray:
+        """Stored values of samples ``[s0, s1)``."""
         out: list[np.ndarray] = []
         tick0 = 0
         for b, bt in enumerate(self.block_ticks):
-            b0 = int(round(tick0 * spt))
-            b1 = int(round((tick0 + bt) * spt))
+            b0 = self.tick_to_sample(tick0, channel)
+            b1 = self.tick_to_sample(tick0 + bt, channel)
             tick0 += bt
             if b1 <= s0:
                 continue
@@ -374,6 +464,19 @@ class Record:
         if not out:
             return np.zeros(0, dtype=np.float32 if self.file.index.channel_dtype(channel) == "float32" else np.int32)
         return np.concatenate(out)
+
+    def sample_at(self, channel: int, tick: int, units: bool = True) -> Optional[float]:
+        """The value (as :meth:`read` gives it) of the stored sample at or before
+        ``tick``: for a channel sampled slower than the tick rate, the latest
+        sample.  None outside the record or for a channel without data."""
+        n = self.n_samples(channel)
+        if n == 0 or not 0 <= tick < self.ticks:
+            return None
+        k = min(max(self.tick_to_sample(int(tick) + 1, channel) - 1, 0), n - 1)
+        v = self._read_samples(channel, k, k + 1)
+        if not len(v):
+            return None
+        return float(self.convert(channel, v)[0]) if units else float(v[0])
 
     def read(self, channel: int, start: int = 0, stop: Optional[int] = None, units: bool = True) -> np.ndarray:
         """Samples as float64.  With ``units=True`` the stored values are scaled
@@ -417,19 +520,20 @@ class Record:
         return Selection(self.index, a.tick, b.tick if b else self.ticks)
 
     # -- overview for plotting -----------------------------------------------
-    def block_envelope(self, channel: int, units: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def block_envelope(self, channel: int, units: bool = True,
+                       fill: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """``(t_start, t_end, min, max)`` per 16000-tick block, straight from the
         Map stream's block index (nothing is decoded).  Empty arrays for a
-        legacy parse."""
+        legacy parse or a channel without data.  A block whose min/max the index
+        does not hold is decoded (``fill``) or NaN (``fill=False``)."""
         cr = self.file.channel_record(self.index, channel)
-        if cr is None:
+        if cr is None or cr.dtype == "none":
             e = np.zeros(0)
             return e, e, e, e
         ticks = np.array([b.ticks for b in cr.blocks], dtype=np.float64)
         t1 = np.cumsum(ticks) / self.tick_rate_hz
         t0 = t1 - ticks / self.tick_rate_hz
-        mins = np.array([b.min for b in cr.blocks], dtype=np.float64)
-        maxs = np.array([b.max for b in cr.blocks], dtype=np.float64)
+        mins, maxs = self.file.block_minmax(self.index, channel, fill)
         if units:
             mins, maxs = self.convert(channel, mins), self.convert(channel, maxs)
             if len(mins) and mins[0] > maxs[0]:     # a negative slope swaps them
@@ -437,7 +541,7 @@ class Record:
         return t0, t1, mins, maxs
 
     def overview(self, channel: int, n_points: int = 2000, start: int = 0, stop: Optional[int] = None,
-                 units: bool = True, coarse: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                 units: bool = True, coarse: bool = False, fill: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """``(time, min, max)`` envelope of ``channel`` over ``[start, stop)`` in
         ``n_points`` buckets, for drawing a long record at screen resolution.
         Buckets of a whole block or more are served from the Map stream's
@@ -452,7 +556,7 @@ class Record:
         cr = self.file.channel_record(self.index, channel)
         span = stop - start
         if cr is not None and n_points > 0 and (span >= n_points * BLOCK_TICKS or (coarse and span >= BLOCK_TICKS)):
-            b0, b1, mins, maxs = self.block_envelope(channel, units)
+            b0, b1, mins, maxs = self.block_envelope(channel, units, fill)
             edges = np.linspace(t0, t1, n_points + 1)
             lo = np.full(n_points, np.inf)
             hi = np.full(n_points, -np.inf)
@@ -465,8 +569,9 @@ class Record:
             # a block, a run of them in the coarse case)
             counts = k1 - k0 + 1
             idx = np.repeat(k0, counts) + (np.arange(int(counts.sum())) - np.repeat(np.cumsum(counts) - counts, counts))
-            np.minimum.at(lo, idx, np.repeat(mins, counts))
-            np.maximum.at(hi, idx, np.repeat(maxs, counts))
+            # fmin/fmax skip the NaN of blocks whose min/max is not stored (and not yet filled)
+            np.fmin.at(lo, idx, np.repeat(mins, counts))
+            np.fmax.at(hi, idx, np.repeat(maxs, counts))
             lo[~np.isfinite(lo)] = np.nan
             hi[~np.isfinite(hi)] = np.nan
             t = (edges[:-1] + edges[1:]) / 2

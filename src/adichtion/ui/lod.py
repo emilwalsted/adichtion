@@ -52,8 +52,10 @@ def curve_for_range(f: AdichtFile, timeline: Timeline, channel: int, t0: float, 
         n_samples = int(round((stop - start) * spt))
         bucket_ticks = (stop - start) / n_part
         if (stop - start) >= BLOCK_TICKS and (coarse or bucket_ticks >= BLOCK_TICKS / 4):
-            # a bucket a quarter block wide or more: the block index is the envelope, to the pixel
-            t, mn, mx = rec.overview(channel, n_part, start, stop, coarse=True)
+            # a bucket a quarter block wide or more: the block index is the envelope, to the pixel;
+            # blocks without a stored min/max are decoded by the worker only, never by the quick
+            # coarse pass on the GUI thread
+            t, mn, mx = rec.overview(channel, n_part, start, stop, coarse=True, fill=not coarse)
             x, y = interleave(t + b.start_s, mn, mx)
             levels.add("coarse" if coarse else "envelope")
         elif n_samples <= 2 * n_part:
@@ -81,16 +83,17 @@ def value_at(f: AdichtFile, timeline: Timeline, channel: int, t: float) -> Optio
     if pos is None:
         return None
     rec = f.records[pos.block.index]
-    v = rec.read(channel, pos.tick, pos.tick + 1)
-    return float(v[0]) if len(v) else None
+    # the sample at or before the tick: a channel sampled below the tick rate (a Mac
+    # document's 100 Hz pressures on a 4 kHz tick) has a value between its samples too
+    return rec.sample_at(channel, pos.tick)
 
 
 def global_range(f: AdichtFile, channel: int) -> Optional[tuple[float, float]]:
     """Min/max of ``channel`` over the whole file, from the block index (nothing decoded)."""
     lo, hi = np.inf, -np.inf
     for rec in f.records:
-        _t0, _t1, mn, mx = rec.block_envelope(channel)
-        if len(mn):
+        _t0, _t1, mn, mx = rec.block_envelope(channel, fill=False)
+        if np.isfinite(mn).any():
             lo = min(lo, float(np.nanmin(mn)))
             hi = max(hi, float(np.nanmax(mx)))
     if not np.isfinite(lo) or not np.isfinite(hi):

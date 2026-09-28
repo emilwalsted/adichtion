@@ -12,6 +12,9 @@ Verified on:
 | 2 recordings from 2022–23 (PowerLab 16/35, spirometry + mouth pressure, video) | 8.1.16 | v29 | 4096 B | 1000 Hz | 3 × int16 |
 | 11 recordings from 2016–17 (diaphragm EMG, oesophageal/gastric pressure, spirometry) | 8.1.x | v26 | 1024 B | 4000 Hz | 9–11 × int16 + 9–14 × float32 |
 
+LabChart for Mac's own documents are a different, big-endian format; they are
+described in [`MAC_FORMAT.md`](MAC_FORMAT.md) and read through the same API.
+
 All integers are little-endian. "int32/int64" are signed unless noted.
 Statements are marked **verified** (checked against LabChart's own output),
 **consistent** (checked against redundant information inside the files) or

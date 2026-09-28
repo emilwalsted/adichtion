@@ -16,6 +16,15 @@ from the data (Arithmetic, RMS, Integral, Spirometry Flow and Volume) and
 `adichtion macsettings` reads them from a LabChart for Mac document or
 settings file, see [`docs/CALCULATED_CHANNELS.md`](docs/CALCULATED_CHANNELS.md).
 
+**LabChart for Mac documents** (LabChart 7 for Mac's own format, usually saved
+without an extension) open through the same API, command line and app: the
+raw channels decode sample-exact against LabChart's WinChart exports of the
+same recordings, with their ranges, units conversions, comments and block
+times; slow channels keep their own sampling rate. Calculated channels are
+not stored in these documents (LabChart computed them when drawing), so they
+are listed with the definition the document holds and are not drawn or
+exported. See [`docs/MAC_FORMAT.md`](docs/MAC_FORMAT.md).
+
 The *adichtion* desktop app (a channel viewer and exporter in the mould of
 [RespMech](https://github.com/emilwalsted/respmech)) is built on it, see below.
 
@@ -33,7 +42,9 @@ the *Build installers* workflow and attached to every
 
 Each bundles its own Python and libraries; `.adicht` files open in the app by
 double-click, and the installed binary is also the command line
-(`adichtion info FILE`). See [`docs/RELEASING.md`](docs/RELEASING.md) for how
+(`adichtion info FILE`). LabChart for Mac documents have no extension, so
+they are not registered for double-click: open them with *File > Open* (the
+file dialog's second filter shows all files) or name them on the command line. See [`docs/RELEASING.md`](docs/RELEASING.md) for how
 the installers are built.
 
 **From source** (the library, the command line and, with `ui`, the app):
@@ -82,6 +93,9 @@ them, with the block labels and comment flags in a strip above the channels.
 * Calculated channels are tinted and carry their definition in the overlay,
   recovered from the data in the background (or read from a LabChart for Mac
   document or settings file via *File > Load LabChart for Mac settings…*).
+  In a LabChart for Mac document they are not stored: the file panel lists
+  them with the document's definition, and the channel and export dialogs
+  show them greyed out.
 * *Export…* writes the whole file, the block under the cursor or the selected
   interval as LabChart-style text, CSV or an Excel workbook, for the channels
   shown, all channels or a choice.
@@ -126,7 +140,7 @@ through a 300 MB file freely. Units are per record, as LabChart stores them.
 ```
 adichtion info FILE                       records, channels (units, LSB, conversion), videos
 adichtion comments FILE [--record N]      comment list with times
-adichtion videos FILE                     video clips of the records and their offsets
+adichtion videos FILE                     video clips of the records and their offsets (Mac documents: the movie names)
 adichtion export FILE -o out.txt --record 2 --channels 1,2 --between "start" "stop"
 adichtion export FILE -o out.csv --format csv --start 355.2 --stop 385.9 --decimal ,
 adichtion export FILE -o all.xlsx --all-records      # every block; format from the extension
@@ -155,7 +169,10 @@ at a folder with them to run the integration tests
 (`tests/test_integration_samples.py`: every file must parse by the grammar,
 its block index must match the data, the files with LabChart exports next to
 them must decode sample-exact, and every calculated channel must be explained
-by a standard calculation of the other channels).
+by a standard calculation of the other channels;
+`tests/test_integration_macdocs.py`: every LabChart for Mac document found by
+its first bytes must agree with its own block index, and those with a WinChart
+export next to them must match it sample for sample).
 
 ## Licence
 

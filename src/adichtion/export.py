@@ -43,10 +43,18 @@ def _fmt(v: float, decimal: str) -> str:
 
 
 def _check_rates(record: Record, channels: Sequence[int]) -> float:
-    rates = {record.sample_rate_hz(c) for c in channels}
-    if len(rates) != 1:
-        raise ValueError("channels with different sampling rates cannot share one table; export them separately")
-    return rates.pop()
+    missing = [c + 1 for c in channels if not record.file.has_data(c)]
+    if missing:
+        raise ValueError(f"channel(s) {', '.join(map(str, missing))} are not stored in this file "
+                         "(calculated channels of a LabChart for Mac document)")
+    groups: dict[float, list[int]] = {}
+    for c in channels:
+        groups.setdefault(record.sample_rate_hz(c), []).append(c + 1)
+    if len(groups) != 1:
+        parts = "; ".join(f"{rate:g} Hz: channel{'s' if len(chs) > 1 else ''} {', '.join(map(str, chs))}"
+                          for rate, chs in sorted(groups.items(), reverse=True))
+        raise ValueError(f"channels with different sampling rates cannot share one table; export them separately ({parts})")
+    return next(iter(groups))
 
 
 def _comment_rows(record: Record, selection: Selection, channel: int) -> dict[int, list[str]]:

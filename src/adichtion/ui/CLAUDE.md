@@ -71,6 +71,16 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - **Wide views use the block index, not a decode**: `lod.curve_for_range` takes the index
   envelope whenever a bucket spans a quarter block or more; a whole-file view of a 200 MB
   file then renders in under a second instead of ten.
+- **A missing min/max is never filled on the GUI thread.** LabChart for Mac documents leave
+  many blocks without one (NaN in the index): the coarse pass and `global_range` call
+  `block_envelope(..., fill=False)`, the worker's pass fills them (`fill=True`, cached in
+  `AdichtFile`), and a channel with no stored min/max at all sits in `ChannelStack._y_unset`
+  until its first decoded curve sets the y-range. Filling on the GUI thread would decode
+  every such block of a whole-file view there (some documents store no min/max at all for
+  their EMG channels).
+- **Channels without data** (`AdichtFile.has_data` False: a Mac document's calculated
+  channels) get no plot and no data-panel row, and are greyed out with a note in the channel
+  and export dialogs; the file panel still lists them with their definition.
 - **Inference and statistics never share the render thread** — a 12-channel inference
   blocked every render for ten seconds when they did.
 - **Threads are joined on close** (`JobRunner.stop()` marks every job stale and waits;

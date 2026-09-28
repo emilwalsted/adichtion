@@ -367,3 +367,227 @@ def write_synthetic(path, channels: Sequence[SynthChannel], records: Sequence[Sy
         streams["ChildDocuments"] = {"ADIStdPart4": build_video_stream(records)}
     with open(path, "wb") as fh:
         fh.write(build_container(streams, cluster_size, version))
+
+
+# -- LabChart for Mac documents (docs/MAC_FORMAT.md) ------------------------------------------
+@dataclass
+class SynthMacChannel:
+    """One channel of a synthetic LabChart for Mac document."""
+
+    title: str
+    decimation: int = 1                     # store every d-th tick; 0 = no data (a calculated channel)
+    base_units: str = "V"                   # the range entry's units: "V" or "mV"
+    full_scale: float = 10.24               # range x 1.024, in base_units
+    units: Optional[tuple[str, float, float, bool]] = None   # (name <= 6 chars, slope, offset, switched on)
+    calculation: str = ""                   # a calculated channel's menu label, e.g. "Arithmetic…"
+    expression: str = ""                    # its Arithmetic expression
+    raw_blocks: Sequence[tuple[int, int]] = ()        # (record, block) stored as raw float32
+    no_minmax_blocks: Sequence[tuple[int, int]] = ()  # (record, block) whose index holds no min/max
+
+
+@dataclass
+class SynthMacRecord:
+    """One LabChart block: ``data[c]`` holds channel ``c``'s ADC counts at its own
+    rate (``ceil(ticks / d)`` values), None for a channel without data."""
+
+    ticks: int
+    data: Sequence[Optional[np.ndarray]]
+    start_unix: float                       # local wall-clock start, seconds since 1970
+    comments: Sequence[tuple[int, int, str]] = ()   # (tick, 0-based channel or -1, text)
+    marks: Sequence[int] = ()               # ticks of text-less kind-2 entries
+
+
+def _ext80(v: float) -> bytes:
+    """A float as a big-endian 80-bit IEEE extended (the inverse of ``macdoc.ext80``)."""
+    if v == 0:
+        return bytes(10)
+    m, e = math.frexp(abs(v))                  # |v| = m * 2**e, 0.5 <= m < 1
+    mant = int(m * 2.0**64)                    # explicit integer bit set
+    se = (e - 1 + 16383) | (0x8000 if v < 0 else 0)
+    return struct.pack(">HQ", se, mant)
+
+
+def _mac_pstr(text: str, size: int, nbsp: bool = False) -> bytes:
+    raw = (("\xa0" if nbsp else "") + text).encode("mac_roman")
+    return (bytes([len(raw)]) + raw).ljust(size, b"\0")[:size]
+
+
+def encode_mac_block(counts: np.ndarray, packed: bool = True) -> bytes:
+    """One Mac sample block: 0x01 + PackBits of 32 MSB-first bit planes of
+    sign-magnitude differences (big-endian bit order), or raw float32."""
+    x = np.asarray(counts, dtype=np.int64)
+    if not packed:
+        return (x / 32768.0).astype(">f4").tobytes()
+    d = np.diff(np.concatenate([[0], x]))
+    sym = (2 * np.abs(d) + (d < 0)).astype(np.uint64)
+    n = len(sym)
+    padded = np.zeros(plane_bytes(n) * 8, dtype=np.uint64)
+    padded[:n] = sym
+    planes = b"".join(np.packbits(((padded >> np.uint64(31 - p)) & np.uint64(1)).astype(np.uint8),
+                                  bitorder="big").tobytes() for p in range(32))
+    return b"\x01" + packbits_encode(planes)
+
+
+def write_mac_document(path, channels: Sequence[SynthMacChannel], records: Sequence[SynthMacRecord],
+                       tick_rate: int = 4000, movies: Optional[dict[int, str]] = None) -> None:
+    """Write a synthetic LabChart for Mac document with everything the reader
+    uses: storage blocks (``Alc2``, ``mTim``), per-channel block indexes
+    (``Map4``) and sample runs, ranges (``Gain``), units (``UntA``), comment lists,
+    titles (``STR ``), settings (``Mcro``: the channel count, calculated channels),
+    and the movie table (``CntD`` groups referenced from ``Cnt1``).  ``movies``
+    maps a record to its movie file name; ``""`` writes the empty entry LabChart
+    leaves when the capture kept no movie."""
+    from .macchart import KEY_ARITH_EXPRESSION, KEY_CALCULATION, KEY_N_CHANNELS, KEY_TITLE, MAGIC as MAC_MAGIC
+    from .macdoc import MAC_TO_UNIX, NO_MINMAX
+
+    blocks = []                               # (record, start tick, ticks)
+    for r, rec in enumerate(records):
+        start = 0
+        while start < rec.ticks:
+            n = min(BLOCK_TICKS, rec.ticks - start)
+            blocks.append((r, start, n))
+            start += n
+    body = bytearray(MAC_MAGIC + b"\xf0\x00\x01" + bytes(8))
+    toc: list[tuple[str, int, int, int]] = []
+
+    def add(typ: str, cid: int, data: bytes) -> int:
+        off = len(body)
+        body.extend(data)
+        toc.append((typ, cid, off, len(data)))
+        return off
+
+    def cnt_item(tag: bytes, payload: bytes) -> bytes:
+        return tag + struct.pack(">HII", 1, len(payload), 0) + payload
+
+    movies = movies or {}
+    cntd = bytearray()
+    groups: dict[int, tuple[int, int]] = {}             # record -> (offset, size) of its CntD group
+    for r in sorted(movies):
+        name = movies[r]
+        start = len(cntd)
+        if name:
+            cntd += cnt_item(b"ExQN", _mac_pstr(name, len(name.encode("mac_roman")) + 1))
+        else:
+            cntd += cnt_item(b"ExQN", b"\0") + cnt_item(b"ExQI", bytes(4))
+        groups[r] = (start, len(cntd) - start)
+    if cntd:
+        add("CntD", 1, bytes(cntd))
+    cnt1 = bytearray()
+    for r in range(len(records)):
+        ks = [k for k, b in enumerate(blocks) if b[0] == r]
+        e = bytearray(44)
+        struct.pack_into(">HH", e, 0, ks[0] + 1, ks[-1] + 1)
+        if r in groups:
+            struct.pack_into(">IIH", e, 16, groups[r][1], groups[r][0], 1)
+        struct.pack_into(">H", e, 26, 1)
+        cnt1 += e
+    add("Cnt1", 1, bytes(cnt1))
+
+    # comment lists, outside the table of contents (reached through Alc2)
+    comment_ptr: dict[int, int] = {}
+    number = 0
+    for k, (r, start, n) in enumerate(blocks):
+        rec = records[r]
+        items = [(t - start, ch, text, 1) for t, ch, text in rec.comments if start <= t < start + n]
+        items += [(t - start, -1, "", 2) for t in rec.marks if start <= t < start + n]
+        if not items:
+            continue
+        comment_ptr[k] = len(body)
+        head, texts = bytearray(struct.pack(">H", len(items))), bytearray()
+        for tib, ch, text, kind in items:
+            raw = text.encode("mac_roman")
+            length = 3 + len(raw) if kind == 1 else 0
+            if kind == 1:
+                number += 1
+            head += struct.pack(">IHIHiI", length, tib, 0, number if kind == 1 else 0,
+                                -1 if ch < 0 else 1 << ch, kind)
+            if kind == 1:
+                texts += struct.pack(">IHB", length, 0, len(raw)) + raw
+        body.extend(head + texts)
+
+    t0 = records[0].start_unix if records else 0.0
+    alc, mtim = bytearray(), bytearray()
+    for k, (r, start, n) in enumerate(blocks):
+        when = records[r].start_unix
+        secs = int(math.floor(when))
+        alc += struct.pack(">HHHII", n, r + 1, 14, start, secs + MAC_TO_UNIX) + struct.pack(">d", when - secs)
+        alc += struct.pack(">H6xI", 1, comment_ptr.get(k, 0xFFFFFFFF))
+        micros = int(round(1e9 + (when - t0) * 1e6 + start * 1e6 / tick_rate))
+        mtim += struct.pack(">Qf", micros, 0.0)
+    add("Alc2", 1, bytes(alc))
+    add("CmtM", 1, bytes(8))
+
+    gains: list[tuple[str, float]] = []
+    units_list: list[tuple[str, float, float, bool]] = []
+    gain_of, units_of = [], []
+    for c in channels:
+        g = (c.base_units, c.full_scale)
+        if c.decimation and g not in gains:
+            gains.append(g)
+        gain_of.append(gains.index(g) + 1 if c.decimation else 0)
+        if c.decimation and c.units is not None:
+            units_list.append(c.units)
+            units_of.append(len(units_list))
+        else:
+            units_of.append(0)
+    unta = bytearray()
+    for name, slope, offset, on in units_list:
+        e = bytearray(130)
+        struct.pack_into(">HHH", e, 0, 0x0205, 0, 0x0100 if on else 0)
+        e[6:16], e[16:26] = _ext80(offset), _ext80(slope)
+        e[26:34] = _mac_pstr(name, 8, nbsp=True)
+        cal = ("0.0 V", f"{offset:g}", "1.0 V", f"{slope + offset:g}")
+        for i, s in enumerate(cal):
+            e[0x52 + 12 * i:0x52 + 12 * (i + 1)] = _mac_pstr(s, 12)
+        unta += e
+    add("UntA", 1, bytes(unta))
+    gain = bytearray()
+    for i, (base, fs) in enumerate(gains):
+        gain += _mac_pstr(base, 34, nbsp=(base == "V")) + struct.pack(">dddd", fs, fs, 32767 / 32768, -32767 / 32768)
+        gain += struct.pack(">HHH", 0, 3, i + 1)
+    add("Gain", 1, bytes(gain))
+    add("mTim", 1, bytes(mtim))
+    add("vers", 1, bytes.fromhex("07008000"))
+    add("vers", 2, bytes.fromhex("07208000"))
+    add("vers", 100, bytes.fromhex("07208000"))
+
+    for ci, c in enumerate(channels):
+        entries = bytearray()
+        for k, (r, start, n) in enumerate(blocks):
+            if not c.decimation:
+                entries += bytes(24)
+                continue
+            d = c.decimation
+            data = np.asarray(records[r].data[ci], dtype=np.int64)
+            x = data[-(-start // d): -(-(start + n) // d)]
+            b = sum(1 for kk in range(k) if blocks[kk][0] == r)       # block number within the record
+            packed = (r, b) not in c.raw_blocks
+            blob = encode_mac_block(x, packed)
+            off = len(body)
+            body.extend(blob)
+            if (r, b) in c.no_minmax_blocks:
+                mx = mn = NO_MINMAX
+            else:
+                mx, mn = float(np.max(x)) / 32768.0, float(np.min(x)) / 32768.0
+            entries += struct.pack(">IIffHHI", off, len(blob), mx, mn, gain_of[ci], 19 if packed else 16,
+                                   units_of[ci] << 16 | (d if d > 1 else 0))
+        add("Map4", ci + 1, bytes(entries))
+
+    props = bytearray(b"\x00\x01" + struct.pack(">HIh", KEY_N_CHANNELS, 0, len(channels)))   # int16, document level
+    for ci, c in enumerate(channels):
+        def prop(key: int, text: str, trailer: bytes = b"") -> bytes:
+            raw = text.encode("mac_roman") + trailer
+            return b"\x00\x08" + struct.pack(">HI", key, ci + 1) + bytes([len(raw)]) + raw
+        props += prop(KEY_TITLE, c.title)
+        if c.calculation:
+            props += prop(KEY_CALCULATION, c.calculation)
+        if c.expression:
+            props += prop(KEY_ARITH_EXPRESSION, c.expression, b"\x01")
+    add("Mcro", 30001, bytes(props))
+    for ci, c in enumerate(channels):
+        add("STR ", 1100 + ci, _mac_pstr(c.title, len(c.title.encode("mac_roman")) + 1))
+
+    table = b"".join(typ.encode("latin-1") + struct.pack(">HII", cid, off, ln) for typ, cid, off, ln in toc)
+    struct.pack_into(">II", body, 24, len(body), len(table))
+    with open(path, "wb") as fh:
+        fh.write(bytes(body) + table)

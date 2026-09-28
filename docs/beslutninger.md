@@ -2,6 +2,40 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-28 (6) — LabChart for Mac-dokumenter læses gennem samme API
+
+- **Emils ønske:** understøttelse af LabChart 7 for Mac's egne dokumenter (gemt uden
+  filtypenavn), med studiemappen som materiale og fundene løbende i en MD-fil
+  (`docs/MAC_FORMAT.md`).
+- **Læseren:** `macdoc.py` gør et dokument til samme `ChartData` + et blokindeks med
+  `AdichtFile`s grænseflade; API, eksport, CLI og app er uændrede ovenpå. Dokumentet genkendes
+  på de første bytes, ikke på navnet. Verificeret mod de 10 WinChart-eksporter i mappen:
+  rådata sample-eksakt (1 485 kanal×blok-kombinationer), LSB/enheder, kommentarer og
+  starttider (±5 ms; eksporten afrunder til 10 ms).
+- **Beregnede kanaler lagres ikke i dokumenterne** (LabChart for Mac regnede dem ved
+  tegning). De genberegnes IKKE: det følger reglen om, at læseren aldrig genberegner, og en
+  genberegning ville ikke være LabCharts tal. De vises som "calculated, not stored" med den
+  lagrede definition og er grå i kanal- og eksportdialogerne. **Åbent for Emil:** skal appen
+  kunne genberegne dem (som et bevidst, markeret valg, verificeret mod eksporternes float32-
+  kanaler, hvor de findes)?
+- **Langsomme kanaler beholder deres egen samplerate** (100 Hz på en 4 kHz-tick): ingen
+  opsampling, som WinChart-eksporten laver (dens mellemværdier er LabCharts interpolation,
+  ikke lagrede data). Værdien under markøren er den seneste sample. Eksport af kanaler med
+  forskellige samplerater i én tabel afvises som før, nu med rategrupperne i beskeden.
+  **Åbent for Emil:** skal eksporten kunne opsample eller lave én tabel pr. rate?
+- **Blokke uden gemt min/max** (hver blok af EMG-kanalerne i 4 dokumenter, 15 % af de
+  langsomme kanalers blokke): GUI-tråden dekoder dem ikke; arbejdstråden udfylder dem.
+- **Tider:** blokkenes start er lokal vægurstid uden zone, gemt med UTC-offset 0, som
+  eksporten gør.
+- **Film:** dokumenterne navngiver LabChartMovieN.mov pr. blok (`Cnt1`/`CntD`), men ingen af
+  filerne findes i mappen, så tidskoblingen kan ikke afkodes; kun navnene vises.
+- **Rettet undervejs:** `macsettings` læste egenskab `0x2849` (21 i alle filer) som
+  kanalantallet; det er `0x287F` (lig antallet af `Map4`-kanaler i alle 15 dokumenter).
+  Og beregningernes indstillingsnøgler er ikke faste: LabChart tildeler hver udvidelse et
+  nøgleområde, som filens `McrE` registrerer, og som flytter sig mellem installationer (tre
+  dokumenter og to indstillingsfiler har andre områder). `macchart.extension_keys` slår
+  nøglerne op i registret; med faste nøgler manglede de flyttede filers udtryk og kilder.
+
 ## 2026-09-28 (5) — Dock-ikonet: den pakkede Mac-app sætter intet applikationsikon
 
 - **Symptom** (Emil, på en Retina-Mac med dmg'en fra *Build installers* på `main`):

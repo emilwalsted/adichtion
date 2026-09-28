@@ -4,7 +4,8 @@ Working notes on the native document format of LabChart 7 for Mac, kept up to
 date while support for it is built. It complements `FORMAT.md` (the Windows
 `.adicht` format) and `CALCULATED_CHANNELS.md` §1 (the container and the
 settings properties, which were decoded first). Everything was derived from the
-files; nothing comes from ADInstruments documentation.
+files; nothing comes from ADInstruments documentation. How adichtion maps a
+document onto its API is in §9.
 
 Status words as in `FORMAT.md`: **verified** (checked against LabChart's own
 output: here the WinChart `.adicht` export of the same recording),
@@ -13,17 +14,26 @@ output: here the WinChart `.adicht` export of the same recording),
 
 ## Evidence
 
-- 14 documents and 1 settings file from one study (2016–17): created with
+- 15 documents and 9 settings files (one next to the documents, eight
+  processing templates) from one study (2016–17). The documents were created with
   LabChart 7.0 and last saved with 7.2 (`vers` chunks), PowerLab with an EMG
   amplifier, 9 raw inputs (5 × EMG at 4 kHz, 4 × pressure/flow at 100 Hz) and
-  up to 15 calculated channels, 7–32 LabChart blocks each, 45–61 MB.
-- 10 of the 14 documents have a **WinChart export** (`.adicht` v26, written by
+  3–15 calculated channels (12, 23 or 24 channels in all), 7–32 LabChart
+  blocks each, 45–61 MB.
+- 10 of the documents have a **WinChart export** (`.adicht` v26, written by
   LabChart for Mac's "Read/Write WinChart Files" extension) of the same
   recording; they are matched by the exact tick count of every block. These
   exports are the reference below. A document can be newer than its export
-  (the settings, comments and one channel were edited later in some of them).
-- The files carry no extension. macOS identifies them by their type/creator
-  metadata; adichtion identifies them by the magic at offset 0.
+  (the settings, comments, titles and one channel were edited later in some of
+  them).
+- The files carry no extension. macOS identifies them by their classic Finder
+  type and creator codes: `CRec`/`MM16` for the documents, `CReS`/`MM16` for
+  the templates (the settings file next to the documents is `CRec` as well);
+  they keep a small resource fork. adichtion identifies them by the magic at
+  offset 0 of the data fork. A settings file has the same magic and no `Map4`
+  chunks.
+- The documents name 41 movie files of LabChart's video capture; none of them
+  is in the study folder (§7).
 
 ## 1. Container
 
@@ -39,8 +49,8 @@ file offsets stored inside chunks.
 | chunk | content | status |
 |---|---|---|
 | `vers` 1, 2, 100 | 4 bytes: `07 00 80 00` = 7.0.0, `07 20 80 00` = 7.2.0 (id 1 the creating version, 2/100 the saving one) | inferred |
-| `CntD` 1 | the movie files of the video capture, as `ExQN` entries with a Pascal file name (`LabChartMovieN.mov`) | inferred |
-| `Cnt1` 1 | one 44-byte entry per LabChart block: `uint16 first, last` storage block (1-based), then 40 bytes, mostly zero (video linkage?) | consistent (first/last) |
+| `CntD` 1 | the movie table: tagged items for each LabChart block with a movie (§7) | consistent |
+| `Cnt1` 1 | one 44-byte entry per LabChart block: first and last storage block, the block's movie entry (§7) | consistent |
 | `Alc2` 1 | one 34-byte entry per storage block (§2) | verified |
 | `mTim` 1 | one 12-byte entry per storage block: `uint64` microseconds (the classic Mac `Microseconds()` clock), `float32` unknown | consistent |
 | `Map4` *n* | the block index of channel *n* (§3) | verified |
@@ -48,9 +58,30 @@ file offsets stored inside chunks.
 | `UntA` 1 | units conversions (§5) | verified |
 | `CmtM` 1 | not the comments (520 bytes; unknown) | — |
 | `SetI` 1 | per input: coupling and "Raw Data from Input *k*" as text | inferred |
-| `Mcro` 30001/30002 | the document's settings properties: titles, calculations (`CALCULATED_CHANNELS.md`) | verified |
-| `STR ` 1100… | channel titles | verified |
-| `Mcro` (small ids), `McrE`, `McrV`, `wndS`, `FinS`, `FInf` | user macros, window state, Finder info | not needed |
+| `Mcro` 30001/30002 | the document's settings properties: channel count, titles, calculations (§1.1, `CALCULATED_CHANNELS.md`) | verified |
+| `McrE` 1 | the extension registry: the key range LabChart gave each extension; the keys of the calculations' settings follow it (`CALCULATED_CHANNELS.md` §1) | consistent |
+| `STR ` 1100… | channel titles (§1.1) | verified |
+| `Mcro` (small ids), `McrV`, `wndS`, `FinS`, `FInf` | user macros, window state, Finder info | not needed |
+
+### 1.1 Channels and titles
+
+- The number of channels is the number of `Map4` chunks (ids 1…*n*, §3). The
+  document-level settings property `0x287F` (int16) holds the same number in
+  all 15 documents; the settings files have it too. `0x2849`, first read as
+  the channel count, is 21 in all 24 files whatever the count. **Consistent.**
+- Titles are the `STR ` resources from id 1100, one per channel; every file
+  has 32 of them (the unused ones keep old titles). The settings' title
+  property (`0x290B`) holds the same text. They equal the export's titles for
+  199 of 213 channels; the other 14 were renamed or added after the export.
+  **Verified** with that allowance.
+- A file can carry settings for channels beyond its count, calculated ones
+  included (left over from an earlier setup): `adichtion macsettings` hides
+  them unless given `--verbose`.
+- The settings keys of the calculations (Arithmetic expression, RMS and
+  spirometry sources, …) are not fixed: they follow the extension key ranges
+  in `McrE`, which differ in three of the documents (and two settings files).
+  With the keys resolved through the registry, every calculated channel of
+  every file has a complete definition (`CALCULATED_CHANNELS.md` §1).
 
 ## 2. Storage blocks and LabChart blocks (`Alc2`)
 
@@ -103,16 +134,20 @@ the number of storage blocks):
   definitions are stored (`Mcro` properties, `CALCULATED_CHANNELS.md`).
 - The data of a channel sits in one contiguous run directly before its `Map4`
   chunk, in storage-block order.
-- `−2147483648.0` in both min and max means "no min/max stored" (seen on two
-  slow channels).
+- `−2147483648.0` in both min and max means "no min/max stored". It is
+  common: every block of the five EMG channels in 4 documents, and 15 % of the
+  blocks of the decimated channels (5 446 of 37 064, scattered, in every
+  document). Why is unknown; the reader computes those from the samples when
+  it needs them (§9).
 - For full-rate channels the decoded min/max equal the index exactly in every
-  block; for decimated channels the stored samples always lie inside the
-  index's envelope but do not always reach it (the envelope appears to be
-  computed before decimation).
+  block that has one; for decimated channels the stored samples always lie
+  inside the index's envelope but do not always reach it (the envelope appears
+  to be computed before decimation).
 
 ## 4. Sample blocks
 
-A channel's samples in a storage block number `ceil(ticks / d)`.
+A channel's samples in a storage block number `ceil(ticks / d)`; sample *k*
+belongs to tick `k·d` of the block.
 
 **Format 19, packed** (all but a handful of blocks): byte `0x01`, then the
 PackBits variant of the Windows format (code 128 is a run of 129), expanding to
@@ -184,37 +219,120 @@ The comment list of a storage block is at the file offset in its `Alc2` entry:
 ```
 uint16 count
 count × header (20 bytes):
-    uint32 length of the text part (0 = none)
+    uint32 n + 3: the length of the text part after its own length field (0 = no text)
     uint16 tick within the storage block
     uint32 0
     uint16 comment number
     int32  channel mask: −1 = all channels, else bit k = channel k+1
     uint32 kind: 1 = comment, 2 = mark without text
-then, for each kind-1 header in order:
-    uint32 length, uint16 0, uint8 n, n bytes of Mac Roman text
+then, for each kind-1 header in order, the text part:
+    uint32 n + 3, uint16 0, uint8 n, n bytes of Mac Roman text
 ```
 
 - **Verified** against the export in 8 of the 10 pairs (record, tick, channel
   and text identical, 13–47 comments per document); the other two differ by a
   comment moved and a comment added after the export.
+- Lists seen: 357 with one comment, 7 with one kind-2 entry, 1 with a comment
+  and a kind-2 entry; no storage block holds two comments in these files.
 - Kind 2 occurs at most once per document, without text and with number 0:
-  most likely LabChart's single Marker (inferred).
-- Only one list with two entries was seen (a comment next to a kind-2 mark);
-  its text-part length field read `0x00070000` instead of 7, so the reader
-  relies on the Pascal length byte, not on that field.
+  most likely LabChart's single Marker (inferred). A list holding only a
+  kind-2 entry is followed by 4 zero bytes (26 bytes in all); the reader does
+  not need them.
+- In the one list with two entries, the text part's own length field reads
+  `0x00070000` instead of 7 (the headers are right, and the kind-2 header
+  carries the comment's 7 instead of 0), so the reader relies on the Pascal
+  length byte, not on the length fields.
 
 ## 7. Video
 
-`CntD` names the movie files (`LabChartMovie1.mov` …); a document can name
-several and two documents can use the same names, so they must live in a
-folder of their own next to the document. How a movie's time maps to the
-LabChart blocks (probably the 40 unexplained bytes of the `Cnt1` entries) is
-**open**: none of the movie files was available when this was written.
+Two chunks describe LabChart for Mac's video capture.
+
+**`CntD`** is a run of items `char[4] tag, uint16 1, uint32 length, uint32 0`,
+each followed by `length` bytes. `ExQN` holds a movie file name as a Pascal
+string (`LabChartMovieN.mov`); `ExQI` holds a `uint32` (0 wherever seen). The
+items tile the chunk exactly in all 15 documents. **Consistent.**
+
+**`Cnt1`** has one 44-byte entry per LabChart block:
+
+| offset | type | content | status |
+|---|---|---|---|
+| 0 | uint16 | first storage block (1-based) | consistent |
+| 2 | uint16 | last storage block | consistent |
+| 4 | 8 bytes | 0 | — |
+| 12 | uint32 | 1 on exactly one LabChart block per document, else 0 | unknown |
+| 16 | uint32 | size of the block's group of `CntD` items (33) | consistent |
+| 20 | uint32 | offset of that group in `CntD` | consistent |
+| 24 | uint16 | 1 = the block has a movie entry | consistent |
+| 26 | uint16 | 1 (2 or 3 in some blocks of one document) | unknown |
+| 28 | 16 bytes | 0 | — |
+
+- In 14 documents every movie entry names a file (41 in all, 1–6 per
+  document); the number in a name is LabChart's own counter, not the block
+  order (one document has movies 2, 3, 4, 1 on its last four blocks, another
+  only movie 3). One document, a copy made for analysis, has an empty name
+  followed by an `ExQI` item in every entry: the copy kept no movies. The
+  groups sit in `CntD` in block order, and the blocks with a movie are always
+  the last ones of a document.
+- Where the files live: presumably, as in the Windows format (`<name>
+  movies/Record<N>.wmv`), in a folder `<document name> movies` next to the
+  document. The study folder has two such folders next to the two documents of
+  those names, both empty, and no `LabChartMovie*.mov` anywhere. Its other
+  video files (two long MPEG-2 recordings from another device, short screen
+  recordings made for figures) are named by no document, and nothing in them
+  or in the documents ties their time to a block.
+- How a movie's time maps to its LabChart block (the start offset and the
+  camera delay the Windows format records) is **open** until a document comes
+  with its movie files. adichtion only lists the names (§9).
 
 ## 8. Open questions
 
 - Where the tick rate is stored (field 4 of `Alc2` is 14 at 4 kHz).
-- `mTim`'s `float32`, `CmtM`, the tail of the `Gain` entries.
+- `mTim`'s `float32`, `CmtM`, the tail of the `Gain` entries, the `Cnt1`
+  fields at 12 and 26, the `ExQI` item.
 - The movie files and their timing (§7).
-- Documents with more than 16-bit counts, other rates, or ranges that change
-  within a LabChart block.
+- Why so many blocks carry no min/max (§3).
+- Documents with more than 16-bit counts, other rates, ranges or units that
+  change within a LabChart block, or a channel recorded in only part of one
+  (the reader refuses the last two with a message).
+
+## 9. How adichtion reads a document
+
+`AdichtFile(path)` recognises a document by its first bytes
+(`macdoc.is_mac_document`, no extension needed) and builds the same data model
+as for an `.adicht` file (`macdoc.read_mac_document` gives a `ChartData` and a
+block index with the interface `AdichtFile` uses), so the API, export, command
+line and viewer work unchanged. A settings file is refused with a message
+saying so (`adichtion macsettings` reads it). Specifics:
+
+- `AdichtFile.kind` is `"mac"`, `format_label` `"LabChart for Mac document
+  (7.2)"`, `format_version` 0. LabChart blocks are `Record`s, storage blocks
+  are blocks, as for `.adicht` files.
+- **Channels without samples** (the calculated ones): `has_data(c)` is False,
+  their dtype is `"none"`, `read_raw` returns nothing and `n_samples` is 0;
+  `channel_definition(c)` gives the stored calculation in LabChart's terms
+  (`"Arithmetic: Ch9-Ch8 [cmH2O]"`). They are not recomputed
+  (`beslutninger.md`, 2026-09-28 (6)). The viewer lists them with their
+  definition but draws, exports and tabulates only stored channels.
+- **Decimated channels**: `samples_per_tick` is `1/d`, sample *k* is at tick
+  `k·d`, `Record.tick_to_sample` is `ceil(tick / d)`, and
+  `Record.sample_at(channel, tick)` gives the latest stored sample at or
+  before a tick (the viewer's value under the cursor).
+- **Min/max**: from `Map4` where stored; `AdichtFile.block_minmax(record,
+  channel, fill=True)` decodes the blocks without one and remembers the
+  result, `fill=False` returns NaN for them without decoding (what the GUI
+  thread uses; the viewer's worker fills them, and a channel without any
+  stored min/max takes its y-range from its first decoded curve).
+- **Times**: `start_utc` is the local wall-clock time with a zero UTC offset,
+  as in the WinChart export.
+- **Export**: a channel without data, or channels with different sampling
+  rates in one table, are refused with a message (listing the rate groups).
+- **Movies**: `AdichtFile.movie_files` and `mac.record_movies` (per block)
+  give the names; `videos` stays empty until the timing is known.
+- **Command line**: `info` (format, channels not stored, movie names),
+  `check` (skips channels without data, counts blocks without a stored
+  min/max, checks decimated channels against the envelope), `videos` (the
+  movie of each record), `tree` (the chunks), `export`, `macsettings`.
+- `synth.write_mac_document` writes synthetic documents with all of the above
+  (`tests/test_macdoc.py`, `tests/ui/test_macdoc_ui.py`);
+  `tests/test_integration_macdocs.py` checks real documents against their own
+  index and their exports when `ADICHTION_SAMPLES` holds them.

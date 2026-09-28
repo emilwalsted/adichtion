@@ -21,6 +21,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 - *Auto zoom* is now a toggle that fits every channel's y-axis after every zoom or scroll;
   the one-off fit is *Zoom to fit* (Ctrl+A), disabled while Auto zoom is on.
 - Toolbar buttons are icons with tooltips (name, what it does, shortcut).
+- LabChart for Mac documents (LabChart 7 for Mac's own format, no extension; recognised by
+  their first bytes) open in the app, the library and the command line: raw channels
+  sample-exact against LabChart's WinChart exports, input ranges, units conversions,
+  comments, block times, slow channels at their own rate (the value under the cursor is
+  the latest sample). Calculated channels are not stored in these documents: they are
+  listed with the stored definition and greyed out in the channel and export dialogs.
+  `adichtion videos` lists the movie each block names. Format notes: `docs/MAC_FORMAT.md`.
 
 ### Changed
 - The view can no longer be zoomed out past the whole file, and no plot can be scrolled past its
@@ -31,10 +38,19 @@ versions follow [Semantic Versioning](https://semver.org/).
 - The left axes take the width their tick labels need (the same for every channel) instead of
   a fixed 90 px, so the gap between the unit and the trace shrinks.
 
+- The export's refusal to put channels with different sampling rates in one table now lists
+  the rate groups; a channel that is not stored is refused by name.
+
 ### Fixed
 - macOS: the running app's Dock and app-switcher icon was a blurry bare "a" instead of
   the logo. The packaged app now leaves its bundle icon in place, and a run from source
   gives the Dock the full logo only.
+- `adichtion macsettings` took property `0x2849` (21 in every file) for the channel count;
+  it is `0x287F`. Settings left over from channels beyond the count are now hidden unless
+  `--verbose`.
+- LabChart for Mac settings: the keys of the calculations' settings move with the extension
+  key ranges a file records (`McrE`); read with fixed keys, files from other installations
+  lost their Arithmetic expressions and RMS/spirometry sources. They are now resolved per file.
 
 ## [0.3.0] – 2026-09-27
 

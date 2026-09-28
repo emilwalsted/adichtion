@@ -38,12 +38,22 @@ def _open(path: str) -> AdichtFile:
 
 def cmd_info(a: argparse.Namespace) -> None:
     with _open(a.file) as f:
-        print(f"{a.file}: format v{f.format_version}, {len(f.records)} records, {f.n_channels} channels, "
-              f"Chart Data {'.'.join(map(str, f.chart.format_version))}, Map parsed by {f.parse_mode}"
-              + (f", {sum(1 for v in f.videos if v.has_video)} videos in '{os.path.basename(f.movies_folder)}'" if f.videos else ""))
+        if f.kind == "mac":
+            n_missing = sum(1 for c in range(f.n_channels) if not f.has_data(c))
+            print(f"{a.file}: {f.format_label}, {len(f.records)} records, {f.n_channels} channels"
+                  + (f" ({n_missing} calculated channels not stored: LabChart for Mac computed them when drawing)" if n_missing else "")
+                  + (f", names {len(f.movie_files)} movie files ({', '.join(f.movie_files)}; timing not decoded)" if f.movie_files else ""))
+        else:
+            print(f"{a.file}: format v{f.format_version}, {len(f.records)} records, {f.n_channels} channels, "
+                  f"Chart Data {'.'.join(map(str, f.chart.format_version))}, Map parsed by {f.parse_mode}"
+                  + (f", {sum(1 for v in f.videos if v.has_video)} videos in '{os.path.basename(f.movies_folder)}'" if f.videos else ""))
         print("channels (units of record 1):")
         rec0 = f.records[0] if f.records else None
         for ci in f.channels:
+            if not f.has_data(ci.index):
+                d = f.channel_definition(ci.index)
+                print(f"  {ci.index + 1:3d} {ci.title:20} not stored" + (f"  (calculated: {d})" if d else "  (no data)"))
+                continue
             rate = rec0.sample_rate_hz(ci.index) if rec0 else float("nan")
             u = ci.units
             conv = ""
@@ -66,6 +76,16 @@ def cmd_info(a: argparse.Namespace) -> None:
 
 def cmd_videos(a: argparse.Namespace) -> None:
     with _open(a.file) as f:
+        if f.kind == "mac":
+            if not f.movie_files:
+                print("this document names no movie files")
+                return
+            print("movie files named by this document (QuickTime; how a movie's time maps to its record is "
+                  "not decoded yet):")
+            for r, name in zip(f.records, f.mac.record_movies):
+                if name:
+                    print(f"  record {r.index + 1:3d}  {name}")
+            return
         if not f.videos:
             print("no video stream in this document")
             return
@@ -85,23 +105,43 @@ def cmd_check(a: argparse.Namespace) -> None:
         walk = f.walk_subblocks()
         if [(s.offset, s.body_size) for s in walk] != [(s.offset, s.body_size) for s in f.index.subblocks]:
             sys.exit("MISMATCH: the block index of the Map stream and the Blocks_0 chain disagree")
-        n = bad = 0
+        n = bad = unchecked = 0
         for rec in f.records:
             for ch in range(f.n_channels):
+                if not f.has_data(ch):
+                    continue
+                # a Mac document's index holds the envelope of the signal before decimation:
+                # a decimated channel's samples lie inside it (MAC_FORMAT.md §3)
+                inside = f.kind == "mac" and f.index.decimation(rec.index, ch) > 1
                 for b, blk in enumerate(f.channel_record(rec.index, ch).blocks):
                     x = f.decode_block(rec.index, b, ch)
+                    if not len(x):
+                        continue
+                    if np.isnan(blk.min) or np.isnan(blk.max):
+                        unchecked += 1
+                        continue
                     mn, mx = float(x.min()), float(x.max())
                     tol = 0.0 if x.dtype == np.int32 else 1e-6 * max(1.0, abs(mn), abs(mx))
                     n += 1
-                    if abs(mn - blk.min) > tol or abs(mx - blk.max) > tol:
+                    wrong = (mn < blk.min - tol or mx > blk.max + tol) if inside else \
+                        (abs(mn - blk.min) > tol or abs(mx - blk.max) > tol)
+                    if wrong:
                         bad += 1
                         print(f"record {rec.index + 1} channel {ch + 1} block {b + 1}: decoded {mn:g}..{mx:g}, stored {blk.min:g}..{blk.max:g}")
-        print(f"{n} blocks checked, {bad} mismatches")
+        print(f"{n} blocks checked, {bad} mismatches" + (f", {unchecked} blocks without a stored min/max" if unchecked else ""))
         print("VERDICT:", "match" if bad == 0 else "MISMATCH")
         sys.exit(0 if bad == 0 else 1)
 
 
 def cmd_tree(a: argparse.Namespace) -> None:
+    from .macdoc import is_mac_document
+    if is_mac_document(a.file):
+        from .macchart import MacResFile
+        m = MacResFile(a.file)
+        print(f"{a.file}: ADInst Data Res File, {len(m.chunks)} chunks, table of contents at {m.toc_offset}")
+        for c in sorted(m.chunks, key=lambda c: c.offset):
+            print(f"  {c.type!r:8} id {c.id:<6} offset {c.offset:>12,} length {c.length:>12,}")
+        return
     with AdichtContainer(a.file) as c:
         print(f"{a.file}: format v{c.version}, cluster {c.cluster_size} B, {c.n_clusters} clusters, cluster map at {c.map_first}")
         for e in c.walk():
@@ -139,6 +179,11 @@ def _parse_channels(spec: Optional[str], n: int) -> list[int]:
 def cmd_export(a: argparse.Namespace) -> None:
     with _open(a.file) as f:
         channels = _parse_channels(a.channels, f.n_channels)
+        missing = [c + 1 for c in channels if not f.has_data(c)]
+        if a.channels and missing:
+            sys.exit(f"error: channel(s) {', '.join(map(str, missing))} are not stored in this file "
+                     "(calculated channels of a LabChart for Mac document)")
+        channels = [c for c in channels if f.has_data(c)]
         if a.range_volts:
             for item in a.range_volts:
                 ch, v = item.split("=")
@@ -201,6 +246,9 @@ def cmd_verify(a: argparse.Namespace) -> None:
 
 
 def cmd_strings(a: argparse.Namespace) -> None:
+    from .macdoc import is_mac_document
+    if is_mac_document(a.file):
+        sys.exit("a LabChart for Mac document has no Map stream; `adichtion tree` lists its chunks")
     with AdichtContainer(a.file) as c:
         mp = c.read_stream(c.find_stream("Map"))
         for off, s in tagged_strings(mp):
@@ -220,7 +268,10 @@ def cmd_infer(a: argparse.Namespace) -> None:
         print(f"record {a.record}: {rec.ticks} ticks @ {rec.tick_rate_hz:g} Hz, analysing the first {n} "
               f"({n / rec.tick_rate_hz:.1f} s); channel numbers are 1-based")
         results = infer_record(rec, channels, length=a.samples, only_float=not a.all)
-        if not results:
+        if not results and f.kind == "mac":
+            print("a LabChart for Mac document stores the definitions of its calculated channels, not their "
+                  "data: see `adichtion macsettings` (or `adichtion info`)")
+        elif not results:
             print("no calculated (float32) channels in this file; use --all or --channels to test raw channels")
         for c, hyps in results.items():
             print(f"Ch{c + 1} {f.channel_titles[c]!r} ({f.index.channel_dtype(c)}, {rec.value_label(c) or 'stored units'}):")
@@ -242,13 +293,17 @@ def cmd_macsettings(a: argparse.Namespace) -> None:
     kind = "document (with data)" if f.is_document else "settings file"
     n_doc = document_properties(f).get(KEY_N_CHANNELS)
     print(f"{a.file}: LabChart for Mac {kind}, {len(f.chunks)} chunks" + (f", {n_doc} channels" if n_doc else ""))
+    hidden = 0
     for ch, s in settings.items():
-        if n_doc and ch > n_doc and not s.is_calculated and not a.verbose:
+        if n_doc and ch > n_doc and not a.verbose:     # settings left over from channels the document no longer has
+            hidden += 1
             continue
         print(f"  {ch:3d} {s.title!r:24} {s.describe()}")
         if a.verbose:
             for key, value in sorted(s.properties.items()):
                 print(f"        {key:#06x} = {value!r}")
+    if hidden:
+        print(f"  ({hidden} more channel settings beyond channel {n_doc}, left over from earlier setups; --verbose shows them)")
 
 
 def main(argv: Optional[list[str]] = None) -> None:

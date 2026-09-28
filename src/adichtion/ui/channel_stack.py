@@ -505,6 +505,7 @@ class ChannelStack(QWidget):
         self.file: Optional[AdichtFile] = None
         self.timeline: Optional[Timeline] = None
         self.plots: list[ChannelPlot] = []
+        self._y_unset: set[int] = set()        # channels whose y-range waits for their first decoded curve
         self._visible: list[int] = []
         self._cursor: Optional[float] = None
         self._selection: Optional[tuple[float, float]] = None
@@ -541,7 +542,7 @@ class ChannelStack(QWidget):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setWidget(self.splitter)
         lay.addWidget(self.scroll, 1)
-        self.empty = QLabel("Open a .adicht file to see its channels.")
+        self.empty = QLabel("Open a LabChart file (.adicht, or a LabChart for Mac document) to see its channels.")
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setProperty("status", "muted")
         lay.addWidget(self.empty, 1)
@@ -585,9 +586,11 @@ class ChannelStack(QWidget):
             r = lod.global_range(f, c)
             if r is not None:
                 p.set_y_range(*r)
+            elif f.has_data(c):
+                self._y_unset.add(c)            # no stored min/max: the first decoded curve sets the range
             self.plots.append(p)
         self._axis_fresh = True
-        self.set_visible_channels(list(range(f.n_channels)), equalize=True)
+        self.set_visible_channels([c for c in range(f.n_channels) if f.has_data(c)], equalize=True)
         self.zoom_reset()
 
     def _clear_plots(self) -> None:
@@ -601,6 +604,7 @@ class ChannelStack(QWidget):
             p.deleteLater()
         self.plots = []
         self._visible = []
+        self._y_unset = set()
 
     def close(self) -> None:
         self.runner.stop()
@@ -914,7 +918,8 @@ class ChannelStack(QWidget):
         c, a, b, x, y, level, n = payload
         if 0 <= c < len(self.plots):
             self.plots[c].set_curve(x, y, level, (a, b), n / max(b - a, 1e-9))
-            if self._auto_zoom and c in self._visible:
+            if (self._auto_zoom and c in self._visible) or c in self._y_unset:
+                self._y_unset.discard(c)
                 self.plots[c].auto_y()          # the decoded curve replaces the coarse one: fit to that
 
     def _on_done(self, job_id: int, kind: str, result, error) -> None:

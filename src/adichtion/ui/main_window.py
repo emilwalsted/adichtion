@@ -26,7 +26,8 @@ from .timeline import Timeline
 from .video_panel import VideoPanel
 from .workers import JobRunner
 
-FILE_FILTER = "LabChart files (*.adicht);;All files (*)"
+# LabChart for Mac documents have no extension: "All files" is how they are picked
+FILE_FILTER = "LabChart files (*.adicht);;LabChart for Mac documents, all files (*)"
 MAC_FILTER = "LabChart for Mac documents and settings (*)"
 MAX_RECENT = 8
 
@@ -145,7 +146,7 @@ class MainWindow(QMainWindow):
             (a.toggled if checkable else a.triggered).connect(slot)
             return a
 
-        self.act_open = act("Open…", self.open_dialog, "Ctrl+O", "Open a .adicht file", icon="open")
+        self.act_open = act("Open…", self.open_dialog, "Ctrl+O", "Open a .adicht file or a LabChart for Mac document", icon="open")
         self.act_close = act("Close file", self.close_file, "Ctrl+W")
         self.act_export = act("Export…", self.export_dialog, "Ctrl+E",
                               "Export the file, a block or the selection as text, CSV or Excel", icon="export")
@@ -360,6 +361,10 @@ class MainWindow(QMainWindow):
         if old is not None:
             old.close()
         if f is not None:
+            for c in range(f.n_channels):        # a Mac document stores its calculations
+                d = f.channel_definition(c)
+                if d:
+                    self.set_definition(c, d + ("" if f.has_data(c) else "   (not stored: LabChart for Mac computed it when drawing)"))
             self._start_inference()
         self.fileChanged.emit(f)
 
@@ -510,8 +515,12 @@ class MainWindow(QMainWindow):
         if self.file is None:
             return
         f = self.file
-        dlg = ChannelDialog(f.channel_titles, [f.index.channel_dtype(c) == "float32" for c in range(f.n_channels)],
-                            self.stack.visible_channels, self)
+        dlg = ChannelDialog(f.channel_titles,
+                            [f.index.channel_dtype(c) == "float32" or f.channel_definition(c) is not None
+                             for c in range(f.n_channels)],
+                            self.stack.visible_channels, self,
+                            available=[f.has_data(c) for c in range(f.n_channels)],
+                            notes=[self.definitions.get(c, "") for c in range(f.n_channels)])
         if dlg.exec() == ChannelDialog.Accepted:
             chosen = dlg.selected()
             if chosen:
@@ -522,7 +531,8 @@ class MainWindow(QMainWindow):
 
     def show_all_channels(self) -> None:
         if self.file is not None:
-            self.stack.set_visible_channels(list(range(self.file.n_channels)), equalize=True)
+            self.stack.set_visible_channels([c for c in range(self.file.n_channels) if self.file.has_data(c)],
+                                            equalize=True)
 
     # -- export --------------------------------------------------------------------------
     def export_dialog(self, default_scope: Optional[str] = None) -> None:
@@ -630,7 +640,8 @@ def _stats_job(f, tl, t0, t1, stale, report):
     for c in range(f.n_channels):
         if stale():
             return None
-        report((c, lod.interval_stats(f, tl, c, t0, t1, stale=stale)))
+        if f.has_data(c):
+            report((c, lod.interval_stats(f, tl, c, t0, t1, stale=stale)))
     return f.n_channels
 
 

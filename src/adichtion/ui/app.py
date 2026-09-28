@@ -89,9 +89,13 @@ def _fatal(tb: str) -> None:
 
 
 def startup_path(argv: list[str]) -> Optional[str]:
-    """The ``.adicht`` named on the command line, if any."""
+    """The LabChart file named on the command line, if any: a ``.adicht`` file, or a
+    LabChart for Mac document (no extension; recognised by its first bytes)."""
+    from ..macdoc import is_mac_document
     for a in argv[1:]:
-        if a.lower().endswith(".adicht") and os.path.exists(a):
+        if not os.path.isfile(a):
+            continue
+        if a.lower().endswith(".adicht") or is_mac_document(a):
             return a
     return None
 

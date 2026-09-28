@@ -85,7 +85,8 @@ class ExportDialog(QDialog):
         cl = QVBoxLayout(chans)
         self.ch_group = QButtonGroup(self)
         self.rb_shown = QRadioButton(f"The channels shown ({len(shown)})")
-        self.rb_all = QRadioButton(f"All channels ({f.n_channels})")
+        n_stored = sum(1 for c in range(f.n_channels) if f.has_data(c))
+        self.rb_all = QRadioButton(f"All channels ({n_stored})")
         self.rb_pick = QRadioButton("Choose:")
         for rb in (self.rb_shown, self.rb_all, self.rb_pick):
             self.ch_group.addButton(rb)
@@ -96,8 +97,9 @@ class ExportDialog(QDialog):
         il.setContentsMargins(24, 0, 0, 0)
         self.boxes: list[QCheckBox] = []
         for c in range(f.n_channels):
-            b = QCheckBox(f"Ch {c + 1} · {f.channel_titles[c]}")
-            b.setChecked(c in shown)
+            b = QCheckBox(f"Ch {c + 1} · {f.channel_titles[c]}" + ("" if f.has_data(c) else "   (not stored)"))
+            b.setChecked(c in shown and f.has_data(c))
+            b.setEnabled(f.has_data(c))
             b.toggled.connect(lambda _on: self.rb_pick.setChecked(True))
             il.addWidget(b)
             self.boxes.append(b)
@@ -217,9 +219,9 @@ class ExportDialog(QDialog):
 
     def channels(self) -> list[int]:
         if self.rb_all.isChecked():
-            return list(range(self.file.n_channels))
+            return [c for c in range(self.file.n_channels) if self.file.has_data(c)]
         if self.rb_pick.isChecked():
-            return [i for i, b in enumerate(self.boxes) if b.isChecked()]
+            return [i for i, b in enumerate(self.boxes) if b.isChecked() and b.isEnabled()]
         return list(self._shown)
 
     def scope_label(self) -> str:

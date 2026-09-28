@@ -42,7 +42,8 @@ class StartupDialog(QDialog):
         except Exception:                            # noqa: BLE001 - cosmetic
             pass
         head.addWidget(self.logo)
-        title = QLabel(f"<b>adichtion {__version__}</b><br>Open a LabChart .adicht file, or pick up where you left off.")
+        title = QLabel(f"<b>adichtion {__version__}</b><br>Open a LabChart file (.adicht, or a LabChart for Mac "
+                       "document), or pick up where you left off.")
         title.setWordWrap(True)
         head.addWidget(title, 1)
         lay.addLayout(head)

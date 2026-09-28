@@ -31,7 +31,7 @@ def i32(v: int) -> bytes:
 def settings_blob() -> bytes:
     return b"".join([
         b"junk\x01\x02",                                                   # anything unknown is skipped
-        prop(0x04, KEY_N_CHANNELS, 0, i32(12)),                            # document level
+        prop(0x01, KEY_N_CHANNELS, 0, struct.pack(">h", 12)),              # document level, int16 as LabChart writes it
         prop(0x08, KEY_TITLE, 6, pstr("Pdi")),
         prop(0x08, KEY_CALCULATION, 6, pstr("Arithmetic…")),          # menu label with the Mac Roman ellipsis
         prop(0x08, KEY_ARITH_EXPRESSION, 6, pstr("Ch9-Ch8", b"\x01")),     # expressions end with a stray 0x01
@@ -97,6 +97,81 @@ def test_channel_settings_from_file(tmp_path):
     assert s[13].flow_calibration is None                                # the leftover spirometry key is ignored for an RMS channel
     assert s[7].describe() == "raw input"
     assert list(s) == sorted(s)
+
+
+def test_macsettings_hides_settings_beyond_the_channel_count(tmp_path, capsys):
+    """Channel 13's settings outlive a channel the file no longer has (12 channels):
+    real documents carry such leftovers, calculated ones included."""
+    from adichtion.cli import main as cli_main
+    path = tmp_path / "settings"
+    write_res_file(path, [("Mcro", 30001, settings_blob())])
+    cli_main(["macsettings", str(path)])
+    out = capsys.readouterr().out
+    assert "settings file" in out and ", 12 channels" in out
+    assert "Pdi" in out and "RMS EMGdi1" not in out
+    assert "1 more channel settings beyond channel 12" in out
+    cli_main(["macsettings", str(path), "--verbose"])
+    assert "RMS EMGdi1" in capsys.readouterr().out
+
+
+def mcre_entry(first: int, last: int, name: str) -> bytes:
+    """One 268-byte entry of the extension registry (``McrE``)."""
+    raw = name.encode("mac_roman")
+    return struct.pack(">HHH", first, last, last - first + 1) + bytes([len(raw)]) + raw.ljust(255, b"\0") + bytes(6)
+
+
+def test_extension_keys_follow_the_files_registry(tmp_path):
+    """The extensions' keys move between installations; the file's registry says where
+    (later documents of the study: Arithmetic at 0x0CB6, RMS at 0x0E04, ...)."""
+    registry = b"".join([
+        mcre_entry(0x0BB8, 0x0BC1, "Read Text Files"),   # owns 0x2BB8 now
+        mcre_entry(0x0CB6, 0x0CC9, "Arithmetic v1.0"),
+        mcre_entry(0x0E04, 0x0E0D, "Root Mean Square"),
+        mcre_entry(0x0EAE, 0x0EB7, "Respiratory Flow"),
+        mcre_entry(0x0EB8, 0x0EC1, "Respiratory Volume"),
+    ])
+    blob = b"".join([
+        prop(0x01, KEY_N_CHANNELS, 0, struct.pack(">h", 13)),
+        prop(0x08, KEY_TITLE, 6, pstr("Pdi")),
+        prop(0x08, KEY_CALCULATION, 6, pstr("Arithmetic…")),
+        prop(0x08, KEY_ARITH_EXPRESSION, 6, pstr("not an expression")),     # 0x2BB8: another extension's key here
+        prop(0x08, 0x2CB6, 6, pstr("Ch9-Ch8", b"\x01")),
+        prop(0x08, 0x2CB9, 6, pstr("cmH2O")),
+        prop(0x08, KEY_CALCULATION, 11, pstr("Spiro. Flow…")),
+        prop(0x01, 0x2EAF, 11, struct.pack(">h", 10)),
+        prop(0x18, 0x2EB2, 11, f64(1.839)),
+        prop(0x08, KEY_CALCULATION, 12, pstr("Spiro. Volume…")),
+        prop(0x01, 0x2EB9, 12, struct.pack(">h", 11)),
+        prop(0x18, 0x2EBC, 12, f64(1.09)),
+        prop(0x08, KEY_CALCULATION, 13, pstr("RMS…")),
+        prop(0x01, 0x2E05, 13, struct.pack(">h", 1)),
+    ])
+    path = tmp_path / "later settings"
+    write_res_file(path, [("McrE", 1, registry), ("Mcro", 30002, blob)])
+    ranges = macchart.extension_ranges(path)
+    assert ranges["Root Mean Square"] == (0x0E04, 0x0E0D)
+    keys = macchart.extension_keys(path)
+    assert (keys["arith_expression"], keys["arith_units"], keys["rms_source"]) == (0x2CB6, 0x2CB9, 0x2E05)
+    assert (keys["spiro_flow_source"], keys["spiro_flow_cal"], keys["spiro_vol_ratio"]) == (0x2EAF, 0x2EB2, 0x2EBC)
+    s = channel_settings(path)
+    assert s[6].describe() == "Arithmetic: Ch9-Ch8 [cmH2O]"
+    assert s[11].describe() == "Spirometry flow of Ch10, 1.839 L/s per V"
+    assert s[12].describe() == "Spirometry volume of Ch11, volume ratio k = 1.09"
+    assert s[13].describe() == "Root mean square of Ch1"
+    # the ranges of the 2016 files give exactly the KEY_* constants
+    old = tmp_path / "2016 settings"
+    write_res_file(old, [("McrE", 1, b"".join([
+        mcre_entry(0x0BB8, 0x0BCB, "Arithmetic v1.0"),
+        mcre_entry(0x0DC3, 0x0DCC, "Root Mean Square"),
+        mcre_entry(0x0E4A, 0x0E53, "Respiratory Flow"),
+        mcre_entry(0x0E54, 0x0E5D, "Respiratory Volume"),
+    ])), ("Mcro", 30001, settings_blob())])
+    assert macchart.extension_keys(old) == macchart.DEFAULT_EXTENSION_KEYS
+    # without a registry the keys are those of the 2016 files
+    plain = tmp_path / "old settings"
+    write_res_file(plain, [("Mcro", 30001, settings_blob())])
+    assert macchart.extension_keys(plain) == macchart.DEFAULT_EXTENSION_KEYS
+    assert macchart.extension_ranges(plain) == {}
 
 
 def test_not_a_mac_file(tmp_path):
