@@ -2,7 +2,7 @@
 
 The packaged app must not set a runtime application icon: the bundle's ``adichtion.icns``
 is the Dock and app-switcher icon, and ``QApplication.setWindowIcon`` would replace it
-with a bitmap built by Qt (see ``app.application_icon_choice`` and docs/beslutninger.md
+with an image built by Qt (see ``app.application_icon_choice`` and docs/beslutninger.md
 2026-09-28 (4)). Running from source there is no such icon, so the app sets its own.
 
 The test is structural and exact: a candidate path counts only when it is the main

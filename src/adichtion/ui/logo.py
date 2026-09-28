@@ -208,8 +208,9 @@ def dock_icon():
 
     ``app_icon()`` is wrong for the Dock. Qt 6.9.1 to 6.10.0 (what the packaged app gets,
     PySide6 6.9.3, because min_os_version 12.0 excludes the macosx_13_0 wheels of 6.10+)
-    turn the QIcon into an NSImage whose point size is its FIRST representation, the 16 px
-    bare "a", which the Dock then blows up. Qt 6.10.2 and later pick one pixmap for the
+    turn the QIcon into an NSImage whose size is never set, so by AppKit's documented rule
+    it is the size of its FIRST representation, the 16 px bare "a"; the Dock then showed
+    that "a" blown up (inferred from the symptom, not measured on a Mac). Qt 6.10.2 and later pick one pixmap for the
     dock tile, which is also the bare "a" whenever tile size x pixel ratio <= 64 px. With
     only the logo, every Qt version hands the Dock the logo. (The packaged app sets no application icon at all:
     its adichtion.icns is the Dock icon, see ``app.application_icon_choice``.)"""

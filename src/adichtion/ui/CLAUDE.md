@@ -65,9 +65,12 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   back (`_driving`); an external cursor move while playing re-anchors the clock. The data
   table is rebuilt at most 10×/s while playing; overlays and readout follow every tick.
 - **No run-time application icon in the packaged macOS app.** `QApplication.setWindowIcon`
-  replaces the bundle's icns in the Dock and Cmd-Tab with one bitmap Qt builds; PySide6
-  6.9.3 (what the dmg ships) built it from the icon's first, 16 px representation. Window
-  icons are harmless on macOS (they never reach the Dock). Anything that must show in the
-  Dock from source gets only large full-logo pixmaps (`logo.dock_icon()`).
+  replaces the bundle's icns in the Dock and Cmd-Tab with an NSImage Qt builds from the
+  QIcon; in PySide6 6.9.3 (what the dmg ships) that image is sized by the icon's first,
+  16 px representation (the bare "a"). A window icon reaches the Dock only through
+  `QCocoaIntegration::focusWindowChanged`, when the app has neither a bundle icon nor a
+  `QGuiApplication` icon: the packaged app is covered by its `CFBundleIconFile`, a run from
+  source by `logo.dock_icon()` (large full-logo pixmaps only). Keep both, or `MainWindow`'s
+  `app_icon()` (16 px first) can end up in the Dock under a non-bundled Python.
 - Tests grab the widgets offscreen (`widget.grab().save(...)`) when a look needs checking;
   the platform plugin prints "does not support propagateSizeHints", which is noise.

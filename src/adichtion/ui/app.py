@@ -31,12 +31,15 @@ def application_icon_choice(platform: str, packaged: bool) -> Optional[str]:
     the tests.
 
     - ``None`` in the packaged macOS app: the bundle's ``adichtion.icns`` stays the Dock
-      and app-switcher icon. Setting one at run time replaces it with a single bitmap Qt
-      builds, and the Qt the app ships (PySide6 6.9.3) built it from the 16 px bare "a",
-      so the running app showed a blurry "a" in the Dock (docs/beslutninger.md
-      2026-09-28 (4)).
-    - ``"dock"`` on macOS from source: ``logo.dock_icon()``, the full logo only (there is
-      no bundle icon; without it the Dock shows the Python interpreter's).
+      and app-switcher icon. Setting one at run time replaces it with an NSImage Qt builds
+      from the QIcon; in the Qt the app ships (PySide6 6.9.3, like all of Qt 6.9.1-6.10.0)
+      that image takes its size from the icon's first representation, ``app_icon()``'s
+      16 px bare "a", and the running app showed a blurry "a" in the Dock
+      (docs/beslutninger.md 2026-09-28 (4)).
+    - ``"dock"`` on macOS from source: ``logo.dock_icon()``, the full logo only. There is
+      no bundle icon of ours; without an application icon the Dock shows the Python
+      interpreter's, or, under a non-bundled Python, Qt promotes the focused window's
+      icon (``MainWindow``'s ``app_icon()``, the 16 px "a" first) to the Dock.
     - ``"app"`` on Windows and Linux: ``logo.app_icon()`` with every size (taskbar,
       window list), as before.
     """
@@ -54,6 +57,21 @@ def _running_as_packaged_mac_app(app) -> bool:
         return is_packaged_app((app.applicationFilePath(), sys.executable))
     except Exception:                                # noqa: BLE001 - never block start-up
         return False
+
+
+def _set_application_icon(app) -> Optional[str]:
+    """Set the application icon ``application_icon_choice`` picks for this platform (none
+    in the packaged macOS app) and return the choice. Cosmetic: never raises."""
+    try:
+        choice = application_icon_choice(sys.platform, _running_as_packaged_mac_app(app))
+        if choice is not None:
+            from .logo import app_icon, dock_icon
+            icon = dock_icon() if choice == "dock" else app_icon()
+            if icon is not None:
+                app.setWindowIcon(icon)
+        return choice
+    except Exception:                                # noqa: BLE001 - cosmetic
+        return None
 
 
 def _fatal(tb: str) -> None:
@@ -131,15 +149,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     from . import theme
     theme.apply_theme(app)
-    try:
-        choice = application_icon_choice(sys.platform, _running_as_packaged_mac_app(app))
-        if choice is not None:
-            from .logo import app_icon, dock_icon
-            icon = dock_icon() if choice == "dock" else app_icon()
-            if icon is not None:
-                app.setWindowIcon(icon)
-    except Exception:                                # noqa: BLE001 - cosmetic
-        pass
+    _set_application_icon(app)
     try:
         from .main_window import MainWindow
         win = MainWindow()

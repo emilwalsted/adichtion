@@ -123,7 +123,8 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 - **The packaged macOS app sets no application icon** (`ui/app.py`
   `application_icon_choice`, `ui/macbundle.py`): the bundle's `adichtion.icns`
   is the Dock and Cmd-Tab icon. `QApplication.setWindowIcon` replaced it, and
-  the PySide6 the dmg ships (6.9.3, pinned by `min_os_version = "12.0"`) built
-  that bitmap from the 16 px bare "a" (`docs/beslutninger.md` 2026-09-28 (4)).
+  in the PySide6 the dmg ships (6.9.3, pinned by `min_os_version = "12.0"`)
+  that image is sized by its first, 16 px representation, the bare "a"
+  (`docs/beslutninger.md` 2026-09-28 (4)).
   Don't reintroduce a run-time app icon on macOS; from source it is
   `logo.dock_icon()`, the full logo only.

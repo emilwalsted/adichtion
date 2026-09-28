@@ -91,22 +91,48 @@ def test_the_packaged_mac_app_sets_no_application_icon():
         assert application_icon_choice(platform, packaged=True) == "app"
 
 
-def test_main_follows_the_icon_choice(monkeypatch):
-    """main() asks macbundle only on macOS and never lets a failure there stop start-up."""
+@pytest.mark.parametrize("platform, packaged, sizes", [
+    ("darwin", True, None),                                  # the bundle's icns stays
+    ("darwin", False, list(logo.DOCK_ICON_SIZES)),          # from source: the logo only
+    ("linux", False, [16, 24, 32, 48, 64, 128, 256, 512]),  # as before
+    ("win32", True, [16, 24, 32, 48, 64, 128, 256, 512]),
+])
+def test_main_sets_the_chosen_application_icon(qapp, monkeypatch, platform, packaged, sizes):
+    """What main() hands QApplication.setWindowIcon (via _set_application_icon)."""
     from adichtion.ui import app as app_mod
+
+    monkeypatch.setattr(app_mod.sys, "platform", platform)
+    monkeypatch.setattr(app_mod, "_running_as_packaged_mac_app", lambda app: packaged)
+    calls = []
+
+    class FakeApp:
+        def setWindowIcon(self, icon):
+            calls.append(icon)
+
+    app_mod._set_application_icon(FakeApp())
+    if sizes is None:
+        assert calls == []
+    else:
+        assert len(calls) == 1 and [s.width() for s in calls[0].availableSizes()] == sizes
+
+
+def test_packaged_mac_detection_asks_macbundle_only_on_macos(monkeypatch):
+    """_running_as_packaged_mac_app asks macbundle only on macOS, passes the bundle AppKit
+    uses first, and never lets a failure there stop start-up."""
+    from adichtion.ui import app as app_mod
+    import adichtion.ui.macbundle as mb
 
     class FakeApp:
         def applicationFilePath(self):
             return "/Applications/adichtion.app/Contents/MacOS/adichtion"
 
-    monkeypatch.setattr(app_mod.sys, "platform", "linux")
-    assert app_mod._running_as_packaged_mac_app(FakeApp()) is False
-    monkeypatch.setattr(app_mod.sys, "platform", "darwin")
-    import adichtion.ui.macbundle as mb
     seen = []
     monkeypatch.setattr(mb, "is_packaged_app", lambda exes: seen.append(tuple(exes)) or True)
+    monkeypatch.setattr(app_mod.sys, "platform", "linux")
+    assert app_mod._running_as_packaged_mac_app(FakeApp()) is False and seen == []
+    monkeypatch.setattr(app_mod.sys, "platform", "darwin")
     assert app_mod._running_as_packaged_mac_app(FakeApp()) is True
-    assert seen[0][0] == FakeApp().applicationFilePath()      # the bundle AppKit uses, first
+    assert seen[0][0] == FakeApp().applicationFilePath()
 
     def boom(exes):
         raise RuntimeError("no plist")
@@ -115,7 +141,7 @@ def test_main_follows_the_icon_choice(monkeypatch):
 
 
 def _icns_chunks(path):
-    """{type: PNG bytes} for the image chunks of an .icns file."""
+    """{type: body bytes} for every chunk of an .icns file."""
     import struct
 
     with open(path, "rb") as fh:
@@ -124,9 +150,7 @@ def _icns_chunks(path):
     chunks, i = {}, 8
     while i < len(data):
         kind, n = data[i:i + 4].decode("latin-1"), struct.unpack(">I", data[i + 4:i + 8])[0]
-        body = data[i + 8:i + n]
-        if body[:8] == b"\x89PNG\r\n\x1a\n":
-            chunks[kind] = body
+        chunks[kind] = data[i + 8:i + n]
         i += n
     return chunks
 
@@ -140,8 +164,9 @@ def test_installer_icns_holds_the_logo_from_128_px(qapp):
     expected = {"ic11": 32, "ic12": 64, "ic07": 128, "ic08": 256, "ic13": 256,
                 "ic09": 512, "ic14": 512, "ic10": 1024}
     chunks = _icns_chunks(os.path.join(ROOT, "installer", "adichtion.icns"))
-    assert set(chunks) == set(expected)
+    assert set(chunks) - {"TOC "} == set(expected)          # no other image chunk, PNG or legacy
     for kind, px in expected.items():
+        assert chunks[kind][:8] == b"\x89PNG\r\n\x1a\n", kind
         img = QImage.fromData(chunks[kind])
         assert (img.width(), img.height()) == (px, px), kind
         assert _is_logo(img) == (px > logo.ICON_MAX_PX), (kind, px)
