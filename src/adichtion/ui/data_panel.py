@@ -26,7 +26,7 @@ class DataPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
-        self.where = QLabel("Click a channel to place the cursor; Shift+click to select an interval.")
+        self.where = QLabel("Click a channel to place the cursor; drag, or Shift+click, to select an interval.")
         self.where.setWordWrap(True)
         self.where.setProperty("status", "muted")
         lay.addWidget(self.where)
@@ -57,7 +57,7 @@ class DataPanel(QWidget):
         if f is not None and f.records:
             rec0 = f.records[0]
             self._units = [rec0.value_label(c) for c in range(f.n_channels)]
-        self.where.setText("Click a channel to place the cursor; Shift+click to select an interval."
+        self.where.setText("Click a channel to place the cursor; drag, or Shift+click, to select an interval."
                            if f is not None else "")
 
     def _channel_name(self, c: int) -> str:
@@ -70,7 +70,7 @@ class DataPanel(QWidget):
         if t is None:
             self.table.setRowCount(0)
             self._mode = "none"
-            self.where.setText("Click a channel to place the cursor; Shift+click to select an interval.")
+            self.where.setText("Click a channel to place the cursor; drag, or Shift+click, to select an interval.")
             return
         pos = self.timeline.locate(t)
         self.where.setText(f"Cursor: {self.timeline.describe(t)}   (file time {t:.3f} s)")

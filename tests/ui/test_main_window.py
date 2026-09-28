@@ -68,7 +68,7 @@ def test_zoom_and_channel_selection(qapp, window, synthetic):
     assert window.stack.view_range() == pytest.approx((0.0, 45.0))
     window.stack.set_range(10.0, 10.5)
     assert wait_until(qapp, lambda: all(p.level == "samples" for p in window.stack.plots))
-    window.stack.auto_zoom()
+    window.stack.zoom_to_fit()
     lo, hi = window.stack.plots[1].vb.viewRange()[1]
     with AdichtFile(synthetic["path"]) as f:
         seg = f.records[0].read(1, 10000, 10500)

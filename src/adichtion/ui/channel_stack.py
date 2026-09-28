@@ -7,9 +7,9 @@
   when zoomed in far enough; the first picture after a pan/zoom comes from the
   file's block index at once, the decoded one follows from the worker thread;
 * click = cursor on every channel (the overlay of each channel shows its value),
-  Shift+click = interval from the cursor to the click; scroll = x zoom, drag =
-  pan; the wheel over a y-axis (or the small buttons in a channel's corner)
-  zooms that channel's y alone.
+  Shift+click or a drag = interval; scroll = x zoom, Alt+drag (or the middle button, or
+  a sideways swipe) = pan; the wheel over a y-axis (or the small buttons in a channel's
+  corner) zooms that channel's y alone.  A right click opens the context menu.
 """
 from __future__ import annotations
 
@@ -30,6 +30,10 @@ from .timeline import Timeline
 from .workers import JobRunner
 
 RENDER_DEBOUNCE_MS = 60
+AXIS_MIN_WIDTH = 44             # floor (px) of the shared left-axis width
+AXIS_STEP = 4                   # the shared width moves in steps, and only shrinks past AXIS_HYSTERESIS,
+AXIS_HYSTERESIS = 12            # so it does not shift the plots on every y-zoom
+CLICK_SLOP_PX = 4               # a drag shorter than this is a click, not an interval
 RENDER_MARGIN = 0.25            # fraction of the visible span decoded on each side, for small pans
 MIN_X_RANGE_S = 0.002
 
@@ -41,21 +45,34 @@ def _pen(colour, width: float = 1.0, style=Qt.SolidLine) -> QPen:
 
 
 class ChannelViewBox(pg.ViewBox):
-    """A ViewBox whose body pans and zooms x only (y belongs to the axis and the corner
-    buttons) and which reports plain left clicks."""
+    """A ViewBox whose body works on the time axis only (y belongs to the axis and the corner
+    buttons): a plain left click reports the cursor; a left drag selects an interval and
+    Alt+drag pans (``drag_selects`` False swaps the two); the middle button always pans and
+    the wheel zooms.  A right click asks for the context menu."""
 
     sigClicked = Signal(float, object)          # x in view coordinates, keyboard modifiers
+    sigSelectDrag = Signal(float, float, bool)  # x where the drag began, x now, whether it is the last event
+    sigContextMenu = Signal(object)             # global QPoint
 
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("enableMenu", False)
         kwargs.setdefault("defaultPadding", 0.0)
         super().__init__(*args, **kwargs)
         self.setMouseMode(self.PanMode)
+        self.drag_selects = True
 
     def wheelEvent(self, ev, axis=None):
         super().wheelEvent(ev, axis=0 if axis is None else axis)
 
     def mouseDragEvent(self, ev, axis=None):
+        if ev.isStart():                        # the role is fixed for the whole drag (Alt pressed midway changes nothing)
+            self._drag_selecting = self.drag_selects != bool(ev.modifiers() & Qt.AltModifier)
+        if ev.button() == Qt.LeftButton and getattr(self, "_drag_selecting", True):
+            ev.accept()
+            x0 = self.mapSceneToView(ev.buttonDownScenePos(Qt.LeftButton)).x()
+            x1 = self.mapSceneToView(ev.scenePos()).x()
+            self.sigSelectDrag.emit(float(x0), float(x1), bool(ev.isFinish()))
+            return
         super().mouseDragEvent(ev, axis=0 if axis is None else axis)
 
     def mouseClickEvent(self, ev):
@@ -63,8 +80,36 @@ class ChannelViewBox(pg.ViewBox):
             ev.accept()
             pos = self.mapSceneToView(ev.scenePos())
             self.sigClicked.emit(float(pos.x()), ev.modifiers())
+        elif ev.button() == Qt.RightButton:
+            ev.accept()
+            self.sigContextMenu.emit(ev.screenPos().toPoint())
         else:
             super().mouseClickEvent(ev)
+
+    def pan_fraction(self, fraction: float) -> None:
+        """Move the view by ``fraction`` of its width (positive = later in time)."""
+        x0, x1 = self.viewRange()[0]
+        self.translateBy(x=fraction * (x1 - x0))
+
+    def pixels_per_second(self) -> float:
+        x0, x1 = self.viewRange()[0]
+        return float(self.width()) / max(x1 - x0, 1e-9)
+
+
+class ChannelPlotWidget(pg.PlotWidget):
+    """A PlotWidget whose sideways wheel (a trackpad swipe, a tilt wheel) pans the time axis."""
+
+    PAN_PER_NOTCH = 0.1                         # fraction of the view per 120 units of angle delta
+
+    def wheelEvent(self, ev):
+        d = ev.angleDelta()
+        if abs(d.x()) > abs(d.y()):
+            vb = self.getPlotItem().getViewBox()
+            if hasattr(vb, "pan_fraction"):
+                vb.pan_fraction(-d.x() / 120.0 * self.PAN_PER_NOTCH)
+                ev.accept()
+                return
+        super().wheelEvent(ev)
 
 
 class MarkersItem(pg.GraphicsObject):
@@ -162,18 +207,19 @@ class ChannelPlot(QWidget):
         self._curve_x = np.zeros(0)
         self._curve_y = np.zeros(0)
         self.level = ""
+        self.axis_width = theme.PLOT_AXIS_WIDTH
         self.setMinimumHeight(theme.PLOT_ROW_MIN_HEIGHT)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.vb = ChannelViewBox()
-        self.widget = pg.PlotWidget(viewBox=self.vb, axisItems={"left": MinPitchAxis(orientation="left")})
+        self.widget = ChannelPlotWidget(viewBox=self.vb, axisItems={"left": MinPitchAxis(orientation="left")})
         self.widget.setFocusPolicy(Qt.NoFocus)
         self.item = self.widget.getPlotItem()
         self.item.hideButtons()
         self.vb.disableAutoRange()               # the stack owns both ranges
         self.item.showGrid(x=True, y=True, alpha=pal["grid_alpha"])
         left = self.item.getAxis("left")
-        left.setWidth(theme.PLOT_AXIS_WIDTH)
+        left.setWidth(self.axis_width)
         left.enableAutoSIPrefix(False)            # the tick values stay in the channel's own units
         if self.units:
             # the unit as the axis label, rotated, left of the tick values (text, not
@@ -245,8 +291,21 @@ class ChannelPlot(QWidget):
         super().showEvent(ev)
         self._place_overlays()
 
+    def set_axis_width(self, width: int) -> None:
+        """The stack gives every channel the same left-axis width, so the plots' x-axes line up."""
+        if width == self.axis_width:
+            return
+        self.axis_width = width
+        self.item.getAxis("left").setWidth(width)
+        self._place_overlays()
+
+    def needed_axis_width(self) -> int:
+        """Width the left axis needs for its current tick labels (and the unit label if shown)."""
+        axis = self.item.getAxis("left")
+        return axis.needed_width() if isinstance(axis, MinPitchAxis) else self.axis_width
+
     def _place_overlays(self) -> None:
-        x = theme.PLOT_AXIS_WIDTH + 8
+        x = self.axis_width + 8
         limit = max(120, int(self.widget.width() * 0.62))
         if self.units:                                # a rotated unit needs the row's height; hide it when squeezed
             left = self.item.getAxis("left")
@@ -367,6 +426,9 @@ class MarkerStrip(pg.PlotWidget):
         self._pal = pal
         self.vb.sigXRangeChanged.connect(self._relayout)
 
+    def set_axis_width(self, width: int) -> None:
+        self.getPlotItem().setContentsMargins(width, 0, 8, 0)
+
     def set_timeline(self, timeline: Optional[Timeline]) -> None:
         item = self.getPlotItem()
         for lbl in list(self._labels) + list(self._comment_labels.values()):
@@ -435,6 +497,8 @@ class ChannelStack(QWidget):
     cursorChanged = Signal(object)              # file time (float) or None
     selectionChanged = Signal(object)           # (t0, t1) or None
     rangeChanged = Signal(float, float)         # visible file-time range
+    contextRequested = Signal(object)           # global QPoint of a right click on a plot
+    autoZoomChanged = Signal(bool)              # the "fit y after every move" toggle
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -446,6 +510,11 @@ class ChannelStack(QWidget):
         self._selection: Optional[tuple[float, float]] = None
         self._render_job = 0
         self._range_source: Optional[ChannelPlot] = None
+        self._auto_zoom = False
+        self._drag_selects = True
+        self._axis_fresh = True                 # the next measured axis width is taken as it is (no hysteresis)
+        self._axis_width = theme.PLOT_AXIS_WIDTH
+        self._drag_anchor: Optional[float] = None
         self._pal = theme.plot_palette()
         self.runner = JobRunner(self)
         self.runner.progress.connect(self._on_progress)
@@ -457,6 +526,8 @@ class ChannelStack(QWidget):
         lay.setSpacing(0)
         self.strip = MarkerStrip(self._pal)
         self.strip.vb.sigClicked.connect(self._on_clicked)
+        self.strip.vb.sigSelectDrag.connect(self._on_select_drag)
+        self.strip.vb.sigContextMenu.connect(self.contextRequested)
         self.strip.flags.sigClicked.connect(self._on_flag_clicked)
         lay.addWidget(self.strip)
         self.splitter = QSplitter(Qt.Vertical)
@@ -478,6 +549,10 @@ class ChannelStack(QWidget):
         self._timer.setSingleShot(True)
         self._timer.setInterval(RENDER_DEBOUNCE_MS)
         self._timer.timeout.connect(self._render)
+        self._axis_timer = QTimer(self)
+        self._axis_timer.setSingleShot(True)
+        self._axis_timer.setInterval(30)
+        self._axis_timer.timeout.connect(self._update_axis_width)
 
     # -- file ------------------------------------------------------------------------
     def set_file(self, f: Optional[AdichtFile]) -> None:
@@ -500,17 +575,24 @@ class ChannelStack(QWidget):
             units = rec0.value_label(c) if rec0 else ""
             colour = self._pal["cycle"][c % len(self._pal["cycle"])]
             p = ChannelPlot(c, f.channel_titles[c], rate, units, f.index.channel_dtype(c), colour, self._pal, self)
+            p.vb.drag_selects = self._drag_selects
             p.vb.sigClicked.connect(self._on_clicked)
+            p.vb.sigSelectDrag.connect(self._on_select_drag)
+            p.vb.sigContextMenu.connect(self.contextRequested)
+            p.vb.sigYRangeChanged.connect(self._schedule_axis_width)
+            p.set_axis_width(self._axis_width)
             p.markers.set_positions(self.timeline.boundaries, [m.file_time_s for m in self.timeline.comments])
             r = lod.global_range(f, c)
             if r is not None:
                 p.set_y_range(*r)
             self.plots.append(p)
+        self._axis_fresh = True
         self.set_visible_channels(list(range(f.n_channels)), equalize=True)
         self.zoom_reset()
 
     def _clear_plots(self) -> None:
         self._timer.stop()
+        self._axis_timer.stop()
         if self._range_source is not None:
             self._range_source.vb.sigXRangeChanged.disconnect(self._on_x_range)
             self._range_source = None
@@ -540,6 +622,7 @@ class ChannelStack(QWidget):
                 self.splitter.addWidget(p)
             p.show()
         self._visible = wanted
+        self._axis_fresh = True
         # order in the splitter follows the channel order
         for pos, c in enumerate(wanted):
             self.splitter.insertWidget(pos, self.plots[c])
@@ -567,9 +650,10 @@ class ChannelStack(QWidget):
                 p.vb.setXLink(master.vb)
         if master is not None:
             self.strip.vb.setXLink(master.vb)
-            self._apply_limits(master)
+            self._apply_limits()
         if equalize:
             self.equalize()
+        self._schedule_axis_width()
         self._schedule_render()
 
     def equalize(self) -> None:
@@ -581,10 +665,16 @@ class ChannelStack(QWidget):
     def _master(self) -> Optional[ChannelPlot]:
         return self.plots[self._visible[0]] if self._visible else None
 
-    def _apply_limits(self, master: ChannelPlot) -> None:
+    def _apply_limits(self) -> None:
+        """The same x limits on EVERY view (the shown plots, the hidden ones a later channel choice
+        brings back, and the marker strip): the file is the widest view, never a hair before its
+        start or past its end, whichever plot the mouse is over.  Limits on the master alone let a
+        drag on another plot leave that plot's range out of step with the rest."""
         if self.timeline is None:
             return
-        master.vb.setLimits(xMin=0.0, xMax=max(self.timeline.duration_s, MIN_X_RANGE_S), minXRange=MIN_X_RANGE_S)
+        d = max(self.timeline.duration_s, MIN_X_RANGE_S)
+        for vb in [p.vb for p in self.plots] + [self.strip.vb]:
+            vb.setLimits(xMin=0.0, xMax=d, minXRange=MIN_X_RANGE_S, maxXRange=d)
 
     # -- x range ---------------------------------------------------------------------
     def view_range(self) -> tuple[float, float]:
@@ -603,10 +693,43 @@ class ChannelStack(QWidget):
         if t1 - t0 < MIN_X_RANGE_S:
             t1 = min(d, t0 + MIN_X_RANGE_S)
         m.vb.setXRange(t0, t1, padding=0)
+        self._sync_ranges()
+
+    def _sync_ranges(self) -> None:
+        """Make every view show exactly the master's x range (a safety net: the views are linked,
+        but a limit hit on a linked view can leave it a pixel or a page off the others)."""
+        m = self._master()
+        if m is None:
+            return
+        want = m.vb.viewRange()[0]
+        for c in self._visible:
+            vb = self.plots[c].vb
+            if vb is not m.vb and max(abs(a - b) for a, b in zip(vb.viewRange()[0], want)) > 1e-9:
+                vb.setXRange(*want, padding=0)
 
     def zoom_reset(self) -> None:
         if self.timeline is not None:
             self.set_range(0.0, self.timeline.duration_s)
+
+    def center_on(self, t: float) -> None:
+        """Scroll the view (its zoom unchanged) so ``t`` is in the middle; near the start or the
+        end of the file the view stops at the edge instead, ``t`` still on screen."""
+        if self.timeline is None or self._master() is None:
+            return
+        x0, x1 = self.view_range()
+        w = x1 - x0
+        d = self.timeline.duration_s
+        a = min(max(0.0, t - w / 2), max(0.0, d - w))
+        self.set_range(a, a + w)
+
+    def scroll_view(self, fraction: float) -> None:
+        """Move the view by ``fraction`` of its width (negative = earlier), at most to the file's edges."""
+        if self.timeline is None or self._master() is None:
+            return
+        x0, x1 = self.view_range()
+        w = x1 - x0
+        a = min(max(0.0, x0 + fraction * w), max(0.0, self.timeline.duration_s - w))
+        self.set_range(a, a + w)
 
     def zoom_x(self, factor: float) -> None:
         x0, x1 = self.view_range()
@@ -620,10 +743,34 @@ class ChannelStack(QWidget):
     def zoom_out(self) -> None:
         self.zoom_x(2.0)
 
-    def auto_zoom(self) -> None:
-        """Fit every shown channel's y-axis to the data in the visible x-range."""
+    def zoom_to_fit(self) -> None:
+        """Fit every shown channel's y-axis to the data in the visible x-range (once)."""
         for c in self._visible:
             self.plots[c].auto_y()
+
+    @property
+    def drag_selects(self) -> bool:
+        """What a plain left drag does: select an interval (True) or pan (False); Alt+drag does the other."""
+        return self._drag_selects
+
+    def set_drag_selects(self, on: bool) -> None:
+        self._drag_selects = bool(on)
+        for vb in [p.vb for p in self.plots] + [self.strip.vb]:
+            vb.drag_selects = self._drag_selects
+
+    @property
+    def auto_zoom(self) -> bool:
+        """Whether every finished move (zoom, scroll, a new file range) fits the y-axes again."""
+        return self._auto_zoom
+
+    def set_auto_zoom(self, on: bool) -> None:
+        on = bool(on)
+        if on == self._auto_zoom:
+            return
+        self._auto_zoom = on
+        if on:
+            self.zoom_to_fit()
+        self.autoZoomChanged.emit(on)
 
     def _on_x_range(self, *args) -> None:
         x0, x1 = self.view_range()
@@ -648,17 +795,46 @@ class ChannelStack(QWidget):
         else:
             self.set_cursor(x)
 
+    def _on_select_drag(self, x0: float, x1: float, finished: bool) -> None:
+        """A left drag over a plot: the cursor goes where it began, the interval follows the mouse.
+        A drag under a few pixels is a click (the cursor alone)."""
+        if self.timeline is None:
+            return
+        d = self.timeline.duration_s
+        a, b = min(max(0.0, x0), d), min(max(0.0, x1), d)
+        m = self._master()
+        slop = CLICK_SLOP_PX / m.vb.pixels_per_second() if m is not None else 0.0
+        if self._drag_anchor is None or abs(a - self._drag_anchor) > 1e-9 and abs(x0 - self._drag_anchor) > 1e-9:
+            self._drag_anchor = a                # a new drag (also after one that never got its release)
+            self.set_cursor(a)
+        if abs(b - a) <= slop and self._selection is None:
+            if finished:
+                self._drag_anchor = None
+            return
+        if abs(b - a) <= slop and finished:
+            self.clear_selection()
+        else:
+            self.set_selection(a, b)
+        if finished:
+            self._drag_anchor = None
+
     def _on_flag_clicked(self, scatter, points, *args) -> None:
         if len(points):
             self.set_cursor(float(points[0].pos().x()))
 
-    def set_cursor(self, t: Optional[float], follow: bool = False) -> None:
-        """Place the cursor at file time ``t`` (clears any interval).  With ``follow`` the
-        view pages along so the cursor stays on screen, as playback needs."""
-        had_selection = self._selection is not None
+    def set_cursor(self, t: Optional[float], follow: bool = False, keep_selection: bool = False,
+                   center: bool = False) -> None:
+        """Place the cursor at file time ``t`` (clears any interval unless ``keep_selection``, which
+        interval playback uses).  With ``follow`` the view pages along so the cursor stays on
+        screen, as playback needs; with ``center`` the view scrolls so the cursor is in the middle
+        (a comment or a block picked from a list)."""
+        had_selection = self._selection is not None and not keep_selection
         self._cursor = t
-        self._selection = None
-        if follow and t is not None:
+        if not keep_selection:
+            self._selection = None
+        if t is not None and center:
+            self.center_on(t)
+        elif follow and t is not None:
             x0, x1 = self.view_range()
             if not x0 <= t <= x1:
                 w = x1 - x0
@@ -723,6 +899,8 @@ class ChannelStack(QWidget):
             x, y, level = lod.curve_for_range(f, tl, c, x0, x1, width, coarse=True)
             p.set_curve(x, y, level, None)
             pending.append(c)
+        if self._auto_zoom:
+            self.zoom_to_fit()                  # the move is over (the render is debounced): fit what is drawn now
         if not pending:
             return
         margin = (x1 - x0) * RENDER_MARGIN
@@ -736,10 +914,46 @@ class ChannelStack(QWidget):
         c, a, b, x, y, level, n = payload
         if 0 <= c < len(self.plots):
             self.plots[c].set_curve(x, y, level, (a, b), n / max(b - a, 1e-9))
+            if self._auto_zoom and c in self._visible:
+                self.plots[c].auto_y()          # the decoded curve replaces the coarse one: fit to that
 
     def _on_done(self, job_id: int, kind: str, result, error) -> None:
         if error and kind == "render":
             print(error)
+
+    # -- shared left-axis width ---------------------------------------------------------
+    def _schedule_axis_width(self, *args) -> None:
+        if self.plots:
+            self._axis_timer.start()
+
+    def _update_axis_width(self) -> None:
+        """Every channel gets the width the widest tick labels among them need (no loose gap
+        between the unit and the trace), so the plots keep lining up."""
+        if not self._visible:
+            return
+        need = max(self.plots[c].needed_axis_width() for c in self._visible)
+        if need <= 0:
+            return
+        w = max(AXIS_MIN_WIDTH, -(-need // AXIS_STEP) * AXIS_STEP)
+        if w < self._axis_width and self._axis_width - w < AXIS_HYSTERESIS and not self._axis_fresh:
+            return
+        self._axis_fresh = False
+        if w != self._axis_width:
+            self.set_axis_width(w)
+
+    @property
+    def axis_width(self) -> int:
+        return self._axis_width
+
+    def set_axis_width(self, w: int) -> None:
+        self._axis_width = int(w)
+        for p in self.plots:
+            p.set_axis_width(self._axis_width)
+        self.strip.set_axis_width(self._axis_width)
+
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        self._schedule_axis_width()
 
     def set_definition(self, channel: int, text: Optional[str]) -> None:
         if 0 <= channel < len(self.plots):

@@ -6,7 +6,8 @@ Playback is a clock, not a media player: while playing, a timer advances the
 panel follows) and asks the grabber for the frame at that time.  The grabber
 serves only the latest request, so a slow decoder drops frames rather than
 falling behind.  Playback stays inside the block whose clip is shown and
-pauses at its end.
+pauses at its end; ``play(stop_at=t)`` pauses at file time ``t`` instead when that comes first
+(playing a selected interval).
 """
 from __future__ import annotations
 
@@ -61,6 +62,7 @@ class VideoPanel(QWidget):
         self._anchor_wall = 0.0
         self._anchor_t = 0.0
         self._driving = False                    # True while the panel itself moves the cursor
+        self._stop_at: Optional[float] = None    # file time playback pauses at (an interval's end)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -173,6 +175,7 @@ class VideoPanel(QWidget):
             return                                   # our own tick coming back round
         self._locate(t)
         if self._playing:
+            self._stop_at = None                     # the cursor was moved from outside: the interval no longer bounds playback
             if self._path is None:
                 self.pause()
             else:
@@ -261,12 +264,16 @@ class VideoPanel(QWidget):
         self.btn_play.setToolTip("Pause (Space)" if self._playing else "Play from the cursor (Space)")
         self.rate_label.setText(_rate_text(self.rate))
 
-    def play(self) -> None:
+    def play(self, stop_at: Optional[float] = None) -> None:
+        """Play from the current position; ``stop_at`` (file time) pauses there when it comes
+        before the end of the block."""
         if not self.has_clip or self._block is None or self._playing:
             return
         t = self._t if self._t is not None else self._block.start_s
+        self._stop_at = stop_at if stop_at is not None and stop_at > t else None
         if t >= self._block_end():
             t = self._block.start_s                  # play again from the start when at the end
+            self._stop_at = None
         self._anchor_wall = time.monotonic()
         self._anchor_t = t
         self._playing = True
@@ -279,6 +286,7 @@ class VideoPanel(QWidget):
         if not self._playing:
             return
         self._playing = False
+        self._stop_at = None
         self._clock.stop()
         self._update_controls()
         self.playingChanged.emit(False)
@@ -329,11 +337,16 @@ class VideoPanel(QWidget):
         b = self._block
         return b.start_s + (b.ticks - 1) / b.tick_rate_hz if b is not None else 0.0
 
+    def _play_end(self) -> float:
+        """Where playback pauses: the block's end, or the interval's end when that is sooner."""
+        end = self._block_end()
+        return min(end, self._stop_at) if self._stop_at is not None else end
+
     def _tick(self) -> None:
         if not self._playing or self._block is None:
             return
         t = self._anchor_t + (time.monotonic() - self._anchor_wall) * self.rate
-        end = self._block_end()
+        end = self._play_end()
         if t >= end:
             self._move_to(end, debounce=False)
             self.pause()

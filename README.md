@@ -52,24 +52,31 @@ adichtion [recording.adicht]
 One command does both: `adichtion` alone (or with a file) starts the app,
 `adichtion <command> …` runs the command line described below.
 
-Opens maximised with a file dialog (or the file given) and shows every channel
+Opens maximised with the start dialog (the recent files, or the file dialog while
+there are none), or the file given, and shows every channel
 of the file on one time axis, the blocks laid end to end as LabChart shows
 them, with the block labels and comment flags in a strip above the channels.
 
 * Click a channel to place the cursor on all of them; each channel's overlay
   shows its value there, the *Data at cursor* panel lists them all, and the
   *Video* panel shows the frame the block's video clip has at that moment
-  (camera delay compensated). Shift+click extends the cursor to an interval,
-  and the data panel then gives min, max and mean per channel.
+  (camera delay compensated). Drag over a channel, or click and then Shift+click,
+  to select an interval; the data panel then gives min, max and mean per channel.
+  Right click a channel to export the interval (or, with none selected, the whole
+  recording).
 * The video panel plays the clip from the cursor (Space, or the ▶ button): the
   cursor moves with the video and every overlay and panel follows, the view
-  pages along, and playback pauses at the end of the block. ⏮/⏭ jump to the
+  pages along, and playback pauses at the end of the block; with an interval
+  selected, Space plays from its start to its end. ⏮/⏭ jump to the
   start and end of the block's video; ◀◀/▶▶ halve or double the speed
   (0.1× to 8×).
-* Scroll or drag to zoom and pan the time axis (all channels follow); the
-  toolbar has zoom in/out/reset. *Auto zoom* fits every channel's y-axis to
-  the visible data; the wheel over a y-axis, or the small `+ − A` buttons in a
-  channel's corner, zoom one channel's y-axis alone. Drag the handles between
+* Scroll to zoom the time axis (at most out to the whole file) and Alt+drag, a
+  sideways swipe or the middle button to pan it (all channels follow, none can leave
+  the file); *View > Drag selects an interval* lets a plain drag pan instead. The
+  toolbar (icons; hover for the name and shortcut) has zoom in/out/reset, *Zoom to
+  fit* (fits every channel's y-axis to the visible data once) and the *Auto zoom*
+  toggle (does so after every move); the wheel over a y-axis, or the small `+ − A`
+  buttons in a channel's corner, zoom one channel's y-axis alone. Drag the handles between
   channels to give one more height; *Show channels…* picks the channels shown
   and makes the heights equal again.
 * Calculated channels are tinted and carry their definition in the overlay,

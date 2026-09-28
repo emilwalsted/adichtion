@@ -2,6 +2,47 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-28 (4) — UI-rettelser: zoom, sync, interval, ikoner, autozoom
+
+- **Zoom- og scrollgrænser sættes på ALLE plots** (og på markørstrimlen), med `maxXRange`
+  = filens længde. Før lå grænserne kun på det første plot; et træk på et andet plot lod
+  dets x-område stå ude af trit med resten (målt: (50,65) mod (30,45) efter et træk forbi
+  slutningen). Fuldt zoom-ud = hele filen over hele plotbredden.
+- **Træk markerer et interval; Alt+træk panorerer** (ændrer "venstre-træk panorerer som i
+  RespMech" fra tidligere, efter Emils ønske 28-09-2026, punkt 7). Panorering findes
+  fortsat: Alt+træk, midterknap, sidelæns stryg (`ChannelPlotWidget`) og Alt+←/→ (en halv
+  skærm). Fordi opgaven både ønsker træk-som-markering (punkt 7) og nævner træk-som-panorering
+  (punkt 2), er rollerne et valg: *Vis > Træk markerer et interval* (til/fra, husket) bytter
+  dem. Standard = markér. Et træk under 4 px er et klik. Markøren sættes ved trækkets start,
+  som ved Shift+klik.
+- **Højreklik på en graf**: "Export interval…" med et interval, ellers "Export whole
+  recording…" (eksportdialogen får `default_scope`). Toolbarens Export uden interval bruger det
+  huskede omfang, ellers blokken under markøren.
+- **Eksportdialogen husker** format, omfang, kanalvalg (også en afkrydsning, hvis antallet af
+  kanaler passer), decimaltegn, de tre valg og sidste mappe (`QSettings`, gruppe `export`).
+  Omfang: eksplicit ønske > interval > husket > blok > hele filen.
+- **Space med et interval** spiller fra intervallets start til dets slutning (inden for
+  blokkens klip) og lader intervallet stå markeret; uden interval som før.
+- **Auto zoom / Zoom to fit**: den gamle "Auto zoom" (engangs-tilpasning af y, Ctrl+A) hedder nu
+  *Zoom to fit*; *Auto zoom* er en til/fra-knap (Ctrl+Shift+A, husket) der tilpasser y efter
+  hver afsluttet bevægelse (efter renderens debounce, og igen når den dekodede kurve
+  ankommer). *Zoom to fit* er deaktiveret, mens Auto zoom er slået til. `ChannelStack.auto_zoom()`
+  er blevet til egenskaben `auto_zoom`; engangsmetoden hedder `zoom_to_fit()`.
+- **Toolbar med ikoner** (`ui/icons.py`, egne linjeikoner i temaets farver, normal/aktiv/
+  deaktiveret/til) og tooltips med navn, virkning og genvej.
+- **Startdialogen** viser de senest åbnede filer og "Open a file…"; uden nylige filer går appen
+  som før direkte til fildialogen (færre klik for en førstegangsbruger).
+- **Liste-valg centrerer markøren**: kommentar (og blokrække) i filpanelet flytter markøren og
+  ruller graferne, så den står i midten, zoom uændret (ved filens kanter stopper visningen).
+  Opgaven nævner "video i listen"; listen med videoer er blok-fanen (én række pr. blok, med
+  klippet i sidste kolonne), så en blokrække behandles på samme måde, og dobbeltklik på en
+  blok viser hele blokken som før.
+- **Y-aksens bredde er delt og målt**: alle kanaler får samme bredde, den bredeste
+  tick-etiket kræver (trin på 4 px, med hysterese), i stedet for fast 90 px. Gevinsten afhænger
+  af data (korte etiketter giver mest).
+- Ikke afprøvet på en rigtig Mac/Windows-skærm: ikonernes udseende i mørkt tema, trackpadens
+  sidelæns stryg og musefølelsen.
+
 ## 2026-09-28 (3) — "gammelt blåt ikon på Mac": revideret, ikke en kodefejl
 
 - **Fundet ved en henvendelse** (en helt klassisk "checker det slog
@@ -107,7 +148,7 @@ Afgjort med Emil ved spørgsmål inden byggeriet:
   "nyeste vinder", så en langsom dekoder springer billeder over frem for at
   sakke bagud.
 - **Markering: klik = punkt, Shift+klik = interval** fra markøren til klikket;
-  venstre-træk panorerer som i RespMech.
+  venstre-træk panorerer som i RespMech (afløst 2026-09-28 (4): træk markerer nu).
 - Øvrigt fra spec'en: menulinje + toolbar + arbejdsområde, maksimeret start
   med åbn-dialog, x-akser altid låst sammen, individuel y-zoom, kanalhøjder
   der kan trækkes og udlignes ved kanalvalg, beregnede kanaler tonet med
