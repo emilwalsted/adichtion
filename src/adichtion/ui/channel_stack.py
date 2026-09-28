@@ -804,8 +804,8 @@ class ChannelStack(QWidget):
         a, b = min(max(0.0, x0), d), min(max(0.0, x1), d)
         m = self._master()
         slop = CLICK_SLOP_PX / m.vb.pixels_per_second() if m is not None else 0.0
-        if self._drag_anchor is None:
-            self._drag_anchor = a
+        if self._drag_anchor is None or abs(a - self._drag_anchor) > 1e-9 and abs(x0 - self._drag_anchor) > 1e-9:
+            self._drag_anchor = a                # a new drag (also after one that never got its release)
             self.set_cursor(a)
         if abs(b - a) <= slop and self._selection is None:
             if finished:

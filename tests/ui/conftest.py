@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))          # `from helpers import ..
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
 os.environ.setdefault("ADICHTION_THEME", "light")
+os.environ["ADICHTION_SETTINGS_APP"] = "adichtion-tests"      # never the user's real settings, on any OS
 
 pytest.importorskip("PySide6")
 pytest.importorskip("pyqtgraph")
@@ -24,6 +25,14 @@ def _isolated_settings(tmp_path_factory):
     from PySide6.QtCore import QSettings
     for fmt in (QSettings.NativeFormat, QSettings.IniFormat):
         QSettings.setPath(fmt, QSettings.UserScope, str(home))
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _clean_settings():
+    """Every test starts with empty settings (recent files, export choices, view toggles)."""
+    from PySide6.QtCore import QSettings
+    QSettings("adichtion", "adichtion-tests").clear()
     yield
 
 

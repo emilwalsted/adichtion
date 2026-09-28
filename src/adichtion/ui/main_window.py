@@ -49,7 +49,7 @@ class MainWindow(QMainWindow):
         self._export_job = 0
         self._export_dialog: Optional[QProgressDialog] = None
         self._export_request: Optional[ExportRequest] = None
-        self.settings = QSettings("adichtion", "adichtion")
+        self.settings = QSettings("adichtion", os.environ.get("ADICHTION_SETTINGS_APP", "adichtion"))   # the tests use their own
         self.setWindowTitle(f"adichtion {__version__}")
         try:
             from .logo import app_icon
