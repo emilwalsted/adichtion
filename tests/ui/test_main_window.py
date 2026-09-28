@@ -137,12 +137,17 @@ def test_every_layout_variant_opens(qapp, window, documents):
     assert window.stack.plots == [] and window.info.name.text() == "No file open"
 
 
-def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic):
+def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic, monkeypatch):
     """The splash comes first and the window is revealed after MIN_SPLASH_MS with the file
-    open; quitting waits for that (Qt ignores quit() while the modal splash is up)."""
+    open; quitting waits for that (Qt ignores quit() while the modal splash is up). The
+    application icon goes through _set_application_icon (tests/ui/test_logo.py)."""
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QSplashScreen
     import adichtion.ui.app as appmod
+    icon_calls = []
+    real_set_icon = appmod._set_application_icon
+    monkeypatch.setattr(appmod, "_set_application_icon",
+                        lambda app: icon_calls.append(app) or real_set_icon(app))
     seen = {"splash": False}
     t0 = time.monotonic()
 
@@ -167,6 +172,7 @@ def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic):
     assert seen["revealed_ms"] >= appmod.MIN_SPLASH_MS - 50
     assert not any(isinstance(w, QSplashScreen) and w.isVisible() for w in qapp.topLevelWidgets())
     assert appmod.startup_path(["x", "nope.adicht"]) is None
+    assert icon_calls == [qapp]
 
 
 def test_cursor_keys_move_by_sample_and_second(qapp, window, synthetic):

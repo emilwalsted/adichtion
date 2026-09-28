@@ -31,6 +31,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 - The left axes take the width their tick labels need (the same for every channel) instead of
   a fixed 90 px, so the gap between the unit and the trace shrinks.
 
+### Fixed
+- macOS: the running app's Dock and app-switcher icon was a blurry bare "a" instead of
+  the logo. The packaged app now leaves its bundle icon in place, and a run from source
+  gives the Dock the full logo only.
+
 ## [0.3.0] – 2026-09-27
 
 ### Added
