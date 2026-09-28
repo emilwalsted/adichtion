@@ -27,6 +27,7 @@ def next_nice(v: float) -> float:
 
 class MinPitchAxis(pg.AxisItem):
     AIR = 3     # pixels between two labels on top of the text height
+    TEXT_GAP = 6   # pixels of air between the tick labels and the axis edge / the rotated unit
 
     def tickSpacing(self, minVal, maxVal, size):
         levels = super().tickSpacing(minVal, maxVal, size)
@@ -55,3 +56,27 @@ class MinPitchAxis(pg.AxisItem):
             return QFontMetrics(font).height() * 0.8 + self.AIR
         except Exception:                        # pragma: no cover
             return 0.0
+
+    def needed_width(self) -> int:
+        """Pixels this (left) axis needs to show its tick labels and, when visible, its
+        rotated label, without the loose gap a fixed width leaves; 0 when nothing is known yet."""
+        vb = self.linkedView()
+        size = self.height()
+        if vb is None or size <= 0:
+            return 0
+        lo, hi = vb.viewRange()[1]
+        if not (hi > lo):
+            return 0
+        strings: list[str] = []
+        try:
+            for spacing, values in self.tickValues(lo, hi, size)[:2]:
+                strings += list(self.tickStrings(values, 1.0, spacing))
+        except Exception:                        # pragma: no cover - a pyqtgraph internals change
+            return 0
+        tick_font = self.style.get("tickFont") or self.font()
+        text = max((QFontMetrics(tick_font).horizontalAdvance(s) for s in strings), default=0)
+        label = 0
+        if self.label.isVisible() and self.labelText:
+            label = QFontMetrics(self.label.font()).height() + 4
+        tick = abs(self.style.get("tickLength", 5))
+        return int(text + label + tick + self.TEXT_GAP)

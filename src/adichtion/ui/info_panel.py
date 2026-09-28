@@ -39,7 +39,8 @@ def _item(text, align=Qt.AlignLeft) -> QTableWidgetItem:
 
 
 class InfoPanel(QWidget):
-    blockActivated = Signal(int)                # record index
+    blockActivated = Signal(int)                # record index (a click)
+    blockFitRequested = Signal(int)             # record index (a double-click)
     commentActivated = Signal(float)            # file time
 
     def __init__(self, parent=None):
@@ -67,6 +68,7 @@ class InfoPanel(QWidget):
         self.tabs.addTab(self.comments, "Comments")
         lay.addWidget(self.tabs, 1)
         self.blocks.cellClicked.connect(lambda r, _c: self.blockActivated.emit(r))
+        self.blocks.cellDoubleClicked.connect(lambda r, _c: self.blockFitRequested.emit(r))
         self.comments.cellClicked.connect(self._on_comment_clicked)
         self._comment_times: list[float] = []
 

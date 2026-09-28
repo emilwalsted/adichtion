@@ -1,11 +1,17 @@
-"""The export dialog: format, scope, channels and options, then the file name."""
+"""The export dialog: format, scope, channels and options, then the file name.
+
+The choices are remembered between exports (``QSettings`` group ``export``: format, scope,
+channel choice, decimal separator, the three options and the folder last exported to).  The scope
+starts as the selection when there is one; the context menu on a plot without one passes
+``default_scope="file"`` (the whole recording); otherwise the remembered scope applies.
+"""
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QPushButton, QRadioButton, QScrollArea, QVBoxLayout,
                                QWidget)
@@ -14,6 +20,8 @@ from ..export import XLSX_MAX_ROWS
 from ..file import AdichtFile, Selection
 from .timeline import Timeline
 
+SETTINGS_GROUP = "export"
+SCOPES = ("file", "block", "selection")
 FORMATS = [("Text, LabChart style (.txt)", "txt", "txt"), ("CSV (.csv)", "csv", "csv"), ("Excel workbook (.xlsx)", "xlsx", "xlsx")]
 
 
@@ -33,8 +41,10 @@ class ExportRequest:
 
 class ExportDialog(QDialog):
     def __init__(self, f: AdichtFile, timeline: Timeline, shown: list[int], cursor: Optional[float],
-                 selection: Optional[tuple[float, float]], parent=None):
+                 selection: Optional[tuple[float, float]], parent=None, settings: Optional[QSettings] = None,
+                 default_scope: Optional[str] = None):
         super().__init__(parent)
+        self._settings = settings
         self.setWindowTitle("Export")
         self.setModal(True)
         self.file, self.timeline = f, timeline
@@ -62,12 +72,13 @@ class ExportDialog(QDialog):
         if selection is not None:
             self.rb_sel = QRadioButton(f"Selection ({selection[0]:.3f} s → {selection[1]:.3f} s, {selection[1] - selection[0]:.3f} s)")
         else:
-            self.rb_sel = QRadioButton("Selection (none: Shift+click a channel to select an interval)")
+            self.rb_sel = QRadioButton("Selection (none: drag, or Shift+click, on a channel to select an interval)")
             self.rb_sel.setEnabled(False)
         for rb in (self.rb_file, self.rb_block, self.rb_sel):
             self.scope_group.addButton(rb)
             sl.addWidget(rb)
-        (self.rb_sel if selection is not None else self.rb_block if self._block else self.rb_file).setChecked(True)
+        self._rb_scope = {"file": self.rb_file, "block": self.rb_block, "selection": self.rb_sel}
+        self._initial_scope(default_scope)
         lay.addWidget(scope)
 
         chans = QGroupBox("Channels")
@@ -123,10 +134,75 @@ class ExportDialog(QDialog):
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
+        self._restore_options()
         for w in (self.format, self.rb_file, self.rb_block, self.rb_sel, self.rb_shown, self.rb_all, self.rb_pick):
             (w.currentIndexChanged if isinstance(w, QComboBox) else w.toggled).connect(lambda *_a: self._update_note())
         self._update_note()
         self.resize(520, 640)
+
+    # -- what is remembered ----------------------------------------------------------
+    def _get(self, key: str, default=None):
+        if self._settings is None:
+            return default
+        return self._settings.value(f"{SETTINGS_GROUP}/{key}", default)
+
+    def _get_bool(self, key: str, default: bool) -> bool:
+        v = self._get(key, default)
+        return v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
+
+    def _initial_scope(self, explicit: Optional[str]) -> None:
+        """The scope the dialog opens on: an explicit request, else the selection when there is
+        one, else what was chosen last time (when it still applies), else the block under the
+        cursor, else the whole file."""
+        usable = {"file": True, "block": self._block is not None, "selection": self._selection is not None}
+        remembered = str(self._get("scope", "") or "")
+        for choice in (explicit, "selection" if self._selection is not None else None, remembered,
+                       "block", "file"):
+            if choice in SCOPES and usable[choice]:
+                self._rb_scope[choice].setChecked(True)
+                return
+
+    def _restore_options(self) -> None:
+        if self._settings is None:
+            return
+        fmt = str(self._get("format", "") or "")
+        for i, (_label, key, _ext) in enumerate(FORMATS):
+            if key == fmt:
+                self.format.setCurrentIndex(i)
+        mode = str(self._get("channels", "") or "")
+        picked = self._get("picked", []) or []
+        picked = [picked] if isinstance(picked, (str, int)) else list(picked)
+        try:
+            picked = [int(c) for c in picked]
+        except (TypeError, ValueError):
+            picked = []
+        if mode == "all":
+            self.rb_all.setChecked(True)
+        elif mode == "pick" and picked and all(0 <= c < self.file.n_channels for c in picked):
+            for i, b in enumerate(self.boxes):
+                b.blockSignals(True)
+                b.setChecked(i in picked)
+                b.blockSignals(False)
+            self.rb_pick.setChecked(True)
+        self.decimal.setCurrentIndex(1 if str(self._get("decimal", ".")) == "," else 0)
+        self.cb_header.setChecked(self._get_bool("header", True))
+        self.cb_comments.setChecked(self._get_bool("comments", True))
+        self.cb_units.setChecked(self._get_bool("units", True))
+
+    def _remember(self, path: str) -> None:
+        if self._settings is None:
+            return
+        g = SETTINGS_GROUP
+        st = self._settings
+        st.setValue(f"{g}/format", self.fmt())
+        st.setValue(f"{g}/scope", next(k for k, rb in self._rb_scope.items() if rb.isChecked()))
+        st.setValue(f"{g}/channels", "all" if self.rb_all.isChecked() else "pick" if self.rb_pick.isChecked() else "shown")
+        st.setValue(f"{g}/picked", [i for i, b in enumerate(self.boxes) if b.isChecked()])
+        st.setValue(f"{g}/decimal", "," if self.decimal.currentIndex() == 1 else ".")
+        st.setValue(f"{g}/header", self.cb_header.isChecked())
+        st.setValue(f"{g}/comments", self.cb_comments.isChecked())
+        st.setValue(f"{g}/units", self.cb_units.isChecked())
+        st.setValue(f"{g}/folder", os.path.dirname(path))
 
     # -- what the choices amount to -------------------------------------------------
     def fmt(self) -> str:
@@ -184,7 +260,10 @@ class ExportDialog(QDialog):
             return
         _label, fmt, ext = FORMATS[self.format.currentIndex()]
         base = os.path.splitext(os.path.basename(self.file.path))[0]
-        suggested = os.path.join(os.path.dirname(self.file.path), f"{base} - {self.scope_label()}.{ext}")
+        folder = str(self._get("folder", "") or "")
+        if not folder or not os.path.isdir(folder):
+            folder = os.path.dirname(self.file.path)
+        suggested = os.path.join(folder, f"{base} - {self.scope_label()}.{ext}")
         path, _ = QFileDialog.getSaveFileName(self, "Export to", suggested, f"{_label} (*.{ext})")
         if not path:
             return
@@ -194,4 +273,5 @@ class ExportDialog(QDialog):
                                      decimal="," if self.decimal.currentIndex() == 1 else ".",
                                      header=self.cb_header.isChecked(), comments=self.cb_comments.isChecked(),
                                      units=self.cb_units.isChecked(), scope_label=self.scope_label())
+        self._remember(path)
         self.accept()

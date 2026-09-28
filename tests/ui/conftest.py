@@ -15,6 +15,18 @@ pytest.importorskip("PySide6")
 pytest.importorskip("pyqtgraph")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_settings(tmp_path_factory):
+    """The tests never read or write the user's real QSettings (recent files, export choices, ...)."""
+    home = tmp_path_factory.mktemp("config")
+    os.environ["XDG_CONFIG_HOME"] = str(home)
+    os.environ["HOME"] = str(home)
+    from PySide6.QtCore import QSettings
+    for fmt in (QSettings.NativeFormat, QSettings.IniFormat):
+        QSettings.setPath(fmt, QSettings.UserScope, str(home))
+    yield
+
+
 @pytest.fixture(scope="session")
 def qapp():
     from PySide6.QtWidgets import QApplication

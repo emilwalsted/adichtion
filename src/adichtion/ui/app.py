@@ -3,7 +3,8 @@ the packaged app).
 
 Shows the splash first, builds the themed main window behind it, then reveals the
 window maximised (once the splash has been up for a short minimum) and opens the
-file given on the command line, else asks for one.  On macOS a document
+file given on the command line, else shows the start dialog (recent files, or the file dialog
+while there are none).  On macOS a document
 double-clicked in the Finder (or dropped on the Dock icon) arrives as a
 ``QEvent.FileOpen``, before or after the window exists; both are handled.
 """
@@ -134,7 +135,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if path is not None:
             win.open_file(path)
         else:
-            win.open_dialog()
+            win.open_startup()
 
     delay = reveal_delay_ms(int((time.monotonic() - t0) * 1000)) if splash is not None else 0
     QTimer.singleShot(delay, _reveal)

@@ -7,20 +7,21 @@ import traceback
 from functools import partial
 from typing import Optional
 
-from PySide6.QtCore import QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMenu, QMessageBox, QProgressDialog,
                                QSplitter, QToolBar, QWidget, QVBoxLayout)
 
 from .. import __version__
 from ..file import AdichtFile
-from . import lod, theme
+from . import icons, lod, theme
 from .channel_dialog import ChannelDialog
 from .channel_stack import ChannelStack
 from .data_panel import DataPanel
 from .export_dialog import ExportDialog, ExportRequest
 from .info_panel import InfoPanel
 from .panel import titled_panel
+from .startup_dialog import StartupDialog
 from .timeline import Timeline
 from .video_panel import VideoPanel
 from .workers import JobRunner
@@ -105,44 +106,79 @@ class MainWindow(QMainWindow):
         self.infer_runner.done.connect(self._on_done)
         self.infer_runner.start()
         self.info.blockActivated.connect(self.go_to_block)
-        self.info.commentActivated.connect(self.stack.set_cursor)
+        self.info.blockFitRequested.connect(self.fit_block)
+        self.info.commentActivated.connect(self.go_to_time)
+        self.stack.contextRequested.connect(self._on_context_menu)
+        self.stack.autoZoomChanged.connect(self._on_auto_zoom_changed)
         self.video.positionChanged.connect(self._on_playback_position)
         self.video.playingChanged.connect(self._on_playing_changed)
         self._data_refresh = 0.0
+        # view choices survive a restart
+        self.act_drag_selects.setChecked(self.settings.value("view/dragSelects", True, type=bool))
+        self.act_auto_zoom.setChecked(self.settings.value("view/autoZoom", False, type=bool))
         self._update_actions()
 
     # -- actions, menus, toolbar ---------------------------------------------------------
     def _build_actions(self) -> None:
-        def act(text, slot, shortcut=None, tip=None):
+        def act(text, slot, shortcut=None, tip=None, icon=None, checkable=False):
             a = QAction(text, self)
             if shortcut:
                 a.setShortcut(QKeySequence(shortcut))
             if tip:
                 a.setStatusTip(tip)
-                a.setToolTip(tip)
-            a.triggered.connect(slot)
+            # the toolbar shows a picture, so the tooltip carries the words: name, what it does, the key
+            keys = QKeySequence(shortcut).toString(QKeySequence.NativeText) if shortcut else ""
+            a.setToolTip(text.rstrip("…") + (f": {tip}" if tip else "") + (f"  ({keys})" if keys else ""))
+            a.setIconText(text.rstrip("…"))
+            if icon:
+                a.setIcon(icons.toolbar_icon(icon))
+            a.setCheckable(checkable)
+            (a.toggled if checkable else a.triggered).connect(slot)
             return a
 
-        self.act_open = act("Open…", self.open_dialog, "Ctrl+O", "Open a .adicht file")
+        self.act_open = act("Open…", self.open_dialog, "Ctrl+O", "Open a .adicht file", icon="open")
         self.act_close = act("Close file", self.close_file, "Ctrl+W")
-        self.act_export = act("Export…", self.export_dialog, "Ctrl+E", "Export the file, a block or the selection as text, CSV or Excel")
+        self.act_export = act("Export…", self.export_dialog, "Ctrl+E",
+                              "Export the file, a block or the selection as text, CSV or Excel", icon="export")
         self.act_mac = act("Load LabChart for Mac settings…", self.load_mac_settings, None,
                            "Read the calculated-channel definitions from a LabChart 7 for Mac document or settings file")
         self.act_quit = act("Quit", self.close, "Ctrl+Q")
-        self.act_zoom_in = act("Zoom in", self.stack.zoom_in, "Ctrl++", "Zoom the time axis in (around the cursor)")
+        self.act_zoom_in = act("Zoom in", self.stack.zoom_in, "Ctrl++", "Zoom the time axis in (around the cursor)",
+                               icon="zoom_in")
         self.act_zoom_in.setShortcuts([QKeySequence("Ctrl++"), QKeySequence("Ctrl+=")])
-        self.act_zoom_out = act("Zoom out", self.stack.zoom_out, "Ctrl+-", "Zoom the time axis out")
-        self.act_zoom_reset = act("Reset zoom", self.stack.zoom_reset, "Ctrl+0", "Show the whole file")
-        self.act_auto = act("Auto zoom", self.stack.auto_zoom, "Ctrl+A", "Fit every channel's y-axis to the visible data")
-        self.act_channels = act("Show channels…", self.show_channels_dialog, "Ctrl+K", "Choose the channels to show")
+        self.act_zoom_out = act("Zoom out", self.stack.zoom_out, "Ctrl+-", "Zoom the time axis out (at most to the whole file)",
+                                icon="zoom_out")
+        self.act_zoom_reset = act("Reset zoom", self.stack.zoom_reset, "Ctrl+0", "Show the whole file across the full width",
+                                  icon="zoom_all")
+        self.act_zoom_fit = act("Zoom to fit", self.stack.zoom_to_fit, "Ctrl+A",
+                                "Fit every channel's y-axis to the visible data, once", icon="zoom_fit")
+        self.act_auto_zoom = act("Auto zoom", self.set_auto_zoom, "Ctrl+Shift+A",
+                                 "Fit every channel's y-axis to the visible data after every zoom or scroll",
+                                 icon="auto_zoom", checkable=True)
+        self.act_drag_selects = act("Drag selects an interval", self.set_drag_selects, None,
+                                    "On: a left drag over a channel selects an interval and Alt+drag pans. "
+                                    "Off: a left drag pans and Alt+drag selects.", checkable=True)
+        self.act_scroll_left = act("Scroll left", lambda: self.stack.scroll(-0.5), "Alt+Left",
+                                   "Move the view half a screen earlier")
+        self.act_scroll_right = act("Scroll right", lambda: self.stack.scroll(0.5), "Alt+Right",
+                                    "Move the view half a screen later")
+        self.act_channels = act("Show channels…", self.show_channels_dialog, "Ctrl+K", "Choose the channels to show",
+                                icon="channels")
         self.act_all_channels = act("Show all channels", self.show_all_channels)
         self.act_equalize = act("Equal channel heights", self.stack.equalize)
-        self.act_clear_sel = act("Clear selection", self.stack.clear_selection, "Esc")
+        self.act_clear_sel = act("Clear selection", self.stack.clear_selection, "Esc", "Remove the selected interval",
+                                 icon="clear_selection")
+        self.act_export_interval = act("Export interval…", lambda: self.export_dialog("selection"), None,
+                                       "Export the selected interval")
+        self.act_export_recording = act("Export whole recording…", lambda: self.export_dialog("file"), None,
+                                        "Export the whole recording")
         self.act_step_back = act("Cursor one sample back", lambda: self.stack.nudge_cursor(samples=-1), "Left")
         self.act_step_fwd = act("Cursor one sample forward", lambda: self.stack.nudge_cursor(samples=1), "Right")
         self.act_sec_back = act("Cursor one second back", lambda: self.stack.nudge_cursor(seconds=-1.0), "Shift+Left")
         self.act_sec_fwd = act("Cursor one second forward", lambda: self.stack.nudge_cursor(seconds=1.0), "Shift+Right")
-        self.act_play = act("Play video", self.video.toggle, "Space", "Play the block's video from the cursor, or pause it")
+        self.act_play = act("Play video", self.toggle_play, "Space",
+                            "Play the block's video from the cursor (from the start of a selected interval, "
+                            "stopping at its end), or pause it")
         self.act_video_start = act("Video: go to start", self.video.go_start, "Home")
         self.act_video_end = act("Video: go to end", self.video.go_end, "End")
         self.act_slower = act("Play slower", self.video.slower, "Ctrl+Down")
@@ -163,7 +199,10 @@ class MainWindow(QMainWindow):
         m.addAction(self.act_close)
         m.addAction(self.act_quit)
         v = mb.addMenu("&View")
-        for a in (self.act_zoom_in, self.act_zoom_out, self.act_zoom_reset, self.act_auto):
+        for a in (self.act_zoom_in, self.act_zoom_out, self.act_zoom_reset, self.act_zoom_fit, self.act_auto_zoom):
+            v.addAction(a)
+        v.addSeparator()
+        for a in (self.act_scroll_left, self.act_scroll_right, self.act_drag_selects):
             v.addAction(a)
         v.addSeparator()
         for a in (self.act_channels, self.act_all_channels, self.act_equalize):
@@ -183,12 +222,13 @@ class MainWindow(QMainWindow):
         tb = QToolBar("Main")
         tb.setObjectName("mainToolbar")
         tb.setMovable(False)
-        tb.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        tb.setIconSize(QSize(22, 22))
         self.addToolBar(tb)
         tb.addAction(self.act_open)
         tb.addAction(self.act_export)
         tb.addSeparator()
-        for a in (self.act_zoom_in, self.act_zoom_out, self.act_zoom_reset, self.act_auto):
+        for a in (self.act_zoom_in, self.act_zoom_out, self.act_zoom_reset, self.act_zoom_fit, self.act_auto_zoom):
             tb.addAction(a)
         tb.addSeparator()
         tb.addAction(self.act_channels)
@@ -205,11 +245,29 @@ class MainWindow(QMainWindow):
     def _update_actions(self) -> None:
         has = self.file is not None
         for a in (self.act_close, self.act_export, self.act_mac, self.act_zoom_in, self.act_zoom_out, self.act_zoom_reset,
-                  self.act_auto, self.act_channels, self.act_all_channels, self.act_equalize, self.act_clear_sel,
-                  self.act_step_back, self.act_step_fwd, self.act_sec_back, self.act_sec_fwd):
+                  self.act_auto_zoom, self.act_channels, self.act_all_channels, self.act_equalize, self.act_clear_sel,
+                  self.act_step_back, self.act_step_fwd, self.act_sec_back, self.act_sec_fwd,
+                  self.act_scroll_left, self.act_scroll_right):
             a.setEnabled(has)
+        # "Zoom to fit" is pointless while Auto zoom fits after every move
+        self.act_zoom_fit.setEnabled(has and not self.act_auto_zoom.isChecked())
         for a in (self.act_play, self.act_video_start, self.act_video_end, self.act_slower, self.act_faster):
             a.setEnabled(has and self.video.has_videos)
+
+    # -- view choices ------------------------------------------------------------------
+    def set_auto_zoom(self, on: bool) -> None:
+        """Auto zoom: fit every channel's y-axis after every zoom or scroll (and now)."""
+        self.stack.set_auto_zoom(on)
+
+    def _on_auto_zoom_changed(self, on: bool) -> None:
+        self.settings.setValue("view/autoZoom", bool(on))
+        if self.act_auto_zoom.isChecked() != on:
+            self.act_auto_zoom.setChecked(on)
+        self._update_actions()
+
+    def set_drag_selects(self, on: bool) -> None:
+        self.stack.set_drag_selects(on)
+        self.settings.setValue("view/dragSelects", bool(on))
 
     # -- files --------------------------------------------------------------------------
     def recent_files(self) -> list[str]:
@@ -233,6 +291,21 @@ class MainWindow(QMainWindow):
             a = self.recent_menu.addAction(os.path.basename(p))
             a.setToolTip(p)
             a.triggered.connect(partial(self.open_file, p))
+
+    def open_startup(self) -> None:
+        """What the app does when it opens without a file: the start dialog with the recent
+        files, or straight to the file dialog while there are none."""
+        recent = self.recent_files()
+        if not recent:
+            self.open_dialog()
+            return
+        dlg = StartupDialog(recent, self)
+        if dlg.exec() == StartupDialog.Accepted:
+            if dlg.path:
+                self.open_file(dlg.path)
+            elif dlg.browse:
+                self.open_dialog()
+        dlg.deleteLater()
 
     def open_dialog(self) -> None:
         start = os.path.dirname(self.file.path) if self.file else (os.path.dirname(self.recent_files()[0]) if self.recent_files() else "")
@@ -341,9 +414,24 @@ class MainWindow(QMainWindow):
             self._data_refresh = now
         self.data.show_point(t)
 
+    def toggle_play(self) -> None:
+        """Space: pause when playing; otherwise play from the cursor, or, with an interval
+        selected, from its start to its end (the interval stays selected)."""
+        if self.video.playing:
+            self.video.pause()
+            return
+        sel = self.stack.selection
+        if sel is None:
+            self.video.play()
+            return
+        t0, t1 = sel
+        self.stack.set_cursor(t0, follow=True, keep_selection=True)      # the video panel locates its clip
+        self.video.play(stop_at=t1)
+
     def _on_playback_position(self, t: float) -> None:
-        """The video clock moved: the cursor (and everything that follows it) goes along."""
-        self.stack.set_cursor(t, follow=True)
+        """The video clock moved: the cursor (and everything that follows it) goes along; a
+        selected interval stays selected while it plays."""
+        self.stack.set_cursor(t, follow=True, keep_selection=self.stack.selection is not None)
 
     def _on_playing_changed(self, playing: bool) -> None:
         self.act_play.setText("Pause video" if playing else "Play video")
@@ -366,7 +454,19 @@ class MainWindow(QMainWindow):
         if self.stack.cursor is None and self.stack.selection is None:
             self.readout.setText(f"Showing {t0:.2f} – {t1:.2f} s")
 
+    def go_to_time(self, t: float) -> None:
+        """A comment picked from a list: the cursor goes there and the view scrolls to centre it."""
+        self.stack.set_cursor(t, center=True)
+
     def go_to_block(self, index: int) -> None:
+        """A block picked from the list (its video clip is that block's): the cursor goes to
+        the block's start and the view scrolls to centre it, the zoom unchanged."""
+        if self.timeline is None or not 0 <= index < len(self.timeline.blocks):
+            return
+        self.stack.set_cursor(self.timeline.blocks[index].start_s, center=True)
+
+    def fit_block(self, index: int) -> None:
+        """Double-click on a block: show that block across the full width."""
         if self.timeline is None or not 0 <= index < len(self.timeline.blocks):
             return
         b = self.timeline.blocks[index]
@@ -408,13 +508,32 @@ class MainWindow(QMainWindow):
             self.stack.set_visible_channels(list(range(self.file.n_channels)), equalize=True)
 
     # -- export --------------------------------------------------------------------------
-    def export_dialog(self) -> None:
+    def export_dialog(self, default_scope: Optional[str] = None) -> None:
+        """The export dialog; ``default_scope`` ("selection" or "file") presets what to export."""
         if self.file is None or self.timeline is None:
             return
-        dlg = ExportDialog(self.file, self.timeline, self.stack.visible_channels, self.stack.cursor, self.stack.selection, self)
+        if not isinstance(default_scope, str):              # a QAction's ``triggered(checked)`` lands here
+            default_scope = None
+        dlg = ExportDialog(self.file, self.timeline, self.stack.visible_channels, self.stack.cursor, self.stack.selection,
+                           self, settings=self.settings, default_scope=default_scope)
         if dlg.exec() == ExportDialog.Accepted and dlg.request is not None:
             self.run_export(dlg.request)
         dlg.deleteLater()
+
+    def _on_context_menu(self, global_pos) -> None:
+        """Right click on a plot: export the selected interval, or, with none, the whole recording."""
+        if self.file is None:
+            return
+        menu = QMenu(self)
+        if self.stack.selection is not None:
+            menu.addAction(self.act_export_interval)
+            menu.addAction(self.act_export_recording)
+            menu.addSeparator()
+            menu.addAction(self.act_clear_sel)
+        else:
+            menu.addAction(self.act_export_recording)
+        self._context_menu = menu
+        menu.popup(global_pos)
 
     def run_export(self, req: ExportRequest) -> None:
         from ..export import export_selections
