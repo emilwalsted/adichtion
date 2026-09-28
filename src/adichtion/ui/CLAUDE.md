@@ -6,7 +6,12 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 
 ## Structure
 
-- `app.py` — the app entry point (`adichtion` without a subcommand, `python -m adichtion`, the packaged bundle): theme, maximised `MainWindow`, open dialog, macOS FileOpen events.
+- `app.py` — the app entry point (`adichtion` without a subcommand, `python -m adichtion`, the packaged bundle): splash first, then theme and `MainWindow` built behind it, revealed maximised after `MIN_SPLASH_MS`, open dialog, macOS FileOpen events.
+- `logo.py` — the a-trace logo as SVG (the single source of palette and geometry: the icon
+  drawing up to 64 px, the logo from 128 px) rendered with `QSvgRenderer`: `make_pixmap`,
+  `logo_pixmap`, `app_icon`. `design/logo/` and `scripts/render_icons.py` render from it.
+- `splash.py` — the start-up splash: a sheet of the logo's chart paper with the tile, the
+  wordmark and one breathing trace with a selected sniff (`build_splash_svg` is Qt-free).
 - `theme.py` — RespMech's palette and style sheet (light/dark, `ADICHTION_THEME`), the
   plot palette (`plot_palette()`), `PLOT_AXIS_WIDTH`, `PLOT_ROW_MIN_HEIGHT`.
 - `timeline.py` (Qt-free) — the file axis: blocks end to end, `locate(t)`,

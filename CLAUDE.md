@@ -100,6 +100,10 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 - One entry point: `adichtion` (`adichtion.__main__:main`) starts the app,
   `adichtion <command>` the CLI; `CLI_COMMANDS` there is a copy of the argparse
   subcommands (a test keeps them equal). There is no `adichtion-app` any more.
+- The logo lives in `src/adichtion/ui/logo.py` (palette, geometry, SVG builders; the icon
+  drawing up to 64 px, the full logo from 128 px). `design/logo/adichtion_logo.py` writes
+  the design SVGs and renders from it, `scripts/render_icons.py` the installer icons; a test
+  fails when the checked-in SVGs drift. The splash (`ui/splash.py`) is the same paper.
 - Installers (`docs/RELEASING.md`, repo skill `.claude/skills/release`):
   briefcase, config in `pyproject.toml` `[tool.briefcase]`, icons in
   `installer/`. The version is in two places (`__init__.py` and

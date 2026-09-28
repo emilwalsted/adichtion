@@ -1,5 +1,6 @@
 """The viewer on the synthetic documents (headless Qt)."""
 import os
+import time
 
 import numpy as np
 import pytest
@@ -137,22 +138,34 @@ def test_every_layout_variant_opens(qapp, window, documents):
 
 
 def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic):
+    """The splash comes first and the window is revealed after MIN_SPLASH_MS with the file
+    open; quitting waits for that (Qt ignores quit() while the modal splash is up)."""
     from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QSplashScreen
     import adichtion.ui.app as appmod
-    seen = {}
+    seen = {"splash": False}
+    t0 = time.monotonic()
 
-    def finish():
-        wins = [w for w in qapp.topLevelWidgets() if w.__class__.__name__ == "MainWindow" and w.isVisible()]
+    def poll():
+        tops = [w for w in qapp.topLevelWidgets() if w.isVisible()]
+        seen["splash"] |= any(isinstance(w, QSplashScreen) for w in tops)
+        wins = [w for w in tops if w.__class__.__name__ == "MainWindow"]
+        if not wins and time.monotonic() - t0 < 15:
+            QTimer.singleShot(50, poll)
+            return
         seen["n"] = len(wins)
         seen["file"] = os.path.basename(wins[0].file.path) if wins and wins[0].file else None
+        seen["revealed_ms"] = int((time.monotonic() - t0) * 1000)
         for w in wins:
             w.close()
             w.deleteLater()
         qapp.quit()
 
-    QTimer.singleShot(800, finish)
+    QTimer.singleShot(50, poll)
     assert appmod.main(["adichtion", synthetic["path"]]) == 0
-    assert seen == {"n": 1, "file": os.path.basename(synthetic["path"])}
+    assert seen["splash"] and seen["n"] == 1 and seen["file"] == os.path.basename(synthetic["path"])
+    assert seen["revealed_ms"] >= appmod.MIN_SPLASH_MS - 50
+    assert not any(isinstance(w, QSplashScreen) and w.isVisible() for w in qapp.topLevelWidgets())
     assert appmod.startup_path(["x", "nope.adicht"]) is None
 
 

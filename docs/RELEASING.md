@@ -87,25 +87,19 @@ Detail and the commands that set the secrets: [`SIGNING.md`](SIGNING.md).
 ## 5. Icons
 
 `installer/adichtion.{png,ico,icns}` and the sized `adichtion-{16..512}.png` (the Linux
-build wants each size as its own file) are rendered from the app's own drawn logo. To
-regenerate after a logo change (needs Pillow and PySide6, offscreen):
+build wants each size as its own file) are rendered from the app's own logo
+(`src/adichtion/ui/logo.py`: the icon drawing, the bare "a", up to 64 px and the full logo
+from 128 px). To regenerate after a logo change (needs the `[ui]` extra and Pillow):
 
 ```
-QT_QPA_PLATFORM=offscreen python - <<'EOF'
-from PySide6.QtWidgets import QApplication
-from adichtion.ui.logo import make_pixmap
-app = QApplication([])
-make_pixmap(1024).save("installer/adichtion.png")
-for s in (16, 32, 64, 128, 256, 512):
-    make_pixmap(s).save(f"installer/adichtion-{s}.png")
-EOF
-python - <<'EOF'
-from PIL import Image
-im = Image.open("installer/adichtion.png")
-im.save("installer/adichtion.ico", sizes=[(s, s) for s in (16, 32, 48, 64, 128, 256)])
-im.save("installer/adichtion.icns")
-EOF
+QT_QPA_PLATFORM=offscreen python scripts/render_icons.py
 ```
+
+The `.ico` and `.icns` are assembled from the render at each size, not by scaling the
+1024 px logo down, so the small slots carry the icon drawing. The design renders in
+`design/logo/` (the SVGs and the PNGs for the README) are regenerated with
+`python design/logo/adichtion_logo.py`; a test fails when the checked-in SVGs no longer
+match the module.
 
 ## Not done yet / known limits
 

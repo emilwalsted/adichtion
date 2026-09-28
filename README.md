@@ -1,3 +1,5 @@
+<img src="design/logo/renders/adichtion-256.png" width="128" height="128" alt="" align="right">
+
 # adichtion
 
 Read ADInstruments LabChart `.adicht` files without LabChart – on macOS,

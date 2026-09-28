@@ -449,11 +449,21 @@ class MainWindow(QMainWindow):
 
     # -- misc ---------------------------------------------------------------------------
     def about(self) -> None:
-        QMessageBox.about(self, "About adichtion",
-                          f"<b>adichtion {__version__}</b><br>Read and explore ADInstruments LabChart .adicht files "
-                          "without LabChart.<br><br>GPL-3.0-or-later · Emil Ingerslev Walsted<br>"
-                          "<a href='https://github.com/emilwalsted/adichtion'>github.com/emilwalsted/adichtion</a><br><br>"
-                          "ADInstruments, LabChart and PowerLab are trademarks of ADInstruments; this project is not affiliated with them.")
+        box = QMessageBox(self)
+        box.setWindowTitle("About adichtion")
+        box.setTextFormat(Qt.RichText)
+        box.setText(f"<b>adichtion {__version__}</b><br>Read and explore ADInstruments LabChart .adicht files "
+                    "without LabChart.<br><br>GPL-3.0-or-later · Emil Ingerslev Walsted<br>"
+                    "<a href='https://github.com/emilwalsted/adichtion'>github.com/emilwalsted/adichtion</a><br><br>"
+                    "ADInstruments, LabChart and PowerLab are trademarks of ADInstruments; this project is not affiliated with them.")
+        try:
+            from .logo import logo_pixmap
+            pm = logo_pixmap(96, self.devicePixelRatioF())
+            if pm is not None:
+                box.setIconPixmap(pm)
+        except Exception:                            # noqa: BLE001 - cosmetic
+            pass
+        box.exec()
 
     def showEvent(self, ev) -> None:
         super().showEvent(ev)

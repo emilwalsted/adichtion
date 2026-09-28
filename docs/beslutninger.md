@@ -2,6 +2,25 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-28 (2) — logoet i appen, splash
+
+- **Tegningen bor i appen**: geometri og palet ligger i `src/adichtion/ui/logo.py` (ren
+  Python, Qt kun ved rendering), fordi appen og installer-ikonerne skal bære den samme kilde
+  og to kopier ville drive fra hinanden. `design/logo/adichtion_logo.py` importerer modulet
+  og skriver SVG'erne og PNG-renderne; en test fejler, hvis de indtjekkede SVG'er ikke
+  længere er modulets output. (Erstatter "kilden er design/logo/adichtion_logo.py" nedenfor.)
+- **Installer-ikoner fra hver størrelse**: `scripts/render_icons.py` renderer med Qt (samme
+  renderer som appens dock-ikon) hver størrelse for sig, så 16–64 px er ikon-tegningen
+  (a'et alene) og 128 px og op logoet; `.ico`/`.icns` samles af de størrelser, ikke ved at
+  skalere 1024-renderen ned. Pillow skriver ikke 16- og 32-px 1×-slots i `.icns`; macOS
+  skalerer dem fra 2×-slottene.
+- **Splash på kurveskriverpapir** (`ui/splash.py`, efter RespMechs mønster: vises som det
+  første, vinduet bygges bagved, afsløres efter mindst 1,2 s): samme papir og net som logoet,
+  flisen til venstre, ordmærket i blæk med ravfarvet streg, tagline "LabChart recordings
+  without LabChart", og langs bunden én blæk-kurve med rolig vejrtrækning og ét sniff
+  markeret som udsnit. Klik lukker den ikke (der er intet bagved endnu). About-dialogen
+  viser logoet.
+
 ## 2026-09-28 — app-ikon og logo: "a-trace"
 
 - **Valgt koncept** (Emil, efter to runder med i alt tolv forslag): kurveskriverpapir

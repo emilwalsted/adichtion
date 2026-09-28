@@ -5,6 +5,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- The app icon and logo ("a-trace": one ink trace on chart-recorder paper writing an "a"
+  that runs on into a selected spike), as the window and dock icon, the installer icons on
+  all three platforms, the About dialog and the top of the README.
+- A start-up splash on the same chart paper, shown while the window is built.
+
 ## [0.3.0] – 2026-09-27
 
 ### Added
