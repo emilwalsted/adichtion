@@ -4,7 +4,7 @@ Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
 ## 2026-09-28 (3) — "gammelt blåt ikon på Mac": revideret, ikke en kodefejl
 
-- **Fundet ved en henvendelse** (en enhedsklassisk "checker det slog
+- **Fundet ved en henvendelse** (en helt klassisk "checker det slog
   igennem?"-forespørgsel): appens ikon i repoet er allerede den nye a-trace-tegning, uden
   spor af den tidligere accent-blå ikon (`#2C6E9B`, den blå firkant med hvid kurve `ui/logo.py`
   havde FØR redesignet i "2026-09-28 (2)" nedenfor). `tests/ui/test_logo.py`s

@@ -123,9 +123,10 @@ briefcase update macOS --update-resources && briefcase build macOS
 ```
 
 (`--update-resources` also works passed directly to `build`/`run`.) macOS additionally
-caches app icons at the OS level (Finder/Dock/LaunchServices); a Briefcase new enough to
-resolve <https://github.com/beeware/briefcase/pull/1766> touches the `.app` bundle on an
-`--update-resources` run to bust that cache, but if the icon still looks stale after a
+caches app icons at the OS level (Finder/Dock/LaunchServices); briefcase (0.4.5, this
+repo's own floor) already carries the fix for that
+(<https://github.com/beeware/briefcase/pull/1766>): an `--update-resources` run touches
+the `.app` bundle to bust the cache. If the icon still looks stale after a
 genuinely fresh `create`, clear it by hand: `killall Finder && killall Dock`, or as a last
 resort `rm -rf ~/Library/Caches/com.apple.iconservices.store`. CI's *Build installers*
 workflow always runs `briefcase create` from a clean checkout, so it is not exposed to this;
