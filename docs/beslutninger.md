@@ -2,6 +2,26 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-28 — app-ikon og logo: "a-trace"
+
+- **Valgt koncept** (Emil, efter to runder med i alt tolv forslag): kurveskriverpapir
+  (creme med grønt millimeternet), hvorpå én blæk-kurve skriver et lille a og fortsætter i
+  et sniff-lignende udslag; udslaget er markeret som udsnit med et ravfarvet bånd, app'ens
+  kernehandling. Papiret peger tilbage på kurveskriveren, som LabChart er opkaldt efter.
+- **To tegninger på samme flise**: logoet (net, bånd, kurve med a og udslag) fra 128 px og
+  op; ikonet (a'et alene med blæk på papiret) fra 64 px og ned. Samme fliseproportioner som
+  RespMech (87,5 % af lærredet, 25 % hjørneradius), så de to apps står ens i docken.
+- **Bevidst ulig naboerne**: ADInstruments' mærke er et mørkeblåt (#005581) ordmærke med en
+  håndtegnet zigzag-spids; LabChart-ikonet er en blå gradient-cirkel med hvid ring, én hvid
+  krusedulle og en stjerne. Derfor ingen cirkel, ingen blå flise, ingen hvid krusedulle,
+  ingen stjerne. Fravalgt undervejs: dekodede kanaler ud af en lukket fil, regnbue-kanaler
+  med kommentar-nål (så generisk ud og nålen lignede et flag i lille størrelse), rent
+  monogram på lilla, dokument med kurve, åbnet klamme, stablede records.
+- **Kilden er `design/logo/adichtion_logo.py`** (ren Python, skriver SVG; ingen filtre,
+  masker eller clipPaths, så Qt's SVG-renderer tegner det som en browser). Palet og
+  geometri står dér og i `design/logo/README.md`. Implementering i `ui/logo.py`,
+  `installer/`-ikonerne og README udestår (tjekliste i samme README).
+
 ## 2026-09-27 (nat, 2) — én kommando og installérbare pakker
 
 - **Appen hedder `adichtion`, ikke `adichtion-app`** (Emils krav). Ét entry
