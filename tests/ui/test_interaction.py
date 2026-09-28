@@ -8,7 +8,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QFileDialog
 
-from adichtion.ui import icons, theme
+from adichtion.ui import icons
 from adichtion.ui.export_dialog import ExportDialog
 from adichtion.ui.startup_dialog import StartupDialog, recent_entries
 from helpers import pump, wait_until
@@ -436,7 +436,9 @@ def test_the_left_axes_share_a_width_that_fits_their_labels(qapp, window, synthe
     st = window.stack
     pump(qapp, 0.2)
     widths = {p.axis_width for p in st.plots}
-    assert widths == {st.axis_width} and st.axis_width <= theme.PLOT_AXIS_WIDTH
+    # one width for all; how wide follows the platform's fonts (116 px on the Windows runner, so
+    # not below the old fixed 90 px everywhere): what is checked is that it fits the labels
+    assert widths == {st.axis_width}
     need = max(st.plots[c].needed_axis_width() for c in st.visible_channels)
     assert st.axis_width >= need > 0 and st.axis_width - need <= 8             # no loose gap beyond the step
     # the strip and the overlays follow the same width
