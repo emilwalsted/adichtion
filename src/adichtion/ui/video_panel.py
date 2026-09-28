@@ -175,6 +175,7 @@ class VideoPanel(QWidget):
             return                                   # our own tick coming back round
         self._locate(t)
         if self._playing:
+            self._stop_at = None                     # the cursor was moved from outside: the interval no longer bounds playback
             if self._path is None:
                 self.pause()
             else:

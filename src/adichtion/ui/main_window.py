@@ -114,7 +114,9 @@ class MainWindow(QMainWindow):
         self.video.playingChanged.connect(self._on_playing_changed)
         self._data_refresh = 0.0
         # view choices survive a restart
-        self.act_drag_selects.setChecked(self.settings.value("view/dragSelects", True, type=bool))
+        drag_selects = self.settings.value("view/dragSelects", True, type=bool)
+        self.act_drag_selects.setChecked(drag_selects)
+        self.stack.set_drag_selects(drag_selects)          # setChecked(False) on an unchecked action emits nothing
         self.act_auto_zoom.setChecked(self.settings.value("view/autoZoom", False, type=bool))
         self._update_actions()
 
@@ -158,9 +160,9 @@ class MainWindow(QMainWindow):
         self.act_drag_selects = act("Drag selects an interval", self.set_drag_selects, None,
                                     "On: a left drag over a channel selects an interval and Alt+drag pans. "
                                     "Off: a left drag pans and Alt+drag selects.", checkable=True)
-        self.act_scroll_left = act("Scroll left", lambda: self.stack.scroll(-0.5), "Alt+Left",
+        self.act_scroll_left = act("Scroll left", lambda: self.stack.scroll_view(-0.5), "Alt+Left",
                                    "Move the view half a screen earlier")
-        self.act_scroll_right = act("Scroll right", lambda: self.stack.scroll(0.5), "Alt+Right",
+        self.act_scroll_right = act("Scroll right", lambda: self.stack.scroll_view(0.5), "Alt+Right",
                                     "Move the view half a screen later")
         self.act_channels = act("Show channels…", self.show_channels_dialog, "Ctrl+K", "Choose the channels to show",
                                 icon="channels")
@@ -532,6 +534,7 @@ class MainWindow(QMainWindow):
             menu.addAction(self.act_clear_sel)
         else:
             menu.addAction(self.act_export_recording)
+        menu.setAttribute(Qt.WA_DeleteOnClose)
         self._context_menu = menu
         menu.popup(global_pos)
 

@@ -445,3 +445,55 @@ def test_the_left_axes_share_a_width_that_fits_their_labels(qapp, window, synthe
     assert len({p.axis_width for p in st.plots}) == 1 and st.axis_width >= max(st.plots[c].needed_axis_width() for c in (0, 1))
     lefts = {round(st.plots[c].vb.sceneBoundingRect().left(), 1) for c in (0, 1)}
     assert len(lefts) == 1
+
+
+# -- regressions found in review ---------------------------------------------------------------------
+
+def test_scroll_actions_move_the_view_half_a_screen(qapp, window, synthetic):
+    window.open_file(synthetic["path"])
+    st = window.stack
+    st.set_range(10.0, 20.0)
+    window.act_scroll_right.trigger()
+    assert st.view_range() == pytest.approx((15.0, 25.0))
+    window.act_scroll_left.trigger()
+    window.act_scroll_left.trigger()
+    assert st.view_range() == pytest.approx((5.0, 15.0))
+
+
+def test_a_saved_drag_mode_reaches_the_stack_at_start(qapp, synthetic):
+    from adichtion.ui.main_window import MainWindow
+    first = MainWindow()
+    first.act_drag_selects.setChecked(False)
+    first.close()
+    second = MainWindow()
+    try:
+        assert not second.act_drag_selects.isChecked() and second.stack.drag_selects is False
+    finally:
+        second.act_drag_selects.setChecked(True)
+        second.close()
+
+
+def test_a_drag_keeps_its_role_when_alt_is_pressed_midway(qapp, window, synthetic):
+    window.open_file(synthetic["path"])
+    st = window.stack
+    plot = st.plots[1]
+    a, b, c = _px(plot, 10.0), _px(plot, 15.0), _px(plot, 20.0)
+    _send(plot, QEvent.MouseButtonPress, a, Qt.LeftButton, Qt.LeftButton)
+    _send(plot, QEvent.MouseMove, b, Qt.NoButton, Qt.LeftButton)
+    _send(plot, QEvent.MouseMove, c, Qt.NoButton, Qt.LeftButton, Qt.AltModifier)
+    _send(plot, QEvent.MouseButtonRelease, c, Qt.LeftButton, Qt.NoButton, Qt.AltModifier)
+    assert st.selection is not None and st._drag_anchor is None
+    drag(plot, 30.0, 35.0)
+    assert st.cursor == pytest.approx(30.0, abs=0.2)
+
+
+def test_moving_the_cursor_during_interval_playback_drops_the_interval_stop(qapp, window, video_document):
+    window.open_file(video_document)
+    st, v = window.stack, window.video
+    v.set_rate(4.0)
+    st.set_selection(5.0, 6.0)
+    window.act_play.trigger()
+    st.set_cursor(20.0)                                # a click elsewhere while playing
+    pump(qapp, 0.6)
+    assert v.playing and st.cursor > 20.0
+    v.pause()

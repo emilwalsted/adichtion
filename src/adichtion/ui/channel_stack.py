@@ -65,8 +65,9 @@ class ChannelViewBox(pg.ViewBox):
         super().wheelEvent(ev, axis=0 if axis is None else axis)
 
     def mouseDragEvent(self, ev, axis=None):
-        selecting = self.drag_selects != bool(ev.modifiers() & Qt.AltModifier)
-        if ev.button() == Qt.LeftButton and selecting:
+        if ev.isStart():                        # the role is fixed for the whole drag (Alt pressed midway changes nothing)
+            self._drag_selecting = self.drag_selects != bool(ev.modifiers() & Qt.AltModifier)
+        if ev.button() == Qt.LeftButton and getattr(self, "_drag_selecting", True):
             ev.accept()
             x0 = self.mapSceneToView(ev.buttonDownScenePos(Qt.LeftButton)).x()
             x1 = self.mapSceneToView(ev.scenePos()).x()
@@ -721,7 +722,7 @@ class ChannelStack(QWidget):
         a = min(max(0.0, t - w / 2), max(0.0, d - w))
         self.set_range(a, a + w)
 
-    def scroll(self, fraction: float) -> None:
+    def scroll_view(self, fraction: float) -> None:
         """Move the view by ``fraction`` of its width (negative = earlier), at most to the file's edges."""
         if self.timeline is None or self._master() is None:
             return
