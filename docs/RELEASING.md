@@ -101,6 +101,36 @@ The `.ico` and `.icns` are assembled from the render at each size, not by scalin
 `python design/logo/adichtion_logo.py`; a test fails when the checked-in SVGs no longer
 match the module.
 
+**A rebuilt app can still show the OLD icon — this is Briefcase, not a bug in this repo**
+(found 28-09-2026, after the icon changed from an accent-blue square
+to the a-trace drawing: `tests/ui/test_logo.py::test_installer_icons_exist_and_are_the_drawing`
+was, and stayed, green throughout, and confirmed the committed `installer/` files always
+matched the current drawing pixel for pixel). Briefcase only copies `installer/adichtion.*`
+into the app bundle's resources when the bundle is scaffolded (`briefcase create`); a later
+`briefcase build`/`briefcase run` on an EXISTING `build/adichtion/...` tree reuses whatever
+icon was copied in at `create` time and does not notice that the source files changed. After
+regenerating the icons, either:
+
+```
+rm -rf build/adichtion/macos   # (or windows / linux) — forces a fresh briefcase create
+briefcase create macOS && briefcase build macOS && briefcase package macOS --adhoc-sign -p dmg
+```
+
+or keep the existing scaffold and explicitly refresh resources:
+
+```
+briefcase update macOS --update-resources && briefcase build macOS
+```
+
+(`--update-resources` also works passed directly to `build`/`run`.) macOS additionally
+caches app icons at the OS level (Finder/Dock/LaunchServices); a Briefcase new enough to
+resolve <https://github.com/beeware/briefcase/pull/1766> touches the `.app` bundle on an
+`--update-resources` run to bust that cache, but if the icon still looks stale after a
+genuinely fresh `create`, clear it by hand: `killall Finder && killall Dock`, or as a last
+resort `rm -rf ~/Library/Caches/com.apple.iconservices.store`. CI's *Build installers*
+workflow always runs `briefcase create` from a clean checkout, so it is not exposed to this;
+it only bites a local, iterative build.
+
 ## Not done yet / known limits
 
 - The dmg is built for the runner's architecture (Apple Silicon on `macos-latest`); there is

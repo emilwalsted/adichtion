@@ -112,3 +112,10 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   locally afterwards (`scripts/sign-msi-certum.sh`), macOS dmg signed+notarised
   only with the Apple secrets (`docs/SIGNING.md`), Ubuntu 24.04 `.deb` via
   Docker.
+- **A locally rebuilt app can keep showing a stale icon** (`docs/RELEASING.md`
+  §5): Briefcase copies `installer/adichtion.*` into the bundle at
+  `briefcase create` time only, not on every `build`/`run`, and macOS itself
+  also caches app icons. Regenerating `scripts/render_icons.py`'s output is
+  not enough on its own — see RELEASING.md for the fresh-`create` /
+  `--update-resources` fix. Not a bug in this repo: `tests/ui/test_logo.py`
+  pins the committed installer icons to the current drawing.
