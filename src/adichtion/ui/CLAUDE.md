@@ -19,6 +19,8 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   curves, value under the cursor, interval statistics; runs on the worker thread.
 - `channel_stack.py` — `ChannelStack` (splitter of `ChannelPlot`s + `MarkerStrip`),
   cursor/selection, LOD rendering through its own `JobRunner`.
+- `icons.py` — the toolbar's line icons as SVG strings in the theme's colours (`toolbar_icon(name)`);
+  `startup_dialog.py` — the dialog the app opens with (recent files + "Open a file…").
 - `main_window.py` — menus, toolbar, the three panels (`info_panel`, `data_panel`,
   `video_panel`), dialogs (`channel_dialog`, `export_dialog`), inference and export
   jobs on a second `JobRunner`.
@@ -39,9 +41,27 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - **pyqtgraph auto-range is off** on every ViewBox (`disableAutoRange()`); the stack owns
   the x range (linked to the first shown plot) and each plot its y range. With it on, new
   data silently re-fitted y to the whole curve including the decode margins.
-- **Body mouse = x only** (`ChannelViewBox`): wheel and drag over a plot pan/zoom time;
-  the y-axis wheel and the corner `+ − A` buttons zoom y. Plain click = cursor,
-  Shift+click = interval; the ViewBox emits `sigClicked` itself.
+- **Body mouse = x only** (`ChannelViewBox`): the wheel zooms time, a left drag selects an
+  interval (`sigSelectDrag`; under 4 px it is a click) and Alt+drag / the middle button /
+  a sideways swipe (`ChannelPlotWidget`) pan; `ChannelStack.set_drag_selects(False)` swaps
+  the drag roles. The y-axis wheel and the corner `+ − A` buttons zoom y. Plain click =
+  cursor, Shift+click = interval, right click = `sigContextMenu`; the ViewBox emits its own
+  `sigClicked`.
+- **x limits go on EVERY view** (`ChannelStack._apply_limits`: each plot and the strip, with
+  `maxXRange`), not on the master alone: a drag on a plot without limits left that plot's
+  range out of step with the rest (measured (50,65) against (30,45)). `set_range` also
+  re-syncs the views as a safety net.
+- **The left-axis width is shared and measured** (`ChannelStack._update_axis_width`, from
+  `MinPitchAxis.needed_width`): every channel gets the widest tick labels' width, in steps of
+  4 px with a hysteresis, so the plots line up and the gap stays small. Nothing may use
+  `theme.PLOT_AXIS_WIDTH` as the live width any more; use `stack.axis_width`.
+- **Auto zoom** (`ChannelStack.set_auto_zoom`) fits the y-axes at the end of `_render` (already
+  debounced, so after the move) and again when a decoded curve arrives; *Zoom to fit* is the one-off.
+- **Lists centre the marker**: a comment or block picked in the file panel calls
+  `set_cursor(t, center=True)` (zoom kept, clamped at the file's edges); interval playback keeps
+  the selection (`set_cursor(..., keep_selection=True)`, `VideoPanel.play(stop_at=...)`).
+- **The export dialog remembers** its choices in `QSettings` group `export`; tests point
+  `QSettings` at a temp dir (`tests/ui/conftest.py`), never the user's real settings.
 - **One `GraphicsObject` per plot for many lines** (`MarkersItem`, `CursorItem`): they paint
   in one call using `viewRect()` for the height and return `None` from `dataBounds` so they
   never feed a range calculation. Never one `InfiniteLine` per comment.

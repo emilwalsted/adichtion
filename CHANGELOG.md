@@ -10,6 +10,26 @@ versions follow [Semantic Versioning](https://semver.org/).
   that runs on into a selected spike), as the window and dock icon, the installer icons on
   all three platforms, the About dialog and the top of the README.
 - A start-up splash on the same chart paper, shown while the window is built.
+- The start dialog lists the recently opened files (and "Open a file…"), as RespMech's does.
+- Select an interval by dragging over a channel (as well as click then Shift+click); Alt+drag
+  pans, and *View > Drag selects an interval* swaps the two. A sideways swipe pans too, and
+  Alt+Left / Alt+Right scroll half a screen.
+- Right click on a channel: *Export interval…* with an interval selected, *Export whole
+  recording…* otherwise; the export dialog remembers its settings (format, scope, channels,
+  decimal separator, options, folder) from the last export.
+- Space with an interval selected plays the video from the interval's start and stops at its end.
+- *Auto zoom* is now a toggle that fits every channel's y-axis after every zoom or scroll;
+  the one-off fit is *Zoom to fit* (Ctrl+A), disabled while Auto zoom is on.
+- Toolbar buttons are icons with tooltips (name, what it does, shortcut).
+
+### Changed
+- The view can no longer be zoomed out past the whole file, and no plot can be scrolled past its
+  start or end; every plot (not only the first) now carries the limits, which also fixes plots
+  drifting out of step with the others after a drag.
+- Picking a comment, or a block, in the file panel scrolls the graphs to centre the marker (zoom
+  unchanged); double-click a block to show it across the full width.
+- The left axes take the width their tick labels need (the same for every channel) instead of
+  a fixed 90 px, so the gap between the unit and the trace shrinks.
 
 ## [0.3.0] – 2026-09-27
 
