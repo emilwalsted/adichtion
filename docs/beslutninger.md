@@ -2,6 +2,24 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-28 (3) — "gammelt blåt ikon på Mac": revideret, ikke en kodefejl
+
+- **Fundet ved en henvendelse** (en helt klassisk "checker det slog
+  igennem?"-forespørgsel): appens ikon i repoet er allerede den nye a-trace-tegning, uden
+  spor af den tidligere accent-blå ikon (`#2C6E9B`, den blå firkant med hvid kurve `ui/logo.py`
+  havde FØR redesignet i "2026-09-28 (2)" nedenfor). `tests/ui/test_logo.py`s
+  `test_installer_icons_exist_and_are_the_drawing` sammenligner de indtjekkede
+  `installer/adichtion-*.png` pixel for pixel med den nuværende tegning og var grøn hele
+  vejen; koden og de bundlede aktiver er indbyrdes konsistente.
+- **Konklusion (revideret, ikke observeret på en rigtig Mac):** det blå ikon, Emil så, er
+  formentlig et Briefcase-fænomen, ikke en fejl her. Briefcase kopierer kun
+  `installer/adichtion.*` ind i app-bundlets ressourcer ved `briefcase create`; et senere
+  `build`/`run` på et allerede eksisterende `build/`-træ genbruger det gamle ikon,
+  medmindre `--update-resources` bruges (macOS lægger desuden sin egen ikon-cache
+  oveni). Se `docs/RELEASING.md` §5 for den konkrete rettelse. Kilde: Briefcases egen
+  dokumentation og beeware/briefcase#1766, ikke en test kørt i denne sandkasse (Qt/Briefcase
+  bygger ikke installers her).
+
 ## 2026-09-28 (2) — logoet i appen, splash
 
 - **Tegningen bor i appen**: geometri og palet ligger i `src/adichtion/ui/logo.py` (ren
