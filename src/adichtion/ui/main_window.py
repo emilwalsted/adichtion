@@ -110,9 +110,16 @@ class MainWindow(QMainWindow):
         self.info.commentActivated.connect(self.go_to_time)
         self.stack.contextRequested.connect(self._on_context_menu)
         self.stack.autoZoomChanged.connect(self._on_auto_zoom_changed)
+        self.video.btn_play.clicked.disconnect()
+        self.video.btn_play.clicked.connect(self.toggle_play)     # the button and Space behave the same (intervals)
         self.video.positionChanged.connect(self._on_playback_position)
         self.video.playingChanged.connect(self._on_playing_changed)
         self._data_refresh = 0.0
+        self._stats_range = None
+        self._stats_timer = QTimer(self)
+        self._stats_timer.setSingleShot(True)
+        self._stats_timer.setInterval(120)
+        self._stats_timer.timeout.connect(self._submit_stats)
         # view choices survive a restart
         drag_selects = self.settings.value("view/dragSelects", True, type=bool)
         self.act_drag_selects.setChecked(drag_selects)
@@ -429,6 +436,8 @@ class MainWindow(QMainWindow):
         t0, t1 = sel
         self.stack.set_cursor(t0, follow=True, keep_selection=True)      # the video panel locates its clip
         self.video.play(stop_at=t1)
+        if not self.video.playing:
+            self.statusBar().showMessage("The interval starts in a block without a playable video.")
 
     def _on_playback_position(self, t: float) -> None:
         """The video clock moved: the cursor (and everything that follows it) goes along; a
@@ -448,9 +457,15 @@ class MainWindow(QMainWindow):
             return
         t0, t1 = sel
         self.data.show_interval(t0, t1)
-        f, tl = self.file, self.timeline
-        self._stats_job = self.runner.submit("stats", partial(_stats_job, f, tl, t0, t1))
+        self._stats_range = (t0, t1)
+        self._stats_timer.start()                 # a drag changes the interval on every mouse move: decode once it rests
         self.readout.setText(f"Selection {t0:.3f} → {t1:.3f} s ({t1 - t0:.3f} s)")
+
+    def _submit_stats(self) -> None:
+        if self.file is None or self._stats_range is None or self.stack.selection is None:
+            return
+        t0, t1 = self._stats_range
+        self._stats_job = self.runner.submit("stats", partial(_stats_job, self.file, self.timeline, t0, t1))
 
     def _on_range(self, t0: float, t1: float) -> None:
         if self.stack.cursor is None and self.stack.selection is None:

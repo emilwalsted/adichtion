@@ -57,6 +57,15 @@ class MinPitchAxis(pg.AxisItem):
         except Exception:                        # pragma: no cover
             return 0.0
 
+    def resizeEvent(self, ev=None):
+        super().resizeEvent(ev)
+        # a wider shared axis leaves the tick labels right against the plot; bring the rotated unit
+        # up to them instead of leaving it at the far left edge
+        if self.orientation == "left" and self.label.isVisible() and self.labelText:
+            spare = self.width() - self.needed_width()
+            if spare > 0:
+                self.label.setPos(self.label.pos().x() + spare, self.label.pos().y())
+
     def needed_width(self) -> int:
         """Pixels this (left) axis needs to show its tick labels and, when visible, its
         rotated label, without the loose gap a fixed width leaves; 0 when nothing is known yet."""

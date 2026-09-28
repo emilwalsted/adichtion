@@ -16,8 +16,8 @@ Daterede beslutninger og afgjorte punkter. Nyeste øverst.
   dem. Standard = markér. Et træk under 4 px er et klik. Markøren sættes ved trækkets start,
   som ved Shift+klik.
 - **Højreklik på en graf**: "Export interval…" med et interval, ellers "Export whole
-  recording…" (eksportdialogen får `default_scope`). Toolbarens Export uden interval bevarer
-  den gamle standard (blokken under markøren).
+  recording…" (eksportdialogen får `default_scope`). Toolbarens Export uden interval bruger det
+  huskede omfang, ellers blokken under markøren.
 - **Eksportdialogen husker** format, omfang, kanalvalg (også en afkrydsning, hvis antallet af
   kanaler passer), decimaltegn, de tre valg og sidste mappe (`QSettings`, gruppe `export`).
   Omfang: eksplicit ønske > interval > husket > blok > hele filen.
