@@ -16,8 +16,9 @@ Daterede beslutninger og afgjorte punkter. Nyeste øverst.
   skalerer dem fra 2×-slottene.
 - **Splash på kurveskriverpapir** (`ui/splash.py`, efter RespMechs mønster: vises som det
   første, vinduet bygges bagved, afsløres efter mindst 1,2 s): samme papir og net som logoet,
-  flisen til venstre, ordmærket i blæk med ravfarvet streg, tagline "LabChart recordings
-  without LabChart", og langs bunden én blæk-kurve med rolig vejrtrækning og ét sniff
+  flisen til venstre, ordmærket i blæk med ravfarvet streg, tagline "Read and export .adicht
+  files without LabChart" (Emil: nævn .adicht, så ordspillet i navnet ses, og fremhæv
+  eksport, som LabCharts gratis Reader ikke kan), og langs bunden én blæk-kurve med rolig vejrtrækning og ét sniff
   markeret som udsnit. Klik lukker den ikke (der er intet bagved endnu). About-dialogen
   viser logoet.
 
