@@ -2,6 +2,45 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-28 (4) — Dock-ikonet: den pakkede Mac-app sætter intet applikationsikon
+
+- **Symptom** (Emil, på en Retina-Mac med dmg'en fra *Build installers* på `main`):
+  Finder viste det rigtige logo, men Dock-flisen og Cmd-Tab viste et sløret, pixeleret
+  nøgent "a", så længe appen kørte.
+- **Årsag (verificeret i kilde og CI-log, ikke observeret med en debugger på Mac'en):**
+  `ui/app.py` kaldte `QApplication.setWindowIcon(app_icon())`. Qt gør det til
+  `NSApp.applicationIconImage` og erstatter dermed bundlets ikon i Dock'en, mens appen
+  kører. dmg'en indeholder PySide6 **6.9.3**, ikke den nyeste: `min_os_version = "12.0"`
+  får briefcase til at installere med `--platform macosx_12_0`, og PySide6 6.10+ findes
+  kun som macosx_13_0-hjul. I Qt 6.9.1–6.10.0 kasserer `imageFromQIcon:withSize:` flisens
+  størrelse; NSImage'et får sin størrelse fra den FØRSTE repræsentation, og `app_icon()`
+  tilføjer 16 px først, dvs. det nøgne "a" på 16 pt, som Dock'en så forstørrer. (Qt
+  6.10.1 rettede det; 6.10.2+ vælger én pixmap i flisens størrelse.)
+- **Rettelse:** i den pakkede macOS-app sætter `main()` intet applikationsikon
+  (`application_icon_choice`); `adichtion.icns` er så Dock- og app-skifter-ikonet, det
+  samme som Finder viser. Bundlet genkendes af `ui/macbundle.py`: stien skal være
+  præcis `<X>.app/Contents/MacOS/<fil>`, og Info.plist'ens `CFBundleIdentifier` skal
+  være vores (`MACOS_BUNDLE_ID`, som en test holder lig pyprojects `bundle` + appnavn). En
+  ren `.app/Contents/MacOS`-delstrengstest er IKKE nok: framework-Python (python.org,
+  Homebrew) kører selv inde i `Python.app`. Kørt fra kildekoden på macOS sætter appen
+  `logo.dock_icon()`, kun det fulde logo (128–512 px), så ingen Qt-version kan give
+  Dock'en det nøgne "a". Windows og Linux er uændrede (`app_icon()`, alle størrelser).
+  `MainWindow.setWindowIcon` er urørt: på macOS rammer vinduesikoner aldrig Dock'en
+  (kun titellinjens dokumentknap, og kun med `setWindowFilePath`, som appen ikke bruger).
+- **Fravalgt:** at løfte `min_os_version` til 13.0 for at få PySide6 ≥ 6.10.2 (ville
+  også rette det, men dropper macOS 12); at vende `app_icon()`s rækkefølge (afhænger af
+  Qt-versionens rækkefølgeregel og giver stadig "a" i 6.10.2+ ved små fliser).
+- **Ikke ændret:** `.icns`'en og beslutningen "ikon-tegningen op til 64 px" fra (2).
+  I `.icns` er 32 og 64 px (16 og 32 pt @2x) stadig det nøgne "a", skarpt og med vilje;
+  det ses i Finders listevisning, Aktivitetsovervågning og ved en meget lille Dock
+  (32 pt eller mindre på Retina, 64 pt eller mindre på en 1×-skærm). Ændres det, er det
+  en ny designbeslutning. En test låser nu hver `.icns`-chunks tegning.
+- **Retter (3) og (2):** det blå ikon i (3) var ikke Briefcases build-mappe: Emil havde
+  installeret dmg'en fra en *genkørsel* af en kørsel fra aftenen før, og en genkørsel
+  bygger sin oprindelige commit (`docs/RELEASING.md` §5). Briefcase-forklaringen gælder
+  stadig for lokale builds. (2)s "samme renderer som appens dock-ikon" gælder kun kørsel
+  fra kildekoden; den pakkede app viser `.icns`'en.
+
 ## 2026-09-28 (3) — "gammelt blåt ikon på Mac": revideret, ikke en kodefejl
 
 - **Fundet ved en henvendelse** (en helt klassisk "checker det slog

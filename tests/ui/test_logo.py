@@ -54,6 +54,99 @@ def test_app_icon_carries_every_size(qapp):
     assert [s.width() for s in icon.availableSizes()] == [16, 24, 32, 48, 64, 128, 256, 512]
 
 
+def _is_logo(img):
+    """The full logo carries the amber selection band; the bare "a" icon drawing has none."""
+    band_x = int(sum(logo.LOGO_BAND) / 2 / logo.CANVAS * img.width())
+    c = img.pixelColor(band_x, int(0.15 * img.height()))
+    return c.alpha() > 200 and c.red() > 200 and 150 < c.green() < 235 and c.blue() < 190
+
+
+def test_dock_icon_is_the_full_logo_at_every_size(qapp):
+    """macOS from source: whatever size Qt asks for (the dock tile times the pixel ratio,
+    or the first representation on Qt 6.9.1-6.10.0), the Dock gets the logo, never the
+    bare "a" blown up (docs/beslutninger.md 2026-09-28 (4))."""
+    from PySide6.QtCore import QSize
+
+    icon = logo.dock_icon()
+    assert icon is not None and not icon.isNull()
+    sizes = [s.width() for s in icon.availableSizes()]
+    assert sizes == list(logo.DOCK_ICON_SIZES) and min(sizes) > logo.ICON_MAX_PX
+    for s in icon.availableSizes():                          # every representation Qt 6.9 builds
+        assert _is_logo(icon.pixmap(s).toImage()), s
+    for n in (16, 32, 48, 64, 128):                         # and every size Qt 6.10+ may ask for
+        for dpr in (1.0, 2.0):
+            assert _is_logo(icon.pixmap(QSize(n, n), dpr).toImage()), (n, dpr)
+
+
+def test_the_packaged_mac_app_sets_no_application_icon():
+    """The bundle's icns is the Dock and app-switcher icon; a run-time one replaced it with
+    a blurry bare "a" (Qt 6.9.3). From source on macOS the logo-only dock icon, elsewhere
+    the full multi-size icon."""
+    from adichtion.ui.app import application_icon_choice
+
+    assert application_icon_choice("darwin", packaged=True) is None
+    assert application_icon_choice("darwin", packaged=False) == "dock"
+    for platform in ("win32", "linux"):
+        assert application_icon_choice(platform, packaged=False) == "app"
+        assert application_icon_choice(platform, packaged=True) == "app"
+
+
+def test_main_follows_the_icon_choice(monkeypatch):
+    """main() asks macbundle only on macOS and never lets a failure there stop start-up."""
+    from adichtion.ui import app as app_mod
+
+    class FakeApp:
+        def applicationFilePath(self):
+            return "/Applications/adichtion.app/Contents/MacOS/adichtion"
+
+    monkeypatch.setattr(app_mod.sys, "platform", "linux")
+    assert app_mod._running_as_packaged_mac_app(FakeApp()) is False
+    monkeypatch.setattr(app_mod.sys, "platform", "darwin")
+    import adichtion.ui.macbundle as mb
+    seen = []
+    monkeypatch.setattr(mb, "is_packaged_app", lambda exes: seen.append(tuple(exes)) or True)
+    assert app_mod._running_as_packaged_mac_app(FakeApp()) is True
+    assert seen[0][0] == FakeApp().applicationFilePath()      # the bundle AppKit uses, first
+
+    def boom(exes):
+        raise RuntimeError("no plist")
+    monkeypatch.setattr(mb, "is_packaged_app", boom)
+    assert app_mod._running_as_packaged_mac_app(FakeApp()) is False
+
+
+def _icns_chunks(path):
+    """{type: PNG bytes} for the image chunks of an .icns file."""
+    import struct
+
+    with open(path, "rb") as fh:
+        data = fh.read()
+    assert data[:4] == b"icns" and struct.unpack(">I", data[4:8])[0] == len(data)
+    chunks, i = {}, 8
+    while i < len(data):
+        kind, n = data[i:i + 4].decode("latin-1"), struct.unpack(">I", data[i + 4:i + 8])[0]
+        body = data[i + 8:i + n]
+        if body[:8] == b"\x89PNG\r\n\x1a\n":
+            chunks[kind] = body
+        i += n
+    return chunks
+
+
+def test_installer_icns_holds_the_logo_from_128_px(qapp):
+    """Every image in installer/adichtion.icns is the drawing its pixel size calls for:
+    the bare "a" at 32 and 64 px (16 and 32 pt @2x), the logo from 128 px. The icns is
+    what the Dock and the app switcher show for the packaged app."""
+    from PySide6.QtGui import QImage
+
+    expected = {"ic11": 32, "ic12": 64, "ic07": 128, "ic08": 256, "ic13": 256,
+                "ic09": 512, "ic14": 512, "ic10": 1024}
+    chunks = _icns_chunks(os.path.join(ROOT, "installer", "adichtion.icns"))
+    assert set(chunks) == set(expected)
+    for kind, px in expected.items():
+        img = QImage.fromData(chunks[kind])
+        assert (img.width(), img.height()) == (px, px), kind
+        assert _is_logo(img) == (px > logo.ICON_MAX_PX), (kind, px)
+
+
 def test_splash_svg_has_the_brand_and_the_version():
     from adichtion.ui import splash
 

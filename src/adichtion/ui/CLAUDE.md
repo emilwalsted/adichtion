@@ -6,10 +6,13 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 
 ## Structure
 
-- `app.py` — the app entry point (`adichtion` without a subcommand, `python -m adichtion`, the packaged bundle): splash first, then theme and `MainWindow` built behind it, revealed maximised after `MIN_SPLASH_MS`, open dialog, macOS FileOpen events.
+- `app.py` — the app entry point (`adichtion` without a subcommand, `python -m adichtion`, the packaged bundle): splash first, then theme and `MainWindow` built behind it, revealed maximised after `MIN_SPLASH_MS`, open dialog, macOS FileOpen events. The application icon per platform: `application_icon_choice` (none in the packaged macOS app, `dock_icon()` on macOS from source, `app_icon()` elsewhere).
+- `macbundle.py` (Qt-free) — `is_packaged_app`: is this process the packaged `adichtion.app`
+  (main-executable slot + our `CFBundleIdentifier` in Info.plist, not a path substring).
 - `logo.py` — the a-trace logo as SVG (the single source of palette and geometry: the icon
   drawing up to 64 px, the logo from 128 px) rendered with `QSvgRenderer`: `make_pixmap`,
-  `logo_pixmap`, `app_icon`. `design/logo/` and `scripts/render_icons.py` render from it.
+  `logo_pixmap`, `app_icon` (every size, window/taskbar), `dock_icon` (the logo only, the
+  macOS Dock from source). `design/logo/` and `scripts/render_icons.py` render from it.
 - `splash.py` — the start-up splash: a sheet of the logo's chart paper with the tile, the
   wordmark and one breathing trace with a selected sniff (`build_splash_svg` is Qt-free).
 - `theme.py` — RespMech's palette and style sheet (light/dark, `ADICHTION_THEME`), the
@@ -61,5 +64,10 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   seeking otherwise. The panel ignores `set_position` calls that are its own tick coming
   back (`_driving`); an external cursor move while playing re-anchors the clock. The data
   table is rebuilt at most 10×/s while playing; overlays and readout follow every tick.
+- **No run-time application icon in the packaged macOS app.** `QApplication.setWindowIcon`
+  replaces the bundle's icns in the Dock and Cmd-Tab with one bitmap Qt builds; PySide6
+  6.9.3 (what the dmg ships) built it from the icon's first, 16 px representation. Window
+  icons are harmless on macOS (they never reach the Dock). Anything that must show in the
+  Dock from source gets only large full-logo pixmaps (`logo.dock_icon()`).
 - Tests grab the widgets offscreen (`widget.grab().save(...)`) when a look needs checking;
   the platform plugin prints "does not support propagateSizeHints", which is noise.

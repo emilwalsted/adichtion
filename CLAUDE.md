@@ -118,4 +118,12 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   also caches app icons. Regenerating `scripts/render_icons.py`'s output is
   not enough on its own — see RELEASING.md for the fresh-`create` /
   `--update-resources` fix. Not a bug in this repo: `tests/ui/test_logo.py`
-  pins the committed installer icons to the current drawing.
+  pins the committed installer icons to the current drawing. A GitHub
+  *Re-run* of an old *Build installers* run rebuilds that run's old commit.
+- **The packaged macOS app sets no application icon** (`ui/app.py`
+  `application_icon_choice`, `ui/macbundle.py`): the bundle's `adichtion.icns`
+  is the Dock and Cmd-Tab icon. `QApplication.setWindowIcon` replaced it, and
+  the PySide6 the dmg ships (6.9.3, pinned by `min_os_version = "12.0"`) built
+  that bitmap from the 16 px bare "a" (`docs/beslutninger.md` 2026-09-28 (4)).
+  Don't reintroduce a run-time app icon on macOS; from source it is
+  `logo.dock_icon()`, the full logo only.

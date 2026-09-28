@@ -132,6 +132,21 @@ resort `rm -rf ~/Library/Caches/com.apple.iconservices.store`. CI's *Build insta
 workflow always runs `briefcase create` from a clean checkout, so it is not exposed to this;
 it only bites a local, iterative build.
 
+**Re-running an old *Build installers* run rebuilds its OLD commit.** GitHub's *Re-run jobs*
+checks out the commit the run was first started on, not the current `main`, so a re-run
+finishes last and looks newest in the Actions list while carrying old code and old icons
+(28-09-2026: a re-run of a run from the day before still had the accent-blue icon). Take
+the dmg from a run whose commit is the one you want, or start a new run.
+
+**The running app's Dock and app-switcher icon is the bundle's `adichtion.icns`.** In the
+packaged macOS app `ui/app.py` sets no application icon (`application_icon_choice`,
+`ui/macbundle.py` recognises the bundle by its `CFBundleIdentifier`). The dmg ships PySide6
+6.9.3 (`min_os_version = "12.0"` excludes the macosx_13_0 wheels of 6.10 and later), and
+its `QApplication.setWindowIcon` handed the Dock an image sized by the icon's first, 16 px
+bare "a": a blurry "a" while the app ran, although Finder showed the right icon. From
+source on macOS the app sets `logo.dock_icon()` (the full logo only). Check on a Mac after
+an icon change: the pinned icon, the running Dock tile and Cmd-Tab all show the logo.
+
 ## Not done yet / known limits
 
 - The dmg is built for the runner's architecture (Apple Silicon on `macos-latest`); there is

@@ -11,9 +11,10 @@ Writes, into ``installer/`` (docs/RELEASING.md §5):
   and 32 px 1× slots from those), both assembled from renders at each size rather than by
   scaling the 1024 px logo down, so the small sizes are the icon drawing.
 
-Rendering is Qt's (offscreen), the same renderer the running app uses for its dock and
-window icon, so installer and app agree pixel for pixel. Needs the ``[ui]`` extra and
-Pillow::
+Rendering is Qt's (offscreen), the same renderer the running app uses for its window
+icon, so installer and app agree pixel for pixel. The packaged macOS app's Dock and
+app-switcher icon IS this ``adichtion.icns`` (the app sets no application icon there,
+``ui/app.py``). Needs the ``[ui]`` extra and Pillow::
 
     QT_QPA_PLATFORM=offscreen python scripts/render_icons.py [installer-dir]
 """

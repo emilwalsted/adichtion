@@ -11,6 +11,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   all three platforms, the About dialog and the top of the README.
 - A start-up splash on the same chart paper, shown while the window is built.
 
+### Fixed
+- macOS: the running app's Dock and app-switcher icon was a blurry bare "a" instead of
+  the logo. The packaged app now leaves its bundle icon in place, and a run from source
+  gives the Dock the full logo only.
+
 ## [0.3.0] – 2026-09-27
 
 ### Added
