@@ -18,7 +18,7 @@ from typing import Optional
 
 #: Floor (ms) the splash stays up before the window is revealed, counted from when the
 #: splash was shown: building the window already takes most of it, this only tops it up.
-MIN_SPLASH_MS = 1200
+MIN_SPLASH_MS = 3000
 
 
 def reveal_delay_ms(elapsed_ms: int, floor_ms: int = MIN_SPLASH_MS) -> int:

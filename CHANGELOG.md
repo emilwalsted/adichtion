@@ -30,6 +30,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   `adichtion videos` lists the movie each block names. Format notes: `docs/MAC_FORMAT.md`.
 
 ### Changed
+- A horizontal scroll bar under the graphs moves the zoomed time axis (enabled only while the
+  view is zoomed); the splash stays up for at least 3 seconds; the empty band between the toolbar
+  and the first channel is smaller.
+- *File > Load LabChart for Mac settings…* is gone: pick the file type *LabChart for Mac
+  settings files* in the *Open…* dialog instead.
 - The view can no longer be zoomed out past the whole file, and no plot can be scrolled past its
   start or end; every plot (not only the first) now carries the limits, which also fixes plots
   drifting out of step with the others after a drag.

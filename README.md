@@ -92,7 +92,7 @@ them, with the block labels and comment flags in a strip above the channels.
   and makes the heights equal again.
 * Calculated channels are tinted and carry their definition in the overlay,
   recovered from the data in the background (or read from a LabChart for Mac
-  document or settings file via *File > Load LabChart for Mac settings…*).
+  document or settings file by choosing the *LabChart for Mac settings files* type in *File > Open…*).
   In a LabChart for Mac document they are not stored: the file panel lists
   them with the document's definition, and the channel and export dialogs
   show them greyed out.

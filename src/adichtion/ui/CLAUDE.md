@@ -6,7 +6,7 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 
 ## Structure
 
-- `app.py` — the app entry point (`adichtion` without a subcommand, `python -m adichtion`, the packaged bundle): splash first, then theme and `MainWindow` built behind it, revealed maximised after `MIN_SPLASH_MS`, open dialog, macOS FileOpen events. The application icon per platform: `application_icon_choice` (none in the packaged macOS app, `dock_icon()` on macOS from source, `app_icon()` elsewhere).
+- `app.py` — the app entry point (`adichtion` without a subcommand, `python -m adichtion`, the packaged bundle): splash first, then theme and `MainWindow` built behind it, revealed maximised after `MIN_SPLASH_MS`, open dialog, macOS FileOpen events. `MIN_SPLASH_MS` is 3000 (Emil, 29-09-2026). The application icon per platform: `application_icon_choice` (none in the packaged macOS app, `dock_icon()` on macOS from source, `app_icon()` elsewhere).
 - `macbundle.py` (Qt-free) — `is_packaged_app`: is this process the packaged `adichtion.app`
   (main-executable slot + our `CFBundleIdentifier` in Info.plist, not a path substring).
 - `logo.py` — the a-trace logo as SVG (the single source of palette and geometry: the icon
@@ -20,7 +20,8 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - `timeline.py` (Qt-free) — the file axis: blocks end to end, `locate(t)`,
   `selections(t0, t1)`, comments with file times. `lod.py` (Qt-free) — level-of-detail
   curves, value under the cursor, interval statistics; runs on the worker thread.
-- `channel_stack.py` — `ChannelStack` (splitter of `ChannelPlot`s + `MarkerStrip`),
+- `channel_stack.py` — `ChannelStack` (splitter of `ChannelPlot`s + `MarkerStrip` + a horizontal
+  time scroll bar `hbar`, kept in step with the x range by `_sync_hbar`/`_on_hbar`),
   cursor/selection, LOD rendering through its own `JobRunner`.
 - `icons.py` — the toolbar's line icons as SVG strings in the theme's colours (`toolbar_icon(name)`);
   `startup_dialog.py` — the dialog the app opens with (recent files + "Open a file…").
