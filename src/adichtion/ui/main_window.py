@@ -27,8 +27,12 @@ from .video_panel import VideoPanel
 from .workers import JobRunner
 
 # LabChart for Mac documents have no extension: "All files" is how they are picked
-FILE_FILTER = "LabChart files (*.adicht);;LabChart for Mac documents, all files (*)"
-MAC_FILTER = "LabChart for Mac documents and settings (*)"
+DOCUMENT_FILTER = "LabChart files (*.adicht)"
+MAC_DOCUMENT_FILTER = "LabChart for Mac documents, all files (*)"
+#: Picking this filter in the Open dialog reads the calculated-channel definitions from a
+#: LabChart 7 for Mac settings file (or document) into the file that is already open.
+MAC_SETTINGS_FILTER = "LabChart for Mac settings files (*)"
+FILE_FILTER = ";;".join([DOCUMENT_FILTER, MAC_DOCUMENT_FILTER, MAC_SETTINGS_FILTER])
 MAX_RECENT = 8
 
 
@@ -83,7 +87,7 @@ class MainWindow(QMainWindow):
         self.split.setStretchFactor(1, 2)
         central = QWidget()
         col = QVBoxLayout(central)
-        col.setContentsMargins(8, 6, 8, 6)
+        col.setContentsMargins(8, 2, 8, 6)
         col.addWidget(self.split)
         self.setCentralWidget(central)
 
@@ -150,8 +154,6 @@ class MainWindow(QMainWindow):
         self.act_close = act("Close file", self.close_file, "Ctrl+W")
         self.act_export = act("Export…", self.export_dialog, "Ctrl+E",
                               "Export the file, a block or the selection as text, CSV or Excel", icon="export")
-        self.act_mac = act("Load LabChart for Mac settings…", self.load_mac_settings, None,
-                           "Read the calculated-channel definitions from a LabChart 7 for Mac document or settings file")
         self.act_quit = act("Quit", self.close, "Ctrl+Q")
         self.act_zoom_in = act("Zoom in", self.stack.zoom_in, "Ctrl++", "Zoom the time axis in (around the cursor)",
                                icon="zoom_in")
@@ -204,7 +206,6 @@ class MainWindow(QMainWindow):
         m.addMenu(self.recent_menu)
         m.addSeparator()
         m.addAction(self.act_export)
-        m.addAction(self.act_mac)
         m.addSeparator()
         m.addAction(self.act_close)
         m.addAction(self.act_quit)
@@ -254,7 +255,7 @@ class MainWindow(QMainWindow):
 
     def _update_actions(self) -> None:
         has = self.file is not None
-        for a in (self.act_close, self.act_export, self.act_mac, self.act_zoom_in, self.act_zoom_out, self.act_zoom_reset,
+        for a in (self.act_close, self.act_export, self.act_zoom_in, self.act_zoom_out, self.act_zoom_reset,
                   self.act_auto_zoom, self.act_channels, self.act_all_channels, self.act_equalize, self.act_clear_sel,
                   self.act_step_back, self.act_step_fwd, self.act_sec_back, self.act_sec_fwd,
                   self.act_scroll_left, self.act_scroll_right):
@@ -319,8 +320,12 @@ class MainWindow(QMainWindow):
 
     def open_dialog(self) -> None:
         start = os.path.dirname(self.file.path) if self.file else (os.path.dirname(self.recent_files()[0]) if self.recent_files() else "")
-        path, _ = QFileDialog.getOpenFileName(self, "Open LabChart file", start, FILE_FILTER)
-        if path:
+        path, chosen = QFileDialog.getOpenFileName(self, "Open LabChart file", start, FILE_FILTER)
+        if not path:
+            return
+        if chosen == MAC_SETTINGS_FILTER:       # the file type picked decides what the file is for
+            self.load_mac_settings(path)
+        else:
             self.open_file(path)
 
     def open_file(self, path: str) -> bool:
@@ -389,10 +394,10 @@ class MainWindow(QMainWindow):
 
     def load_mac_settings(self, path: Optional[str] = None) -> None:
         if self.file is None:
+            QMessageBox.information(self, "Open a recording first",
+                                    "Settings files fill in the calculated channels of a file that is already open. "
+                                    "Open the recording first, then pick the settings file again.")
             return
-        if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "LabChart for Mac document or settings file",
-                                                  os.path.dirname(self.file.path), MAC_FILTER)
         if not path:
             return
         try:

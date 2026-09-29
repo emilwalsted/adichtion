@@ -20,7 +20,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFontMetrics, QPen
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QSplitter, QToolButton, QVBoxLayout,
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QScrollArea, QScrollBar, QSizePolicy, QSplitter, QToolButton, QVBoxLayout,
                                QWidget)
 
 from ..file import AdichtFile
@@ -402,7 +402,7 @@ class MarkerStrip(pg.PlotWidget):
     def __init__(self, pal: dict, parent=None):
         self.vb = ChannelViewBox()
         super().__init__(parent, viewBox=self.vb)
-        self.setFixedHeight(44)                   # two rows: block labels above, comment flags below
+        self.setFixedHeight(38)                   # two rows: block labels above, comment flags below
         item = self.getPlotItem()
         item.hideButtons()
         item.hideAxis("left")
@@ -542,6 +542,15 @@ class ChannelStack(QWidget):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setWidget(self.splitter)
         lay.addWidget(self.scroll, 1)
+        # a horizontal scroll bar for the time axis: the same move as Alt+drag, for the mouse
+        # and the trackpad users who reach for a bar (enabled only while the view is zoomed)
+        self.hbar = QScrollBar(Qt.Horizontal)
+        self.hbar.setObjectName("timeScroll")
+        self.hbar.setEnabled(False)
+        self._hbar_scale = 1.0                  # scroll-bar steps per second of file time
+        self._hbar_busy = False                 # True while the bar is being set from the view
+        self.hbar.valueChanged.connect(self._on_hbar)
+        lay.addWidget(self.hbar)
         self.empty = QLabel("Open a LabChart file (.adicht, or a LabChart for Mac document) to see its channels.")
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setProperty("status", "muted")
@@ -566,6 +575,7 @@ class ChannelStack(QWidget):
         self.empty.setVisible(f is None)
         self.strip.setVisible(f is not None)
         self.scroll.setVisible(f is not None)
+        self.hbar.setVisible(f is not None)
         if f is None:
             self.cursorChanged.emit(None)
             self.selectionChanged.emit(None)
@@ -778,8 +788,43 @@ class ChannelStack(QWidget):
 
     def _on_x_range(self, *args) -> None:
         x0, x1 = self.view_range()
+        self._sync_hbar(x0, x1)
         self.rangeChanged.emit(x0, x1)
         self._schedule_render()
+
+    #: Most steps the time scroll bar is given (QScrollBar is int32; the scale keeps hours-long files inside it).
+    HBAR_STEPS = 1_000_000
+
+    def _sync_hbar(self, x0: float, x1: float) -> None:
+        """Make the scroll bar show the view: handle = the visible span, position = its start.
+        Disabled while the whole file is in view."""
+        d = self.timeline.duration_s if self.timeline is not None else 0.0
+        span = x1 - x0
+        bar = self.hbar
+        self._hbar_busy = True
+        try:
+            if d <= 0 or span >= d - 1e-9:
+                bar.setEnabled(False)
+                bar.setRange(0, 0)
+                bar.setPageStep(self.HBAR_STEPS)
+                return
+            self._hbar_scale = self.HBAR_STEPS / d
+            k = self._hbar_scale
+            page = max(1, int(round(span * k)))
+            bar.setEnabled(True)
+            bar.setRange(0, max(0, int(round(d * k)) - page))
+            bar.setPageStep(page)
+            bar.setSingleStep(max(1, page // 10))
+            bar.setValue(int(round(x0 * k)))
+        finally:
+            self._hbar_busy = False
+
+    def _on_hbar(self, value: int) -> None:
+        if self._hbar_busy or self.timeline is None or self._master() is None:
+            return
+        x0, x1 = self.view_range()
+        t0 = value / self._hbar_scale
+        self.set_range(t0, t0 + (x1 - x0))
 
     # -- cursor and selection --------------------------------------------------------------
     @property

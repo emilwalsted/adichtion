@@ -2,6 +2,23 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-29 — UI-rettelser: tidsrullebjælke, splash, tomrum, én Open-dialog
+
+- **Vandret rullebjælke** under graferne (`ChannelStack.hbar`): håndtaget er det synlige
+  tidsspænd, positionen dets start; deaktiveret, mens hele filen er i billedet. Skalaen er
+  1 000 000 trin over filens varighed, så timelange filer holder sig inden for QScrollBars
+  int32. Bjælken sætter kun x-området (`set_range`), som Alt+træk gør.
+- **Splash mindst 3 s** (`MIN_SPLASH_MS` 1200 -> 3000).
+- **Tomrum:** markørstrimlen 44 -> 38 px og centralwidgettens topmargin 6 -> 2 px. 32 px
+  var for lidt: blokmærkat og kommentarflag overlappede. Målt med skærmbilleder af den
+  syntetiske fil, ikke på en rigtig Mac.
+- **Menupunktet *Load LabChart for Mac settings…* er fjernet.** *Open…* har tre filtyper
+  (`.adicht`, Mac-dokumenter, Mac-indstillingsfiler); den valgte filtype afgør, om filen åbnes
+  som optagelse eller læses ind som definitioner i den åbne fil. Fravalgt: at sniffe filen
+  automatisk, fordi et Mac-dokument og en indstillingsfil deler magic-bytes og begge kan læses
+  som indstillinger; valget ligger hos brugeren, som før. Uden åben optagelse forklarer en
+  besked, at man skal åbne optagelsen først.
+
 ## 2026-09-28 (6) — LabChart for Mac-dokumenter læses gennem samme API
 
 - **Emils ønske:** understøttelse af LabChart 7 for Mac's egne dokumenter (gemt uden

@@ -119,6 +119,56 @@ def test_mac_settings_fill_the_definitions(qapp, window, synthetic, tmp_path):
     assert "0 calculated channels" in window.statusBar().currentMessage()
 
 
+def test_time_scroll_bar_follows_and_moves_the_view(qapp, window, synthetic):
+    window.open_file(synthetic["path"])
+    pump(qapp, 0.2)
+    bar = window.stack.hbar
+    d = window.stack.timeline.duration_s
+    assert not bar.isEnabled()                                  # the whole file is in view
+    window.stack.set_range(10.0, 20.0)
+    pump(qapp, 0.1)
+    assert bar.isEnabled()
+    assert bar.value() / window.stack._hbar_scale == pytest.approx(10.0, abs=1e-3)
+    assert bar.pageStep() / window.stack._hbar_scale == pytest.approx(10.0, abs=1e-3)
+    bar.setValue(bar.maximum())                                 # dragged to the end: same zoom, last stretch
+    pump(qapp, 0.1)
+    x0, x1 = window.stack.view_range()
+    assert x1 - x0 == pytest.approx(10.0, abs=1e-3) and x1 == pytest.approx(d, abs=1e-3)
+    window.stack.zoom_reset()
+    pump(qapp, 0.1)
+    assert not bar.isEnabled()
+    window.close_file()
+    assert not window.stack.hbar.isVisible()
+
+
+def test_open_dialog_filter_decides_what_the_file_is_for(qapp, window, synthetic, monkeypatch):
+    """One Open dialog: the file-type filter picked routes the file to the recording reader or to
+    the Mac settings reader (the separate menu item is gone)."""
+    from PySide6.QtWidgets import QFileDialog
+    from adichtion.ui import main_window as mw
+    assert not hasattr(window, "act_mac")
+    calls = []
+    monkeypatch.setattr(window, "open_file", lambda p: calls.append(("open", p)))
+    monkeypatch.setattr(window, "load_mac_settings", lambda p=None: calls.append(("settings", p)))
+    for chosen, want in ((mw.DOCUMENT_FILTER, "open"), (mw.MAC_DOCUMENT_FILTER, "open"),
+                         (mw.MAC_SETTINGS_FILTER, "settings")):
+        monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, c=chosen, **k: ("/x/f", c)))
+        window.open_dialog()
+        assert calls[-1] == (want, "/x/f")
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", "")))
+    n = len(calls)
+    window.open_dialog()
+    assert len(calls) == n
+
+
+def test_settings_file_without_an_open_recording_asks_for_one(qapp, window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: shown.append(a[1])))
+    window.load_mac_settings("/x/settings")
+    assert shown == ["Open a recording first"]
+
+
 def test_open_failure_is_reported_not_raised(qapp, window, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     bad = tmp_path / "bad.adicht"
