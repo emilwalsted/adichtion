@@ -15,6 +15,12 @@ Three flavours:
 Values are what :meth:`adichtion.Record.read` returns (units when possible),
 formatted with ``%.7g`` like LabChart's 7 significant digits.  Time is
 seconds from the record start.
+
+A table holds its channels at their common sampling rate.  When the channels
+chosen have different rates (the slow inputs of a LabChart for Mac document),
+the table has a row per tick and the slower channels are up-sampled as
+LabChart's own export does (:meth:`adichtion.Record.read_ticks`);
+:func:`upsampling_notice` says so in a sentence for the user.
 """
 from __future__ import annotations
 
@@ -42,28 +48,92 @@ def _fmt(v: float, decimal: str) -> str:
     return s.replace(".", decimal) if decimal != "." else s
 
 
-def _check_rates(record: Record, channels: Sequence[int]) -> float:
+def table_plan(record: Record, channels: Sequence[int]) -> tuple[float, dict[int, float]]:
+    """The sampling rate of one table of ``channels`` from ``record``, and the channels it
+    up-samples (channel -> its own rate).  Channels that share a rate keep it; with several
+    rates the table has a row per tick and the slower channels are up-sampled the way
+    LabChart's own export does (:meth:`Record.read_ticks`)."""
     missing = [c + 1 for c in channels if not record.file.has_data(c)]
     if missing:
         raise ValueError(f"channel(s) {', '.join(map(str, missing))} are not stored in this file "
                          "(calculated channels of a LabChart for Mac document)")
-    groups: dict[float, list[int]] = {}
-    for c in channels:
-        groups.setdefault(record.sample_rate_hz(c), []).append(c + 1)
-    if len(groups) != 1:
-        parts = "; ".join(f"{rate:g} Hz: channel{'s' if len(chs) > 1 else ''} {', '.join(map(str, chs))}"
-                          for rate, chs in sorted(groups.items(), reverse=True))
-        raise ValueError(f"channels with different sampling rates cannot share one table; export them separately ({parts})")
-    return next(iter(groups))
+    rates = {c: record.sample_rate_hz(c) for c in channels}
+    if len(set(rates.values())) <= 1:
+        return next(iter(rates.values())), {}
+    return record.tick_rate_hz, {c: r for c, r in rates.items() if r != record.tick_rate_hz}
 
 
-def _comment_rows(record: Record, selection: Selection, channel: int) -> dict[int, list[str]]:
-    """Comments inside the selection, keyed by the sample row they fall on."""
+def upsampled_channels(f: AdichtFile, selections: Sequence[Selection], channels: Sequence[int]) -> dict[int, float]:
+    """The channels an export of ``selections`` up-samples (channel -> its own rate)."""
+    out: dict[int, float] = {}
+    for sel in selections:
+        out.update(table_plan(f.records[sel.record], channels)[1])
+    return out
+
+
+def _channel_list(chs: Sequence[int]) -> str:
+    """1-based channel numbers with runs joined: ``7-10, 12``."""
+    parts, run = [], []
+    for c in sorted(chs):
+        if run and c == run[-1] + 1:
+            run.append(c)
+            continue
+        if run:
+            parts.append(f"{run[0]}-{run[-1]}" if len(run) > 2 else ", ".join(map(str, run)))
+        run = [c]
+    if run:
+        parts.append(f"{run[0]}-{run[-1]}" if len(run) > 2 else ", ".join(map(str, run)))
+    return ", ".join(parts)
+
+
+def upsampling_notice(f: AdichtFile, selections: Sequence[Selection], channels: Sequence[int]) -> Optional[str]:
+    """What an export of ``selections`` up-samples, in a sentence for the user; None when
+    every table keeps its channels' own rate."""
+    up = upsampled_channels(f, selections, channels)
+    if not up:
+        return None
+    targets = sorted({f.records[s.record].tick_rate_hz for s in selections})
+    by_rate: dict[float, list[int]] = {}
+    for c, r in up.items():
+        by_rate.setdefault(r, []).append(c + 1)
+    what = "; ".join(f"channel{'s' if len(chs) > 1 else ''} {_channel_list(chs)} from {r:g} Hz"
+                     for r, chs in sorted(by_rate.items(), reverse=True))
+    return (f"Up-sampled to {' and '.join(f'{t:g}' for t in targets)} Hz so that all channels share one table: {what} "
+            "(linear interpolation between the stored samples, rounded to whole ADC counts, "
+            "as LabChart's own export does).")
+
+
+def _table(record: Record, selection: Selection, channels: Sequence[int], units: bool):
+    """``(time, columns, rate, row_of_tick)`` of one table (:func:`table_plan`)."""
+    rate, up = table_plan(record, channels)
+    start, stop = max(0, selection.start), min(selection.stop, record.ticks)
+    if up:
+        t = np.arange(start, stop) / record.tick_rate_hz
+        cols = [record.read_ticks(c, start, stop, units=units) for c in channels]
+        return t, cols, rate, (lambda tick: tick - start)
+    c0 = channels[0]
+    t = record.time(start, stop, c0)
+    cols = [record.read(c, start, stop, units=units) for c in channels]
+    s0 = record.tick_to_sample(start, c0)
+    return t, cols, rate, (lambda tick: record.tick_to_sample(tick, c0) - s0)
+
+
+def table_rows(record: Record, selection: Selection, channels: Sequence[int]) -> int:
+    """Rows the table of ``channels`` for ``selection`` has (:func:`table_plan`)."""
+    _rate, up = table_plan(record, channels)
+    start, stop = max(0, selection.start), min(selection.stop, record.ticks)
+    if up:
+        return max(0, stop - start)
+    return record.tick_to_sample(stop, channels[0]) - record.tick_to_sample(start, channels[0])
+
+
+def _comment_rows(record: Record, selection: Selection, row_of_tick) -> dict[int, list[str]]:
+    """Comments inside the selection, keyed by the row they fall on (the first row at or
+    after the comment)."""
     by_row: dict[int, list[str]] = {}
     for cm in record.comments:
         if selection.start <= cm.tick < selection.stop:
-            row = record.tick_to_sample(cm.tick - selection.start, channel)
-            by_row.setdefault(row, []).append(cm.text)
+            by_row.setdefault(row_of_tick(cm.tick), []).append(cm.text)
     return by_row
 
 
@@ -77,9 +147,7 @@ def write_text(record: Record, selection: Selection, channels: Sequence[int], ou
     if not channels:
         raise ValueError("no channels selected")
     ch_infos = [f.channel_info(c) for c in channels]
-    rate = _check_rates(record, channels)
-    t = record.time(selection.start, selection.stop, channels[0])
-    cols = [record.read(c, selection.start, selection.stop, units=units) for c in channels]
+    t, cols, rate, row_of_tick = _table(record, selection, channels, units)
     n = len(t)
     sep = "\t" if fmt == "txt" else ","
     if fmt == "txt" and header:
@@ -94,7 +162,7 @@ def write_text(record: Record, selection: Selection, channels: Sequence[int], ou
         out.write(("block," if block_column else "") + "time_s,"
                   + ",".join(f"{ci.title} [{record.value_label(c)}]".replace(",", " ") for ci, c in zip(ch_infos, channels))
                   + (",comment" if comments else "") + "\n")
-    by_row = _comment_rows(record, selection, channels[0]) if comments else {}
+    by_row = _comment_rows(record, selection, row_of_tick) if comments else {}
     prefix = f"{record.index + 1}," if (block_column and fmt == "csv") else ""
     buf = io.StringIO()
     for i in range(n):
@@ -163,7 +231,7 @@ def write_xlsx(f: AdichtFile, selections: Sequence[Selection], channels: Sequenc
         raise ValueError("no channels selected")
     for sel in selections:
         rec = f.records[sel.record]
-        n = rec.tick_to_sample(sel.stop, channels[0]) - rec.tick_to_sample(sel.start, channels[0])
+        n = table_rows(rec, sel, channels)
         if n + 1 > XLSX_MAX_ROWS:
             raise ValueError(f"block {sel.record + 1}: {n} rows do not fit an Excel sheet "
                              f"({XLSX_MAX_ROWS - 1} data rows); export a shorter selection or use text/CSV")
@@ -172,18 +240,16 @@ def write_xlsx(f: AdichtFile, selections: Sequence[Selection], channels: Sequenc
     seen: dict[int, int] = {}
     for sel in selections:
         rec = f.records[sel.record]
-        _check_rates(rec, channels)
+        t, cols, rate, row_of_tick = _table(rec, sel, channels, units)
         k = seen.get(sel.record, 0) + 1
         seen[sel.record] = k
         ws = wb.create_sheet(f"Block {sel.record + 1}" + (f" ({k})" if k > 1 else ""))
         if header:
             ws.append(["Block", sel.record + 1, "start", rec.start_local.strftime("%Y-%m-%d %H:%M:%S"),
-                       "selection start (s)", sel.start / rec.tick_rate_hz, "interval (s)", 1.0 / rec.sample_rate_hz(channels[0])])
+                       "selection start (s)", sel.start / rec.tick_rate_hz, "interval (s)", 1.0 / rate])
             ws.append(["time_s"] + [f"{f.channel_info(c).title} [{rec.value_label(c)}]" for c in channels]
                       + (["comment"] if comments else []))
-        t = rec.time(sel.start, sel.stop, channels[0])
-        cols = [rec.read(c, sel.start, sel.stop, units=units) for c in channels]
-        by_row = _comment_rows(rec, sel, channels[0]) if comments else {}
+        by_row = _comment_rows(rec, sel, row_of_tick) if comments else {}
         for i in range(len(t)):
             row = [float(t[i])] + [float(col[i]) for col in cols]
             if comments:

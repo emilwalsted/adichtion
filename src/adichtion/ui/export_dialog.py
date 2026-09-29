@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDia
                                QGroupBox, QHBoxLayout, QLabel, QPushButton, QRadioButton, QScrollArea, QVBoxLayout,
                                QWidget)
 
-from ..export import XLSX_MAX_ROWS
+from ..export import XLSX_MAX_ROWS, table_rows, upsampling_notice
 from ..file import AdichtFile, Selection
 from .timeline import Timeline
 
@@ -101,6 +101,7 @@ class ExportDialog(QDialog):
             b.setChecked(c in shown and f.has_data(c))
             b.setEnabled(f.has_data(c))
             b.toggled.connect(lambda _on: self.rb_pick.setChecked(True))
+            b.toggled.connect(lambda _on: self._update_note() if hasattr(self, "note") else None)
             il.addWidget(b)
             self.boxes.append(b)
         scroll = QScrollArea()
@@ -231,34 +232,40 @@ class ExportDialog(QDialog):
             return f"block {self._block.number}"
         return "whole file"
 
-    def _rows(self) -> int:
+    def _table_rows(self) -> list[int]:
         chans = self.channels()
-        c0 = chans[0] if chans else 0
-        return sum(self.file.records[s.record].tick_to_sample(s.stop, c0) - self.file.records[s.record].tick_to_sample(s.start, c0)
-                   for s in self.selections())
+        if not chans:
+            return [0 for _s in self.selections()]
+        return [table_rows(self.file.records[s.record], s, chans) for s in self.selections()]
+
+    def _rows(self) -> int:
+        return sum(self._table_rows())
+
+    def upsampling_note(self) -> Optional[str]:
+        chans = self.channels()
+        return upsampling_notice(self.file, self.selections(), chans) if chans else None
 
     def _update_note(self) -> None:
-        rows = self._rows()
-        n_sel = len(self.selections())
+        per_table = self._table_rows()
+        rows = sum(per_table)
+        n_sel = len(per_table)
         text = f"{rows:,} rows × {len(self.channels())} channels"
         if self.fmt() == "xlsx":
-            biggest = max((self.file.records[s.record].tick_to_sample(s.stop, 0) - self.file.records[s.record].tick_to_sample(s.start, 0)
-                           for s in self.selections()), default=0)
+            biggest = max(per_table, default=0)
             text += f", one sheet per block ({n_sel})"
             if biggest + 1 > XLSX_MAX_ROWS:
                 text += f". A block of {biggest:,} rows does not fit an Excel sheet ({XLSX_MAX_ROWS - 1:,} rows): choose text or CSV, or a shorter selection."
         elif n_sel > 1:
             text += ", " + ("the header repeated at every block" if self.fmt() == "txt" else "with a block column")
+        note = self.upsampling_note()
+        if note:
+            text += ".\n" + note
         self.note.setText(text)
 
     def _accept(self) -> None:
         chans = self.channels()
         if not chans:
             self.note.setText("Choose at least one channel.")
-            return
-        rates = {self.file.records[0].sample_rate_hz(c) for c in chans} if self.file.records else set()
-        if len(rates) > 1:
-            self.note.setText("The chosen channels have different sampling rates; export them separately.")
             return
         _label, fmt, ext = FORMATS[self.format.currentIndex()]
         base = os.path.splitext(os.path.basename(self.file.path))[0]

@@ -89,9 +89,9 @@ class InfoPanel(QWidget):
         parts = [f.format_label, f"{len(f.records)} block{'s' if len(f.records) != 1 else ''}",
                  f"{f.n_channels} channels", _hms(timeline.duration_s) + " recorded", f"{size_mb:.1f} MB"]
         if f.videos:
-            parts.append(f"{n_video} video clip{'s' if n_video != 1 else ''}")
-        if f.movie_files:
-            parts.append(f"{len(f.movie_files)} movie file{'s' if len(f.movie_files) != 1 else ''} named (not shown yet)")
+            n_found = sum(1 for r in f.records if r.video is not None and r.video_file is not None)
+            parts.append(f"{n_video} video clip{'s' if n_video != 1 else ''}"
+                         + (f" ({n_found} found)" if n_found != n_video else ""))
         n_missing = sum(1 for c in range(f.n_channels) if not f.has_data(c))
         if n_missing:
             parts.append(f"{n_missing} calculated channel{'s' if n_missing != 1 else ''} not stored")

@@ -127,3 +127,52 @@ def test_every_calculated_channel_has_a_complete_definition():
                 assert s.flow_calibration is not None, where
             if s.calculation == "Spiro. Volume":
                 assert s.volume_ratio is not None, where
+
+
+def test_upsampling_matches_the_winchart_exports():
+    """``Record.read_ticks`` fills the ticks between a slow channel's samples as LabChart's
+    export does: identical except where LabChart broke an exact half-count tie the other
+    way (a few thousand of ~378 million values), never by more than one count."""
+    found = pairs()
+    if not found:
+        pytest.skip("no document below ADICHTION_SAMPLES has a .adicht export next to it")
+    total = same = 0
+    for doc, exp in found:
+        with AdichtFile(doc) as m, AdichtFile(exp) as e:
+            for rm, re_ in zip(m.records, e.records):
+                for ch in range(min(m.n_channels, e.n_channels)):
+                    if not m.has_data(ch) or e.index.channel_dtype(ch) != "int16" or m.index.decimation(rm.index, ch) == 1:
+                        continue
+                    diff = rm.read_ticks(ch, units=False) - re_.read_raw(ch)
+                    assert np.abs(diff).max() <= 1, (doc, rm.index, ch)
+                    total += len(diff)
+                    same += int(np.count_nonzero(diff == 0))
+    assert total > 0 and same / total >= 0.9999, (same, total)
+
+
+def test_movies_are_timed_by_their_frame_stamps():
+    """Every readable movie in a document's ``<name> movies`` folder carries one stamp per
+    frame on the clock of the document's mTim (MAC_FORMAT.md §7): its first frame comes
+    within 0.2 s after the block's start, one offset (a few ms) fits every later frame,
+    and the movie lasts as long as the block."""
+    from adichtion.qtmovie import read_movie_timing
+    checked = 0
+    for doc in mac_documents():
+        with AdichtFile(doc) as f:
+            for v in f.videos:
+                path = os.path.join(f.movies_folder, v.file_name)
+                if not os.path.isfile(path) or os.path.getsize(path) == 0:     # absent, or a cloud placeholder
+                    continue
+                where = (os.path.basename(doc), v.file_name)
+                assert v.stamped, where
+                tm = read_movie_timing(path)
+                rec = f.records[v.record_index]
+                clock0 = f.mac.record_clock_us[v.record_index]
+                assert 0.0 <= (tm.stamps_us[0] - clock0) / 1e6 < 0.2, where
+                d = tm.frame_times_s[1:] - (tm.stamps_us[1:] - clock0) / 1e6
+                assert d.max() - d.min() < 1e-4 and 0.0 <= v.offset_s < 0.05, where
+                assert np.all(np.diff(tm.stamps_us) > 0), where
+                assert abs(tm.duration_s - rec.duration_s) < 0.5, where
+                checked += 1
+    if not checked:
+        pytest.skip("no readable LabChart for Mac movie below ADICHTION_SAMPLES")

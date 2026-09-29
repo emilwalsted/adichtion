@@ -57,3 +57,18 @@ def test_briefcase_version_and_changelog_match_the_package():
     assert re.search(r'^adichtion = "adichtion\.__main__:main"', pyproject, re.M)
     with open(os.path.join(root, "CHANGELOG.md"), encoding="utf-8") as fh:
         assert f"## [{__version__}]" in fh.read()
+
+
+def test_the_bundle_requires_what_the_ui_extra_requires():
+    """[tool.briefcase.app.adichtion] requires is a manual copy of numpy + the [ui] extra; the
+    OpenCV bound in particular (below 4.13: LabChart for Mac's interlaced DV movies decode
+    black with FFmpeg 8) must be the same in both."""
+    import os
+    tomllib = pytest.importorskip("tomllib")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "pyproject.toml"), "rb") as fh:
+        cfg = tomllib.load(fh)
+    extra = set(cfg["project"]["dependencies"]) | set(cfg["project"]["optional-dependencies"]["ui"])
+    (app,) = cfg["tool"]["briefcase"]["app"].values()
+    assert set(app["requires"]) == extra
+    assert "opencv-python-headless>=4.8,<4.13" in extra

@@ -32,8 +32,10 @@ output: here the WinChart `.adicht` export of the same recording),
   they keep a small resource fork. adichtion identifies them by the magic at
   offset 0 of the data fork. A settings file has the same magic and no `Map4`
   chunks.
-- The documents name 41 movie files of LabChart's video capture; none of them
-  is in the study folder (§7).
+- The documents name 41 movie files of LabChart's video capture (QuickTime,
+  0.1–13 GB each). They are in a second copy of the study folder; four of them
+  were read (their `moov` atoms and synchronisation samples) to establish the
+  timing (§7.1).
 
 ## 1. Container
 
@@ -175,6 +177,18 @@ no marker byte; used for tiny blocks (5 samples seen).
   channel (0.998 correlation with a 5-sample moving average of the document's
   raw samples): the document was changed back to the raw input later.
 
+**LabChart's up-sampling** (what its WinChart export writes between the
+stored samples of a slow channel): between samples *x_k* at tick *k·d* and
+*x_k+1*, the value at tick *k·d + j* is the linear interpolation
+`x_k + (x_k+1 − x_k) · j / d`, rounded to whole counts half away from zero;
+after the last stored sample of a block its value is held. **Verified** on the
+10 pairs: 628 channel × block combinations, 377 968 664 values, all but
+7 574 identical (99.998 %); those differ by one count, at exact half-count
+ties that LabChart rounded toward zero instead (in 0.04 % of the 20 million
+ties, mostly in intervals where the signal changes sign; no floating-point
+model tried reproduces them). adichtion's export uses this rule when channels
+of different rates share a table (§9).
+
 ## 5. Ranges and units (`Gain`, `UntA`)
 
 **`Gain`**: 72-byte entries, referenced per storage block by the `Map4` field:
@@ -273,23 +287,60 @@ items tile the chunk exactly in all 15 documents. **Consistent.**
   followed by an `ExQI` item in every entry: the copy kept no movies. The
   groups sit in `CntD` in block order, and the blocks with a movie are always
   the last ones of a document.
-- Where the files live: presumably, as in the Windows format (`<name>
-  movies/Record<N>.wmv`), in a folder `<document name> movies` next to the
-  document. The study folder has two such folders next to the two documents of
-  those names, both empty, and no `LabChartMovie*.mov` anywhere. Its other
-  video files (two long MPEG-2 recordings from another device, short screen
-  recordings made for figures) are named by no document, and nothing in them
-  or in the documents ties their time to a block.
-- How a movie's time maps to its LabChart block (the start offset and the
-  camera delay the Windows format records) is **open** until a document comes
-  with its movie files. adichtion only lists the names (§9).
+- **Where the files live**: in a folder `<document name> movies` next to the
+  document, as in the Windows format (`<name> movies/Record<N>.wmv`). A
+  second copy of the study (a backup folder) has such a folder for every
+  document, with all 41 named movies; the first copy had only two, empty.
+  Other video files in the study folders (two MPEG-2 recordings from another
+  device, screen recordings made for figures) are named by no document.
+
+### 7.1 The movies and their timing
+
+Each `LabChartMovieN.mov` is a QuickTime movie (0.1 to 13 GB): a `wide` atom,
+the `mdat` with the frames, a `free` atom holding an older `mvhd`, a second
+`wide`, a small `mdat` and the `moov` at the end. Its tracks:
+
+| track | content | status |
+|---|---|---|
+| video | DV, PAL 720 × 576, interlaced (`dvsd` or `dv5p` in the sample description, 288 000 bytes a frame); frame durations vary (2–200 ms, 35 ms typical), timescale 600 | verified (decoded) |
+| sound | 44.1 kHz 16-bit PCM | — |
+| "Synchronisation track" | generic media (`gnrc`), one 8-byte sample per video frame with the same durations, all in the small `mdat` | consistent |
+
+**The sync samples are the capture time of every frame**: a big-endian
+`uint64` in microseconds on the classic Mac `Microseconds()` clock, the clock
+of the document's `mTim` chunk (§1). With `clock0` the `mTim` of the block's
+first storage block, frame *i* was captured at block time `(stamp_i −
+clock0) / 10⁶`. Checked on four movies of three documents (a 2016 and a 2017
+installation; 1 391 to 25 840 frames):
+
+- the first frame is captured 20–45 ms after the block starts; the movie
+  runs about 0.12 s past the block's end (its duration is the block's + 0.12 s);
+- for every frame after the first, `movie time − block time` is one constant
+  per movie, 3.1–5.4 ms, to within 1 µs (the rounding of the stamps): the
+  movie's timeline is the block's, shifted by that offset. The first frame is
+  shown from movie time 0, before it was captured, so it is left out.
+
+**Consistent** (two clocks agree to 1 µs over every frame); the clock of the
+stamps being `mTim`'s is **inferred** from that agreement and from the first
+frame falling just after the block start in every movie. What the stamps
+cannot tell is how long a frame took from the camera to the Mac (the Windows
+format stores a camera delay LabChart measured, 0.17 s in its files); no such
+delay is recorded here, so none is applied.
+
+adichtion reads the `moov` and the stamps (`adichtion.qtmovie`, a few hundred
+kB even for a 13 GB movie) and plays the frame at `offset + t` for block time
+*t*, as for `.adicht` clips (§9). The DV frames are interlaced: OpenCV 4.13
+(FFmpeg 8) returns them black, so the viewer needs OpenCV below 4.13, where
+they decode (checked with 4.10–4.12 against FFmpeg itself). Files that exist
+but hold nothing (cloud placeholders that are not downloaded yet) are reported
+as unreadable.
 
 ## 8. Open questions
 
 - Where the tick rate is stored (field 4 of `Alc2` is 14 at 4 kHz).
 - `mTim`'s `float32`, `CmtM`, the tail of the `Gain` entries, the `Cnt1`
   fields at 12 and 26, the `ExQI` item.
-- The movie files and their timing (§7).
+- The camera's own delay before a frame reaches the Mac (§7.1).
 - Why so many blocks carry no min/max (§3).
 - Documents with more than 16-bit counts, other rates, ranges or units that
   change within a LabChart block, or a channel recorded in only part of one
@@ -324,15 +375,26 @@ saying so (`adichtion macsettings` reads it). Specifics:
   stored min/max takes its y-range from its first decoded curve).
 - **Times**: `start_utc` is the local wall-clock time with a zero UTC offset,
   as in the WinChart export.
-- **Export**: a channel without data, or channels with different sampling
-  rates in one table, are refused with a message (listing the rate groups).
-- **Movies**: `AdichtFile.movie_files` and `mac.record_movies` (per block)
-  give the names; `videos` stays empty until the timing is known.
-- **Command line**: `info` (format, channels not stored, movie names),
+- **Export**: a channel without data is refused by name. Channels of one
+  rate keep it; channels of different rates share a table with a row per
+  tick, the slower ones up-sampled as LabChart's export does
+  (`Record.read_ticks`, §4), and the command line and the export dialog say
+  which channels were up-sampled from which rate
+  (`export.upsampling_notice`).
+- **Movies**: `AdichtFile.videos` has a clip per named movie
+  (`mac.record_movies`); where `<name> movies/<file>` can be read, the clip is
+  timed from its frame stamps (`VideoClip.stamped`, `offset_s` as in §7.1,
+  `delay_s` 0) and `Record.video_file` gives the path; otherwise the clip is
+  untimed and the viewer says the file is missing or unreadable.
+- **Command line**: `info` (format, channels not stored, movies found),
   `check` (skips channels without data, counts blocks without a stored
   min/max, checks decimated channels against the envelope), `videos` (the
-  movie of each record), `tree` (the chunks), `export`, `macsettings`.
-- `synth.write_mac_document` writes synthetic documents with all of the above
-  (`tests/test_macdoc.py`, `tests/ui/test_macdoc_ui.py`);
-  `tests/test_integration_macdocs.py` checks real documents against their own
-  index and their exports when `ADICHTION_SAMPLES` holds them.
+  movie of each record and its offset), `tree` (the chunks), `export` (with
+  the up-sampling note), `macsettings`.
+- `synth.write_mac_document` writes synthetic documents with all of the above,
+  `synth.write_labchart_movie` and `synth.add_labchart_sync_track` movies with
+  LabChart's synchronisation track (`tests/test_macdoc.py`,
+  `tests/test_qtmovie.py`, `tests/ui/test_macdoc_ui.py`, where the viewer shows
+  the frame at `offset + t`); `tests/test_integration_macdocs.py` checks real
+  documents against their own index, their exports (samples, up-sampling) and
+  their movies when `ADICHTION_SAMPLES` holds them.

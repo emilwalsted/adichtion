@@ -28,8 +28,10 @@ classifiers = [
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
-# the desktop viewer; openpyxl for Excel export, OpenCV for the video frames
-ui = ["PySide6>=6.6", "pyqtgraph>=0.13", "openpyxl>=3.1", "opencv-python-headless>=4.8"]
+# the desktop viewer; openpyxl for Excel export, OpenCV for the video frames. OpenCV below 4.13:
+# 4.13 bundles FFmpeg 8, whose scaler refuses interlaced frames, and the DV movies of LabChart
+# for Mac come back black (docs/beslutninger.md 2026-09-29 (2)).
+ui = ["PySide6>=6.6", "pyqtgraph>=0.13", "openpyxl>=3.1", "opencv-python-headless>=4.8,<4.13"]
 dev = ["pytest>=7.0", "openpyxl>=3.1"]
 
 # One command: `adichtion` starts the app (optionally with a .adicht path); `adichtion info …`
@@ -89,7 +91,7 @@ requires = [
     "PySide6>=6.6",
     "pyqtgraph>=0.13",
     "openpyxl>=3.1",
-    "opencv-python-headless>=4.8",
+    "opencv-python-headless>=4.8,<4.13",
 ]
 test_requires = ["pytest>=7.0"]
 

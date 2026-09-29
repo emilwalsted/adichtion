@@ -58,6 +58,16 @@ def test_channel_and_export_dialogs_grey_out_what_is_not_stored(qapp, window, ma
     assert ex.rb_all.text() == "All channels (4)" and not ex.boxes[1].isEnabled()
     ex.rb_all.setChecked(True)
     assert ex.channels() == [0, 2, 3, 4]
+    # mixed rates: a row per tick, and the dialog says the slow channels are up-sampled
+    ex.rb_file.setChecked(True)
+    assert ex._rows() == sum(r.ticks for r in mac_doc["records"])
+    assert "Up-sampled to 4000 Hz" in ex.note.text() and "channels 3-5 from 100 Hz" in ex.note.text()
+    ex.rb_pick.setChecked(True)
+    for c in (0, 4):
+        ex.boxes[c].setChecked(False)                  # only the slow channels: their own rate, no note
+    assert ex.channels() == [2, 3]
+    assert "Up-sampled" not in ex.note.text()
+    assert ex._rows() == sum(-(-r.ticks // 40) for r in mac_doc["records"])
     ex.deleteLater()
 
 
@@ -91,3 +101,36 @@ def test_startup_path_accepts_a_document_without_extension(mac_doc, tmp_path):
     other = tmp_path / "notes"
     other.write_text("hello")
     assert startup_path(["adichtion", str(other)]) is None
+
+
+def test_a_mac_movie_follows_the_cursor_by_its_frame_stamps(qapp, window, tmp_path):
+    """The movie of a LabChart for Mac block is found in ``<name> movies`` and synchronised
+    by the capture stamps of its frames (MAC_FORMAT.md §7): at block time t the panel shows
+    the frame at movie time t + offset."""
+    from test_video import FPS, SECONDS, frame_number, write_test_video
+    from adichtion import AdichtFile
+    from adichtion.synth import add_labchart_sync_track
+    rng = np.random.default_rng(3)
+    doc = tmp_path / "Recording"
+    write_mac_document(doc, [SynthMacChannel("EMGdi1", 1, "V", 2.048)],
+                       [SynthMacRecord(40000, [np.cumsum(rng.integers(-50, 51, 40000))], 1_700_000_000.0)],
+                       tick_rate=4000, movies={0: "LabChartMovie1.mov"})
+    folder = tmp_path / "Recording movies"
+    folder.mkdir()
+    movie = str(folder / "LabChartMovie1.mov")
+    write_test_video(movie)                                   # frame numbers drawn in, 25 fps
+    with AdichtFile(doc) as f:
+        clock0 = f.mac.record_clock_us[0]
+    offset = 0.2                                              # movie time of the block start
+    stamps = clock0 + np.round((np.arange(FPS * SECONDS) / FPS - offset) * 1e6).astype(np.int64)
+    stamps[0] = clock0 + 20_000
+    add_labchart_sync_track(movie, stamps)
+    window.open_file(str(doc))
+    v = window.video
+    assert window.video_box.isVisible() and v.has_videos
+    window.stack.set_cursor(4.0)
+    assert v.has_clip
+    assert wait_until(qapp, lambda: v._pixmap is not None, timeout=20)
+    assert frame_number(v._pixmap.toImage()) == pytest.approx(round((4.0 + offset) * FPS), abs=1)
+    assert "4.200 s in the clip (synchronised by the movie's frame stamps)" in v.caption.text()
+    assert "1 video clip" in window.info.summary.text()

@@ -23,7 +23,10 @@ same recordings, with their ranges, units conversions, comments and block
 times; slow channels keep their own sampling rate. Calculated channels are
 not stored in these documents (LabChart computed them when drawing), so they
 are listed with the definition the document holds and are not drawn or
-exported. See [`docs/MAC_FORMAT.md`](docs/MAC_FORMAT.md).
+exported. The movies LabChart for Mac recorded with the blocks
+(`<name> movies/LabChartMovieN.mov`) play in step with the data, timed by the
+capture stamp LabChart wrote for every frame. See
+[`docs/MAC_FORMAT.md`](docs/MAC_FORMAT.md).
 
 The *adichtion* desktop app (a channel viewer and exporter in the mould of
 [RespMech](https://github.com/emilwalsted/respmech)) is built on it, see below.
@@ -44,8 +47,8 @@ Each bundles its own Python and libraries; `.adicht` files open in the app by
 double-click, and the installed binary is also the command line
 (`adichtion info FILE`). LabChart for Mac documents have no extension, so
 they are not registered for double-click: open them with *File > Open* (the
-file dialog's second filter shows all files) or name them on the command line. See [`docs/RELEASING.md`](docs/RELEASING.md) for how
-the installers are built.
+file dialog's second filter shows all files) or name them on the command line.
+See [`docs/RELEASING.md`](docs/RELEASING.md) for how the installers are built.
 
 **From source** (the library, the command line and, with `ui`, the app):
 
@@ -98,7 +101,9 @@ them, with the block labels and comment flags in a strip above the channels.
   show them greyed out.
 * *Export…* writes the whole file, the block under the cursor or the selected
   interval as LabChart-style text, CSV or an Excel workbook, for the channels
-  shown, all channels or a choice.
+  shown, all channels or a choice. Channels of different sampling rates share
+  one table at the tick rate, the slower ones up-sampled as LabChart's own
+  export does; the dialog says which.
 
 The traces are drawn from the file's own per-block min/max index first and
 refined from the decoded samples in a worker thread, so a 300 MB file pans

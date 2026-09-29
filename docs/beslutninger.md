@@ -2,6 +2,35 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-09-29 (2) — Mac-dokumenternes film, genberegning og eksport med opsampling
+
+Emils svar på de tre spørgsmål fra 28-09-2026 (6):
+
+- **Filmene** ligger i en anden kopi af studiemappen (backuppen), i `<dokument> movies/`
+  som på Windows. Hver film har et "Synchronisation track" med ét 8-byte-stempel pr.
+  billede: optagetidspunktet i µs på Mac'ens `Microseconds()`-ur, samme ur som
+  dokumentets `mTim`. Dermed er filmen synkroniseret uden gætteri: filmtid = blok-tid +
+  en fast forskydning pr. film (3–5 ms på fire film fra 2016 og 2017, ens for alle
+  billeder til 1 µs). `adichtion.qtmovie` læser kun `moov` og stemplerne; appen afspiller
+  som for `.adicht` (`offset + t`). Kameraets egen forsinkelse før billedet når Mac'en er
+  ikke registreret og korrigeres derfor ikke (Windows-formatet gemmer en målt værdi).
+  Filerne var ikke hentet ned (0-byte-pladsholdere); de fire film blev læst
+  med range-forespørgsler, og appen melder en pladsholder som ulæselig.
+- **OpenCV under 4.13**: filmene er interlaced DV, og OpenCV 4.13 (FFmpeg 8) returnerer
+  dem sorte; 4.10–4.12 afkoder dem som FFmpeg selv. Kravet står begge steder i
+  `pyproject.toml`, og en test holder dem ens.
+- **Genberegning af beregnede kanaler: ikke nu, måske senere.** De vises fortsat som
+  "calculated, not stored" med definitionen.
+- **Eksporten opsampler og siger det.** Har de valgte kanaler forskellige rater, får
+  tabellen en række pr. tick, og de langsomme kanaler opsamples som LabCharts egen
+  eksport: lineær interpolation, afrundet til hele counts væk fra nul, sidste værdi holdt
+  efter sidste sample (`Record.read_ticks`). Verificeret mod de 10 WinChart-eksporter:
+  99,998 % identiske; resten er ét count ved eksakte halve, som LabChart af og til
+  runder mod nul (ingen afrundingsmodel genskaber det). Kommandolinjen og
+  eksportdialogen skriver, hvilke kanaler der er opsamplet fra hvilken rate; filen selv
+  er uændret i formatet (ingen ekstra headerlinjer, så RespMech m.fl. læser den som før).
+  Kanaler med samme rate beholder den (ingen opsampling).
+
 ## 2026-09-29 — UI-rettelser: tidsrullebjælke, splash, tomrum, én Open-dialog
 
 - **Vandret rullebjælke** under graferne (`ChannelStack.hbar`): håndtaget er det synlige
@@ -34,18 +63,20 @@ Daterede beslutninger og afgjorte punkter. Nyeste øverst.
   genberegning ville ikke være LabCharts tal. De vises som "calculated, not stored" med den
   lagrede definition og er grå i kanal- og eksportdialogerne. **Åbent for Emil:** skal appen
   kunne genberegne dem (som et bevidst, markeret valg, verificeret mod eksporternes float32-
-  kanaler, hvor de findes)?
+  kanaler, hvor de findes)? (Besvaret 29-09-2026: ikke nu.)
 - **Langsomme kanaler beholder deres egen samplerate** (100 Hz på en 4 kHz-tick): ingen
   opsampling, som WinChart-eksporten laver (dens mellemværdier er LabCharts interpolation,
   ikke lagrede data). Værdien under markøren er den seneste sample. Eksport af kanaler med
   forskellige samplerater i én tabel afvises som før, nu med rategrupperne i beskeden.
-  **Åbent for Emil:** skal eksporten kunne opsample eller lave én tabel pr. rate?
+  **Åbent for Emil:** skal eksporten kunne opsample eller lave én tabel pr. rate? (Besvaret
+  29-09-2026: opsample og sig det.)
 - **Blokke uden gemt min/max** (hver blok af EMG-kanalerne i 4 dokumenter, 15 % af de
   langsomme kanalers blokke): GUI-tråden dekoder dem ikke; arbejdstråden udfylder dem.
 - **Tider:** blokkenes start er lokal vægurstid uden zone, gemt med UTC-offset 0, som
   eksporten gør.
 - **Film:** dokumenterne navngiver LabChartMovieN.mov pr. blok (`Cnt1`/`CntD`), men ingen af
-  filerne findes i mappen, så tidskoblingen kan ikke afkodes; kun navnene vises.
+  filerne findes i mappen, så tidskoblingen kan ikke afkodes; kun navnene vises. (Løst
+  29-09-2026 med filerne fra backuppen.)
 - **Rettet undervejs:** `macsettings` læste egenskab `0x2849` (21 i alle filer) som
   kanalantallet; det er `0x287F` (lig antallet af `Map4`-kanaler i alle 15 dokumenter).
   Og beregningernes indstillingsnøgler er ikke faste: LabChart tildeler hver udvidelse et

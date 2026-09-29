@@ -40,9 +40,10 @@ from .blocks import (BLOCK_TICKS, FLAG_32BIT, FLAG_PACKED, FLAG_UNPACKED, HEADER
                      SubBlock, SubBlockIndex, decode_subblock, iter_subblocks)
 from .chartdata import parse_chart_data
 from .container import AdichtContainer, AdichtFormatError
-from .decimate import minmax_envelope
+from .decimate import minmax_envelope, upsample_like_labchart
 from .macdoc import MacDocument, decode_mac_block, is_mac_document, read_mac_document
 from .model import ChannelInfo, ChannelRecordInfo, ChartData, Comment, RecordInfo, UnitsConversion, VideoClip
+from .qtmovie import MovieError, read_movie_timing
 from .video import movies_folder, read_videos, video_path
 
 __all__ = ["AdichtFile", "Record", "Selection"]
@@ -136,7 +137,7 @@ class AdichtFile:
             self.mac = read_mac_document(self.path, self._blocks)
             self.chart = self.mac.chart
             self.index = self.mac.index
-            self.videos: list[VideoClip] = []
+            self.videos: list[VideoClip] = self._mac_videos()
         else:
             self.kind = "adicht"
             self._open_adicht()
@@ -231,8 +232,8 @@ class AdichtFile:
 
     @property
     def movie_files(self) -> list[str]:
-        """Movie files a Mac document names (its video capture); their timing is not
-        decoded yet, so they are not :attr:`videos`."""
+        """Movie files a Mac document names (its video capture), in block order; they are
+        :attr:`videos` too, timed where the file could be read."""
         return list(self.mac.movie_files) if self.mac is not None else []
 
     def set_range_volts(self, channel: int, range_volts: float) -> None:
@@ -283,6 +284,29 @@ class AdichtFile:
     def movies_folder(self) -> str:
         """Where LabChart keeps this document's videos (``<name> movies``); may not exist."""
         return movies_folder(self.path)
+
+    def _mac_videos(self) -> list[VideoClip]:
+        """The movies of a Mac document as clips, timed from their frame stamps where the
+        file in ``<name> movies`` can be read (:mod:`adichtion.qtmovie`)."""
+        clips: list[VideoClip] = []
+        folder = movies_folder(self.path)
+        for r, name in enumerate(self.mac.record_movies):
+            if not name:
+                continue
+            info = self.chart.records[r]
+            clock0 = self.mac.record_clock_us[r] if r < len(self.mac.record_clock_us) else None
+            start = clock0 / 1e6 if clock0 is not None else 0.0
+            stop = start + info.ticks / info.tick_rate_hz
+            offset, stamped = 0.0, False
+            path = os.path.join(folder, name)
+            if clock0 is not None and os.path.isfile(path):
+                try:
+                    offset, stamped = read_movie_timing(path).offset_s(clock0), True
+                except (OSError, MovieError):
+                    pass
+            clips.append(VideoClip(record_index=r, file_name=name, start_s=start, stop_s=stop,
+                                   video_start_s=start - offset, offset_s=offset, stamped=stamped))
+        return clips
 
     def video_for(self, record: int) -> Optional[VideoClip]:
         for v in self.videos:
@@ -393,9 +417,12 @@ class Record:
 
     @property
     def video_file(self) -> Optional[str]:
-        """Path of the clip's file if it exists in the ``<name> movies`` folder."""
+        """Path of the clip's file if it exists in the ``<name> movies`` folder (for a Mac
+        document: and its timing could be read, which rules out cloud placeholders)."""
         v = self.video
-        return video_path(self.file.path, v) if v else None
+        if v is None or (self.file.kind == "mac" and not v.stamped):
+            return None
+        return video_path(self.file.path, v)
 
     def __repr__(self) -> str:
         return f"Record({self.index}, {self.start_local:%Y-%m-%d %H:%M:%S}, {self.duration_s:.2f} s, {len(self.comments)} comments)"
@@ -487,6 +514,28 @@ class Record:
         if not units:
             return raw.astype(np.float64)
         return self.convert(channel, raw)
+
+    def read_ticks(self, channel: int, start: int = 0, stop: Optional[int] = None, units: bool = True) -> np.ndarray:
+        """One value per tick in ``[start, stop)``, as float64 like :meth:`read`.  A channel
+        stored at every tick is read as it is; one stored at every *d*-th tick is
+        up-sampled the way LabChart's own export does (:func:`decimate.upsample_like_labchart`:
+        linear interpolation, ADC counts rounded to whole counts, the last sample held)."""
+        stop = self.ticks if stop is None else min(stop, self.ticks)
+        start = max(0, start)
+        spt = self.samples_per_tick(channel)
+        if stop <= start or spt == 0:
+            return np.zeros(0)
+        if spt == 1.0:
+            return self.read(channel, start, stop, units=units)
+        d = int(round(1.0 / spt))
+        if d < 1 or abs(d * spt - 1.0) > 1e-9:
+            raise ValueError(f"channel {channel + 1} is stored at {spt:g} samples per tick; "
+                             "only whole-number rate ratios can be up-sampled")
+        total = self.n_samples(channel)
+        k0 = start // d
+        k1 = min(total, (stop - 1) // d + 2)         # up to the sample after the last tick's interval
+        raw = upsample_like_labchart(self._read_samples(channel, k0, k1), d, start, stop, first=k0, total=total)
+        return self.convert(channel, raw) if units else raw.astype(np.float64)
 
     def convert(self, channel: int, stored: np.ndarray) -> np.ndarray:
         """Stored values -> what :meth:`read` returns (also used for block min/max)."""

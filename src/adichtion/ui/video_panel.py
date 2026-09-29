@@ -199,7 +199,12 @@ class VideoPanel(QWidget):
             self.caption.setText("")
         else:
             path = rec.video_file
-            if path is None:
+            expected = os.path.join(self.file.movies_folder, clip.file_name)
+            if path is None and os.path.exists(expected):
+                self._show_text("Video file cannot be read")
+                self.caption.setText(f"{clip.file_name} in {os.path.basename(self.file.movies_folder)} cannot be read "
+                                     "(not downloaded from the cloud yet?)")
+            elif path is None:
                 self._show_text("Video file not found")
                 self.caption.setText(f"Expected {clip.file_name} in {os.path.basename(self.file.movies_folder)}")
             elif self.grabber is None:
@@ -215,9 +220,11 @@ class VideoPanel(QWidget):
         block_time = t - self._block.start_s
         file_time = self._clip.file_time(block_time)
         state = f" · playing {_rate_text(self.rate)}" if self._playing else ""
+        timing = ("synchronised by the movie's frame stamps" if self._clip.stamped
+                  else f"camera delay {self._clip.delay_s:.3f} s compensated")
         self._pending = (self._path, file_time,
                          f"Block {self._block.number} · {self._clip.file_name} · {file_time:.3f} s in the clip"
-                         f" (camera delay {self._clip.delay_s:.3f} s compensated){state}")
+                         f" ({timing}){state}")
         if debounce:
             self._debounce.start()
         else:

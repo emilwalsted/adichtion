@@ -33,10 +33,12 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    `macdoc.py` is layers 1–3 for LabChart for Mac documents: their chunks into
    the same `ChartData`, a `MacBlockIndex` with the interface `AdichtFile` uses,
    and the Mac block decoder (`struct` + numpy, no file handles).
-4. `file.py` (`AdichtFile`, `Record`, `Selection`) + `decimate.py` + `video.py` — the
-   API the UI will use: lazy per-block decoding with an LRU cache, unit
-   conversion per record, selections by time or comments, min/max envelopes
-   for plotting (from the file's block index when possible), video clips.
+4. `file.py` (`AdichtFile`, `Record`, `Selection`) + `decimate.py` + `video.py` +
+   `qtmovie.py` — the API the UI will use: lazy per-block decoding with an LRU
+   cache, unit conversion per record, selections by time or comments, min/max
+   envelopes for plotting (from the file's block index when possible),
+   LabChart's up-sampling, video clips (and the timing of LabChart for Mac
+   movies).
 5. `export.py`, `cli.py` — text/CSV export and the command line.
 6. `infer.py` (numerical recovery of calculated-channel definitions, on top of
    layer 4) and `macchart.py` (LabChart 7 for Mac documents/settings files,
@@ -104,10 +106,18 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   40th tick), and read a NaN min/max in the index as "not stored"
   (`block_minmax(..., fill=False)` never decodes; `fill=True` does and caches).
 - Mac documents: calculated channels are listed with `channel_definition(c)` and
-  never recomputed; the movies are names only (`movie_files`,
-  `mac.record_movies`) until their timing is known (`docs/MAC_FORMAT.md` §7).
+  never recomputed (Emil, 29-09-2026: not now, maybe later). Their movies are
+  timed by the per-frame capture stamps of the movie's "Synchronisation track"
+  against `mTim` (`qtmovie.py`, `VideoClip.stamped`, `docs/MAC_FORMAT.md` §7.1);
+  the DV frames are interlaced and need OpenCV < 4.13 (pinned in both
+  requirement lists of `pyproject.toml`, a test keeps them equal).
   `tests/test_integration_macdocs.py` finds the documents below
   `ADICHTION_SAMPLES` by their first bytes and pairs them with their exports.
+- Export of channels with different rates: one table at the tick rate, slower
+  channels up-sampled by LabChart's own rule (`Record.read_ticks`,
+  `decimate.upsample_like_labchart`: linear, whole counts half away from zero,
+  last sample held; 99.998 % identical to the WinChart exports), and the user is
+  told (`export.upsampling_notice` in the CLI, the dialog and the status bar).
 - `pytest` (unit + synthetic) stays under a few seconds; the inference tests
   build their own synthetic document with derived channels, the viewer tests
   run headless (`tests/ui/`, `QT_QPA_PLATFORM=offscreen`).

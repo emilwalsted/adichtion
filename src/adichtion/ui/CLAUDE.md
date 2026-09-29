@@ -82,6 +82,11 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - **Channels without data** (`AdichtFile.has_data` False: a Mac document's calculated
   channels) get no plot and no data-panel row, and are greyed out with a note in the channel
   and export dialogs; the file panel still lists them with their definition.
+- **Mac movies are clips like any other** once timed (`VideoClip.stamped`): the panel seeks
+  `offset_s + t` and its caption says "synchronised by the movie's frame stamps" instead of a
+  camera delay. A movie file that exists but cannot be read (a cloud placeholder) gets its
+  own message, not "not found". The export dialog shows `upsampling_notice` in its note and
+  the window repeats it in the status bar after the export.
 - **Inference and statistics never share the render thread** — a 12-channel inference
   blocked every render for ten seconds when they did.
 - **Threads are joined on close** (`JobRunner.stop()` marks every job stale and waits;

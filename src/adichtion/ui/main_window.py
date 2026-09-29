@@ -597,7 +597,16 @@ class MainWindow(QMainWindow):
             box.exec()
             self.statusBar().showMessage("Export failed.")
             return
-        self.statusBar().showMessage(f"Exported {result:,} rows to {req.path if req else 'file'}.")
+        text = f"Exported {result:,} rows to {req.path if req else 'file'}."
+        if req is not None and self.file is not None:
+            try:
+                from ..export import upsampling_notice
+                note = upsampling_notice(self.file, req.selections, req.channels)
+            except ValueError:
+                note = None
+            if note:
+                text += " " + note
+        self.statusBar().showMessage(text)
 
     # -- misc ---------------------------------------------------------------------------
     def about(self) -> None:

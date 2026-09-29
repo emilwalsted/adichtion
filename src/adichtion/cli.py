@@ -25,7 +25,7 @@ import numpy as np
 from . import __version__
 from .chartdata import tagged_strings
 from .container import AdichtContainer
-from .export import export_selections, read_labchart_text, whole_file
+from .export import export_selections, read_labchart_text, upsampling_notice, whole_file
 from .file import AdichtFile, Selection
 
 
@@ -42,7 +42,8 @@ def cmd_info(a: argparse.Namespace) -> None:
             n_missing = sum(1 for c in range(f.n_channels) if not f.has_data(c))
             print(f"{a.file}: {f.format_label}, {len(f.records)} records, {f.n_channels} channels"
                   + (f" ({n_missing} calculated channels not stored: LabChart for Mac computed them when drawing)" if n_missing else "")
-                  + (f", names {len(f.movie_files)} movie files ({', '.join(f.movie_files)}; timing not decoded)" if f.movie_files else ""))
+                  + (f", {len(f.movie_files)} movies ({sum(1 for v in f.videos if v.stamped)} found and timed; "
+                     f"see `adichtion videos`)" if f.movie_files else ""))
         else:
             print(f"{a.file}: format v{f.format_version}, {len(f.records)} records, {f.n_channels} channels, "
                   f"Chart Data {'.'.join(map(str, f.chart.format_version))}, Map parsed by {f.parse_mode}"
@@ -80,11 +81,16 @@ def cmd_videos(a: argparse.Namespace) -> None:
             if not f.movie_files:
                 print("this document names no movie files")
                 return
-            print("movie files named by this document (QuickTime; how a movie's time maps to its record is "
-                  "not decoded yet):")
-            for r, name in zip(f.records, f.mac.record_movies):
-                if name:
-                    print(f"  record {r.index + 1:3d}  {name}")
+            print(f"movies folder: {f.movies_folder}" + ("" if os.path.isdir(f.movies_folder) else "  (not found)"))
+            for v in f.videos:
+                path = os.path.join(f.movies_folder, v.file_name)
+                if v.stamped:
+                    state = f"record start at movie time {v.offset_s:.3f} s (from the frame stamps)"
+                elif os.path.exists(path):
+                    state = "cannot be read (not downloaded, or not a LabChart movie)"
+                else:
+                    state = "not found"
+                print(f"  record {v.record_index + 1:3d}  {v.file_name}  {state}")
             return
         if not f.videos:
             print("no video stream in this document")
@@ -209,9 +215,12 @@ def cmd_export(a: argparse.Namespace) -> None:
         try:
             n = export_selections(f, selections, channels, a.output, fmt=fmt, header=not a.no_header,
                                   decimal=a.decimal, units=not a.raw, comments=not a.no_comments)
+            note = upsampling_notice(f, selections, channels)
         except (ValueError, RuntimeError) as exc:
             sys.exit(f"error: {exc}")
         print(f"wrote {n} rows x {len(channels)} channels ({what}) to {a.output}")
+        if note:
+            print(f"note: {note}")
 
 
 def cmd_verify(a: argparse.Namespace) -> None:

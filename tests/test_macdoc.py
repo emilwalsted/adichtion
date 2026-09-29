@@ -9,7 +9,9 @@ import pytest
 
 from adichtion import AdichtFile
 from adichtion.cli import main as cli_main
-from adichtion.export import export_selections, whole_file
+from adichtion.decimate import upsample_like_labchart
+from adichtion.export import export_selections, upsampled_channels, upsampling_notice, whole_file
+from adichtion.file import Selection
 from adichtion.macchart import MAGIC
 from adichtion.macdoc import MacFormatError, decode_mac_block, ext80, is_mac_document, read_mac_document
 from adichtion.synth import SynthMacChannel, SynthMacRecord, _ext80, encode_mac_block, write_mac_document
@@ -62,8 +64,12 @@ def test_description(mac):
         assert [f.index.channel_dtype(c) for c in range(5)] == ["int16", "none", "int16", "int16", "int16"]
         assert f.channel_definition(1) == "Arithmetic: Ch4-Ch3"
         assert f.channel_definition(0) is None
-        assert f.movie_files == ["LabChartMovie1.mov", "LabChartMovie2.mov"] and f.videos == []
+        assert f.movie_files == ["LabChartMovie1.mov", "LabChartMovie2.mov"]
         assert f.mac.record_movies == [None, "LabChartMovie1.mov", "LabChartMovie2.mov"]
+        # the movies are named but not next to the document: clips without a timing
+        assert [(v.record_index, v.file_name, v.stamped) for v in f.videos] == [
+            (1, "LabChartMovie1.mov", False), (2, "LabChartMovie2.mov", False)]
+        assert f.records[1].video_file is None and f.records[0].video is None
         assert f.walk_subblocks() == []
 
 
@@ -153,14 +159,99 @@ def test_block_envelope_fills_what_the_index_lacks(mac):
         assert [len(a) for a in r.block_envelope(1)] == [0, 0, 0, 0]
 
 
-def test_export_refuses_what_it_cannot_write(mac, tmp_path):
+def test_upsampling_rule():
+    """LabChart's export fills the ticks between two stored samples by linear interpolation,
+    rounds ADC counts half away from zero and holds the last sample (MAC_FORMAT.md §4)."""
+    up = lambda x, d, a, b, **kw: upsample_like_labchart(np.asarray(x), d, a, b, **kw).tolist()
+    assert up([0, 1], 2, 0, 4) == [0, 1, 1, 1]                     # 0.5 -> 1; after the last sample: held
+    assert up([0, -1], 2, 0, 3) == [0, -1, -1]                     # -0.5 -> -1 (away from zero)
+    assert up([-426, 210], 40, 0, 41)[5::10] == [-347, -188, -29, 131]   # the halves of one real interval
+    assert up([10, 13, 7], 4, 0, 12) == [10, 11, 12, 12, 13, 12, 10, 9, 7, 7, 7, 7]
+    assert up([13, 7], 4, 5, 9, first=1) == [12, 10, 9, 7]         # only samples 1 and 2 passed
+    assert up([0.0, 1.0], 4, 0, 4) == [0.0, 0.25, 0.5, 0.75]       # float values are not rounded
+    with pytest.raises(ValueError):
+        up([1, 2], 4, 0, 12, total=5)                              # sample 2 is needed but not passed
+
+
+def test_read_ticks(mac):
     with AdichtFile(mac["path"]) as f:
-        with pytest.raises(ValueError, match=r"4000 Hz: channel 1; 100 Hz: channels 3, 4"):
-            export_selections(f, whole_file(f), [0, 2, 3], tmp_path / "mixed.csv", fmt="csv")
+        r = f.records[0]
+        x = np.asarray(mac["records"][0].data[2], dtype=np.int64)
+        full = r.read_ticks(2, units=False)
+        assert len(full) == r.ticks
+        np.testing.assert_array_equal(full[::40], x)                          # the stored samples stay
+        k = np.arange(r.ticks) // 40
+        j = np.arange(r.ticks) % 40
+        k1 = np.minimum(k + 1, len(x) - 1)
+        exact = x[k] + ((x[k1] - x[k]) * j) / 40.0                            # an integer over 40: the halves are exact
+        want = np.where(k + 1 >= len(x), x[k], np.sign(exact) * np.floor(np.abs(exact) + 0.5))
+        np.testing.assert_array_equal(full, want)
+        np.testing.assert_array_equal(r.read_ticks(2, 81, 2000, units=False), full[81:2000])
+        np.testing.assert_allclose(r.read_ticks(2, 0, 400), 33.9 * full[:400] * (10.24 / 32768) + 1.4)
+        np.testing.assert_array_equal(r.read_ticks(0, 5, 50), r.read(0, 5, 50))   # a channel at the tick rate
+        assert len(r.read_ticks(1)) == 0                                      # not stored
+
+
+def test_export_upsamples_mixed_rates_and_says_so(mac, tmp_path):
+    with AdichtFile(mac["path"]) as f:
         with pytest.raises(ValueError, match="not stored"):
             export_selections(f, whole_file(f), [1], tmp_path / "calc.csv", fmt="csv")
+        # one rate: the table keeps it, comments on the first row at or after them
         n = export_selections(f, whole_file(f), [2, 3], tmp_path / "slow.csv", fmt="csv")
         assert n == sum(-(-t // 40) for t in TICKS)
+        assert upsampling_notice(f, whole_file(f), [2, 3]) is None
+        rows = (tmp_path / "slow.csv").read_text().splitlines()
+        assert rows[1 + 3].endswith(",start")                                # tick 100 -> sample 3 (tick 120)
+        # several rates: a row per tick, the slow channels up-sampled, and a sentence saying so
+        sel = [Selection(0, 0, 2000), Selection(1, 0, TICKS[1])]
+        n = export_selections(f, sel, [0, 2, 3], tmp_path / "mixed.csv", fmt="csv")
+        assert n == 2000 + TICKS[1]
+        note = upsampling_notice(f, sel, [0, 2, 3])
+        assert note.startswith("Up-sampled to 4000 Hz so that all channels share one table: channels 3, 4 from 100 Hz")
+        assert upsampled_channels(f, sel, [0, 2, 3]) == {2: 100.0, 3: 100.0}
+        lines = (tmp_path / "mixed.csv").read_text().splitlines()
+        assert lines[0].startswith("block,time_s,EMGdi1")
+        body = [ln.split(",") for ln in lines[1:]]
+        assert body[100][-1] == "start"                                      # tick 100 is row 100 now
+        poes = np.array([float(b[3]) for b in body[:2000]])
+        np.testing.assert_allclose(poes, f.records[0].read_ticks(2, 0, 2000), rtol=1e-6)
+        t = np.array([float(b[1]) for b in body[:2000]])
+        np.testing.assert_allclose(t, np.arange(2000) / 4000.0)
+        # the text flavour states the tick interval; Excel too
+        export_selections(f, [Selection(0, 0, 400)], [0, 3], tmp_path / "mixed.txt", fmt="txt")
+        assert (tmp_path / "mixed.txt").read_text().splitlines()[0] == "Interval=\t0.00025 s"
+
+
+def test_movies_are_timed_by_their_frame_stamps(mac, tmp_path, capsys):
+    """A block's movie in ``<name> movies`` is timed from its synchronisation track: the
+    stamps are on the clock of the document's mTim (MAC_FORMAT.md §7)."""
+    from adichtion.synth import write_labchart_movie
+    doc = tmp_path / "Recording"
+    write_mac_document(doc, mac["channels"], mac["records"], tick_rate=TICK_RATE,
+                       movies={1: "LabChartMovie1.mov", 2: "LabChartMovie2.mov"})
+    folder = tmp_path / "Recording movies"
+    folder.mkdir()
+    with AdichtFile(doc) as f:
+        clock0 = f.mac.record_clock_us[1]
+    assert clock0 == 1_000_000_000 + 100_250_000                  # 1e9 µs + the block's start after the first
+    durations = np.full(160, 21)                                 # 35 ms frames
+    durations[0] = 62
+    movie_t = np.concatenate([[0], np.cumsum(durations)[:-1]]) / 600.0
+    stamps = clock0 + np.round((movie_t - 0.004) * 1e6).astype(np.int64)
+    stamps[0] = clock0 + 25_000
+    write_labchart_movie(folder / "LabChartMovie1.mov", durations, stamps)
+    (folder / "LabChartMovie2.mov").write_bytes(b"")             # a cloud placeholder, not downloaded
+    with AdichtFile(doc) as f:
+        v1, v2 = f.records[1].video, f.records[2].video
+        assert v1.stamped and v1.offset_s == pytest.approx(0.004, abs=1e-6) and v1.delay_s == pytest.approx(0.0)
+        assert v1.file_time(1.0) == pytest.approx(1.004, abs=1e-6)
+        assert v1.start_s == pytest.approx(clock0 / 1e6) and v1.wall_duration_s == pytest.approx(TICKS[1] / TICK_RATE)
+        assert f.records[1].video_file == str(folder / "LabChartMovie1.mov")
+        assert not v2.stamped and f.records[2].video_file is None
+    cli_main(["videos", str(doc)])
+    out = capsys.readouterr().out
+    assert "record   2  LabChartMovie1.mov  record start at movie time 0.004 s" in out
+    assert "record   3  LabChartMovie2.mov  cannot be read" in out
 
 
 def test_command_line(mac, capsys, tmp_path):
@@ -175,7 +266,7 @@ def test_command_line(mac, capsys, tmp_path):
     assert "0 mismatches" in out and "1 blocks without a stored min/max" in out and "VERDICT: match" in out
     cli_main(["videos", mac["path"]])
     out = capsys.readouterr().out
-    assert "record   3  LabChartMovie2.mov" in out and "record   1" not in out
+    assert "record   3  LabChartMovie2.mov  not found" in out and "record   1" not in out
     cli_main(["macsettings", mac["path"]])
     out = capsys.readouterr().out
     assert "LabChart for Mac document (with data)" in out and ", 5 channels" in out
@@ -184,7 +275,11 @@ def test_command_line(mac, capsys, tmp_path):
     assert "'Map4'" in capsys.readouterr().out
     out_csv = tmp_path / "slow.csv"
     cli_main(["export", mac["path"], "-o", str(out_csv), "--channels", "3-5", "--record", "2"])
-    assert "125 rows x 3 channels" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "125 rows x 3 channels" in out and "note:" not in out
+    cli_main(["export", mac["path"], "-o", str(out_csv), "--channels", "1,3", "--record", "2"])
+    out = capsys.readouterr().out
+    assert "5000 rows x 2 channels" in out and "note: Up-sampled to 4000 Hz" in out and "channel 3 from 100 Hz" in out
     with pytest.raises(SystemExit) as e:
         cli_main(["export", mac["path"], "-o", str(out_csv), "--channels", "2"])
     assert "not stored" in str(e.value.code)

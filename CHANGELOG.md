@@ -27,7 +27,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   comments, block times, slow channels at their own rate (the value under the cursor is
   the latest sample). Calculated channels are not stored in these documents: they are
   listed with the stored definition and greyed out in the channel and export dialogs.
-  `adichtion videos` lists the movie each block names. Format notes: `docs/MAC_FORMAT.md`.
+  Format notes: `docs/MAC_FORMAT.md`.
+- The movies of LabChart for Mac documents (`<name> movies/LabChartMovieN.mov`) play in the
+  video panel, synchronised by the capture stamp LabChart wrote for every frame;
+  `adichtion videos` shows each block's movie and its offset. A movie that is only a cloud
+  placeholder (not downloaded) is reported as unreadable.
 
 ### Changed
 - A horizontal scroll bar under the graphs moves the zoomed time axis (enabled only while the
@@ -42,11 +46,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   unchanged); double-click a block to show it across the full width.
 - The left axes take the width their tick labels need (the same for every channel) instead of
   a fixed 90 px, so the gap between the unit and the trace shrinks.
-
-- The export's refusal to put channels with different sampling rates in one table now lists
-  the rate groups; a channel that is not stored is refused by name.
+- Exporting channels with different sampling rates no longer fails: the table gets a row per
+  tick and the slower channels are up-sampled as LabChart's own export does (linear
+  interpolation, whole ADC counts); the command line and the export dialog say which channels
+  were up-sampled from which rate. A channel that is not stored is refused by name.
 
 ### Fixed
+- OpenCV is kept below 4.13: its FFmpeg 8 returns interlaced DV frames (the LabChart for Mac
+  movies) black.
 - macOS: the running app's Dock and app-switcher icon was a blurry bare "a" instead of
   the logo. The packaged app now leaves its bundle icon in place, and a run from source
   gives the Dock the full logo only.

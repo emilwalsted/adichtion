@@ -214,6 +214,12 @@ class VideoClip:
     for record time ``t`` is at ``offset_s + t`` in the file.  The delay is set
     per recording, so it is constant within a file and may differ between
     files; ``delay_s`` exposes it for a viewer's manual correction.
+
+    A LabChart for Mac movie (``stamped``) is timed by the capture stamp of every
+    frame instead (:mod:`adichtion.qtmovie`): its clock is the Mac's
+    ``Microseconds()``, ``offset_s`` is measured from the stamps and no camera
+    delay is known (``delay_s`` 0).  ``stamped`` is False for such a movie
+    whose file could not be read; its offset is then unknown (0).
     """
 
     record_index: int          # 0-based record
@@ -222,6 +228,7 @@ class VideoClip:
     stop_s: float              # video-clock time (s) when the record stopped
     video_start_s: float       # video-clock time (s) of the first frame of the file
     offset_s: float            # record start expressed in file time (s), camera delay included, as stored by LabChart
+    stamped: bool = False      # timed from the movie's frame stamps (LabChart for Mac)
 
     @property
     def has_video(self) -> bool:

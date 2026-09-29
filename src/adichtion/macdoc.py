@@ -177,6 +177,7 @@ class MacDocument:
     created_version: tuple[int, int, int]
     settings: dict[int, MacChannelSettings]         # 1-based channel -> settings (titles, calculations)
     record_movies: list[Optional[str]] = field(default_factory=list)   # per LabChart block: movie file or None
+    record_clock_us: list[Optional[int]] = field(default_factory=list)  # per LabChart block: mTim of its start (µs)
     marks: list[tuple[int, int]] = field(default_factory=list)   # (record, tick) of kind-2 entries
 
     @property
@@ -464,5 +465,7 @@ def read_mac_document(path: Union[str, os.PathLike], data: Optional[bytes] = Non
                       parse_mode="sequential")
     movies = _record_movies(chunk("Cnt1") if res.find("Cnt1") else b"",
                             chunk("CntD") if res.find("CntD") else b"", n_records)
+    record_clock = [clock[ks[0]] if ks[0] < len(clock) else None for ks in by_record]
     return MacDocument(path=path, chart=chart, index=MacBlockIndex(n_channels, block_table, decimation),
-                       version=saved, created_version=created, settings=settings, record_movies=movies, marks=marks)
+                       version=saved, created_version=created, settings=settings, record_movies=movies,
+                       record_clock_us=record_clock, marks=marks)

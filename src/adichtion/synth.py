@@ -591,3 +591,121 @@ def write_mac_document(path, channels: Sequence[SynthMacChannel], records: Seque
     struct.pack_into(">II", body, 24, len(body), len(table))
     with open(path, "wb") as fh:
         fh.write(bytes(body) + table)
+
+
+def _atom(typ: bytes, *parts: bytes) -> bytes:
+    body = b"".join(parts)
+    return struct.pack(">I", 8 + len(body)) + typ + body
+
+
+def write_labchart_movie(path, frame_durations: Sequence[int], stamps_us: Sequence[int], timescale: int = 600,
+                         frame_bytes: int = 32, per_chunk: int = 3, co64: bool = False,
+                         sync_track: bool = True) -> None:
+    """Write a QuickTime movie with the layout LabChart for Mac's video capture uses
+    (``adichtion.qtmovie``): ``wide``, an ``mdat`` with the frames (``frame_bytes`` of
+    filler each: nothing decodes them), a second small ``mdat`` with the sync samples,
+    then the ``moov`` with a video track and the "Synchronisation track" holding one
+    big-endian uint64 capture stamp (µs) per frame.  ``per_chunk`` frames and stamps go
+    into a chunk; ``co64`` writes 64-bit chunk offsets."""
+    durations = [int(d) for d in frame_durations]
+    n = len(durations)
+    stamps = [int(s) for s in stamps_us]
+    body = bytearray(_atom(b"wide"))
+    frames_at = len(body) + 8
+    body += _atom(b"mdat", bytes(frame_bytes * n))
+    body += _atom(b"wide")
+    sync_at = len(body) + 8
+    body += _atom(b"mdat", b"".join(struct.pack(">Q", s) for s in stamps))
+    total = sum(durations)
+
+    def stts(ds: list[int]) -> bytes:
+        runs: list[list[int]] = []
+        for d in ds:
+            if runs and runs[-1][1] == d:
+                runs[-1][0] += 1
+            else:
+                runs.append([1, d])
+        return _atom(b"stts", struct.pack(">II", 0, len(runs)), *(struct.pack(">II", c, d) for c, d in runs))
+
+    def table(first: int, size: int, handler: bytes, name: str = "") -> bytes:
+        chunks = [first + k * per_chunk * size for k in range(-(-n // per_chunk))]
+        stsc = _atom(b"stsc", struct.pack(">II", 0, 2 if n % per_chunk else 1), struct.pack(">III", 1, per_chunk, 1),
+                     *([struct.pack(">III", len(chunks), n % per_chunk, 1)] if n % per_chunk else []))
+        if co64:
+            stco = _atom(b"co64", struct.pack(">II", 0, len(chunks)), *(struct.pack(">Q", c) for c in chunks))
+        else:
+            stco = _atom(b"stco", struct.pack(">II", 0, len(chunks)), *(struct.pack(">I", c) for c in chunks))
+        stbl = _atom(b"stbl", _atom(b"stsd", struct.pack(">II", 0, 0)), stts(durations), stsc,
+                     _atom(b"stsz", struct.pack(">III", 0, size, n)), stco)
+        mdia = _atom(b"mdia", _atom(b"mdhd", struct.pack(">IIIII", 0, 0, 0, timescale, total), bytes(4)),
+                     _atom(b"hdlr", struct.pack(">I", 0), b"mhlr", handler, bytes(12), bytes([len(name)]) + name.encode()),
+                     _atom(b"minf", stbl))
+        edts = _atom(b"edts", _atom(b"elst", struct.pack(">II", 0, 1), struct.pack(">IiI", total, 0, 0x10000)))
+        udta = [_atom(b"udta", _atom(b"name", name.encode("mac_roman")))] if name else []
+        return _atom(b"trak", _atom(b"tkhd", bytes(84)), edts, mdia, *udta)
+
+    tracks = [table(frames_at, frame_bytes, b"vide")]
+    if sync_track:
+        tracks.append(table(sync_at, 8, b"gnrc", "Synchronisation track"))
+    mvhd = _atom(b"mvhd", struct.pack(">IIIII", 0, 0, 0, timescale, total), bytes(80))
+    body += _atom(b"moov", mvhd, *tracks)
+    with open(path, "wb") as fh:
+        fh.write(bytes(body))
+
+
+def add_labchart_sync_track(path, stamps_us: Sequence[int]) -> None:
+    """Give a QuickTime movie whose ``moov`` is its last atom (FFmpeg's default, e.g. from
+    OpenCV's writer) LabChart for Mac's "Synchronisation track": one uint64 capture stamp
+    (µs) per video frame, with the video track's frame durations, in a new ``mdat``
+    written where the ``moov`` was (the video's chunk offsets stay valid)."""
+    data = open(path, "rb").read()
+    off, moov = 0, None
+    while off + 8 <= len(data):
+        size, typ = struct.unpack_from(">I4s", data, off)
+        hdr = 8
+        if size == 1:
+            size, hdr = struct.unpack_from(">Q", data, off + 8)[0], 16
+        elif size == 0:
+            size = len(data) - off
+        if typ == b"moov":
+            moov = (off, hdr, size)
+        off += size
+    if moov is None or moov[0] + moov[2] != len(data):
+        raise ValueError("the movie's moov atom is not its last atom")
+    m_off, m_hdr, m_size = moov
+    body = data[m_off + m_hdr:m_off + m_size]
+    from .qtmovie import _atoms, _find                       # the reader's own atom walker
+    video = None
+    for typ, b, e in _atoms(body, 0, len(body)):
+        if typ != b"trak":
+            continue
+        hdlr = _find(body, b, e, [b"mdia", b"hdlr"])
+        if hdlr is not None and body[hdlr[0] + 8:hdlr[0] + 12] == b"vide":
+            video = (b, e)
+    if video is None:
+        raise ValueError("no video track")
+    stbl = _find(body, *video, [b"mdia", b"minf", b"stbl"])
+    stts = _find(body, *stbl, [b"stts"])
+    stsz = _find(body, *stbl, [b"stsz"])
+    mdhd = _find(body, *video, [b"mdia", b"mdhd"])
+    n = struct.unpack_from(">I", body, stsz[0] + 8)[0]
+    if len(stamps_us) != n:
+        raise ValueError(f"{len(stamps_us)} stamps for {n} frames")
+    timescale, duration = struct.unpack_from(">II", body, mdhd[0] + 12) if body[mdhd[0]] == 0 else \
+        struct.unpack_from(">IQ", body, mdhd[0] + 20)
+    stts_atom = body[stts[0] - 8:stts[1]]
+    samples_at = m_off + 8
+    identity = struct.pack(">9I", 0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000)
+    tkhd = _atom(b"tkhd", struct.pack(">IIIIII", 1, 0, 0, 99, 0, duration), bytes(8),
+                 struct.pack(">HHHH", 0, 0, 0, 0), identity, struct.pack(">II", 0, 0))
+    stbl_atom = _atom(b"stbl", _atom(b"stsd", struct.pack(">II", 0, 1), struct.pack(">I4s6xH", 16, bytes(4), 1)),
+                      stts_atom, _atom(b"stsc", struct.pack(">IIIII", 0, 1, 1, n, 1)),
+                      _atom(b"stsz", struct.pack(">III", 0, 8, n)), _atom(b"stco", struct.pack(">III", 0, 1, samples_at)))
+    trak = _atom(b"trak", tkhd, _atom(b"mdia",
+                                      _atom(b"mdhd", struct.pack(">IIIII", 0, 0, 0, timescale, duration), bytes(4)),
+                                      _atom(b"hdlr", struct.pack(">I", 0), b"mhlr", b"gnrc", bytes(12), b"\x00"),
+                                      _atom(b"minf", _atom(b"gmhd", _atom(b"gmin", bytes(16))), stbl_atom)),
+                 _atom(b"udta", _atom(b"name", b"Synchronisation track")))
+    mdat = _atom(b"mdat", b"".join(struct.pack(">Q", int(s)) for s in stamps_us))
+    with open(path, "wb") as fh:
+        fh.write(data[:m_off] + mdat + _atom(b"moov", body + trak))
