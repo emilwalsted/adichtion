@@ -137,8 +137,11 @@ def test_time_scroll_bar_follows_and_moves_the_view(qapp, window, synthetic):
     window.stack.zoom_reset()
     pump(qapp, 0.1)
     assert not bar.isEnabled()
+    window.stack.set_range(30.0, 35.0)
+    pump(qapp, 0.1)
+    assert bar.isEnabled()
     window.close_file()
-    assert not window.stack.hbar.isVisible()
+    assert not window.stack.hbar.isVisible() and not bar.isEnabled()      # no stale state for the next file
 
 
 def test_open_dialog_filter_decides_what_the_file_is_for(qapp, window, synthetic, monkeypatch):

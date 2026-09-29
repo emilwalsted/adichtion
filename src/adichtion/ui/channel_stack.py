@@ -577,6 +577,7 @@ class ChannelStack(QWidget):
         self.scroll.setVisible(f is not None)
         self.hbar.setVisible(f is not None)
         if f is None:
+            self._sync_hbar(0.0, 0.0)
             self.cursorChanged.emit(None)
             self.selectionChanged.emit(None)
             return
@@ -602,6 +603,7 @@ class ChannelStack(QWidget):
         self._axis_fresh = True
         self.set_visible_channels([c for c in range(f.n_channels) if f.has_data(c)], equalize=True)
         self.zoom_reset()
+        self._sync_hbar(*self.view_range())     # a file whose reset fires no range change (1 s long) still resets the bar
 
     def _clear_plots(self) -> None:
         self._timer.stop()
@@ -811,8 +813,9 @@ class ChannelStack(QWidget):
             self._hbar_scale = self.HBAR_STEPS / d
             k = self._hbar_scale
             page = max(1, int(round(span * k)))
-            bar.setEnabled(True)
-            bar.setRange(0, max(0, int(round(d * k)) - page))
+            top = max(0, int(round(d * k)) - page)
+            bar.setEnabled(top > 0)
+            bar.setRange(0, top)
             bar.setPageStep(page)
             bar.setSingleStep(max(1, page // 10))
             bar.setValue(int(round(x0 * k)))

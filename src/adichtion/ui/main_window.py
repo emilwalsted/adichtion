@@ -323,7 +323,7 @@ class MainWindow(QMainWindow):
         path, chosen = QFileDialog.getOpenFileName(self, "Open LabChart file", start, FILE_FILTER)
         if not path:
             return
-        if chosen == MAC_SETTINGS_FILTER:       # the file type picked decides what the file is for
+        if chosen.startswith("LabChart for Mac settings"):       # the file type picked decides what the file is for
             self.load_mac_settings(path)
         else:
             self.open_file(path)
