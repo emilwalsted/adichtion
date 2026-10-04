@@ -101,7 +101,7 @@ def test_exports_write_the_selection(qapp, window, synthetic, tmp_path):
             pytest.importorskip("openpyxl")
         path = str(tmp_path / f"out.{fmt}")
         window.run_export(ExportRequest(path=path, fmt=fmt, selections=sels, channels=[0, 1], scope_label="selection"))
-        assert wait_until(qapp, lambda: os.path.exists(path) and "Exported" in window.statusBar().currentMessage(), timeout=30)
+        assert wait_until(qapp, lambda: window._export_cancel is None and os.path.exists(path) and "Exported" in window.statusBar().currentMessage(), timeout=30)
         assert "1,000 rows" in window.statusBar().currentMessage()
     header, t, vals, comments = read_labchart_text(str(tmp_path / "out.txt"))
     assert len(t) == 1000 and vals.shape == (1000, 2) and t[0] == pytest.approx(12.0)
@@ -324,3 +324,18 @@ def test_units_label_the_y_axis(qapp, window, synthetic):
     pmo._place_overlays()
     assert left.label.isVisible()
     assert "cmH2O" in pmo._label_text
+
+
+def test_a_second_export_waits_and_closing_the_file_cancels_a_running_one(qapp, window, synthetic, tmp_path, monkeypatch):
+    window.open_file_sync(synthetic["path"])
+    gate, reached = _slow_export(monkeypatch, 5)
+    path = str(tmp_path / "w.csv")
+    req = ExportRequest(path=path, fmt="csv", selections=window.timeline.selections(0.0, 10.0), channels=[0], scope_label="selection")
+    window.run_export(req)
+    assert wait_until(qapp, reached.is_set, timeout=20)
+    window.run_export(req)
+    assert window.statusBar().currentMessage() == "An export is already running."
+    window.close_file()
+    gate.set()
+    assert wait_until(qapp, lambda: window.statusBar().currentMessage() == "Export cancelled." or window._export_cancel is None, timeout=30)
+    assert not os.path.exists(path) and not os.path.exists(path + ".part")

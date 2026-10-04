@@ -426,6 +426,8 @@ class MainWindow(QMainWindow):
 
     def _install_file(self, f: Optional[AdichtFile]) -> None:
         old = self.file
+        if self._export_cancel is not None:
+            self._export_cancel.set()               # an export still reading the old file stops (nothing is left behind)
         self.file = f
         with perf.span("install.timeline"):
             self.timeline = Timeline(f) if f is not None else None
@@ -657,6 +659,9 @@ class MainWindow(QMainWindow):
         """Export on the worker thread, with a progress dialog that can cancel it (the file is written
         under a temporary name and renamed when complete, so a cancelled export leaves nothing)."""
         from ..export import export_selections
+        if self._export_cancel is not None:
+            self.statusBar().showMessage("An export is already running.")
+            return
         self._export_request = req
         f = self.file
         cancel = self._export_cancel = threading.Event()

@@ -6,6 +6,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Export is faster and can be stopped: text and CSV are formatted a block of rows at a time (the files are
+  byte for byte what they were; 600,000 rows x 4 channels, CSV about 1.8 s to about 0.8 s measured in a test
+  environment), and Excel sheets are written as a stream (600,000 x 5 cells about 32 s to about 4 s). The
+  export dialog shows progress and has a Cancel button. A file is written under a temporary name and renamed
+  when it is complete, so a cancelled or failed export leaves no half-written file and keeps an existing one.
+  A comment that begins with `=` is now written to Excel as text, never as a formula.
 - The file panel opens a file with thousands of comments or blocks at once: the Comments and Blocks tables
   are lists that make a row's text only when it is shown (5000 comments: 311 ms to 2 ms in the panel; the
   whole open of a 20-block file with 5000 comments 455 ms to 150 ms, measured offscreen). Looks, columns,

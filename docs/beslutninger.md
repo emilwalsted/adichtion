@@ -2,6 +2,42 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-04 (9) — Hurtigere tekst-/CSV-/Excel-eksport med fremdrift og annullér (P8)
+
+Målt i sandkassen (600.000 rækker, fire kanaler, syntetisk fil, softwarerenderet Qt): CSV 1,76 s, tekst 1,45 s, Excel
+omkring 32 s (opgavens tal fra reviewet). Tiden lå i `_fmt` pr. værdi og en Python-løkke pr. række, i Excel i
+openpyxl pr. celle. Dialogen havde en ubestemt statuslinje uden annullér.
+
+- **Tekst/CSV:** rækkerne formateres en blok ad gangen (`CHUNK_ROWS` = 50.000). Hver kolonne formateres med `%.7g`
+  (`_strings`), og de enkelte rækker samles med ÉT `%` over hele blokken. De samme tegn som før: `tests/test_export_fast.py`
+  sammenligner BYTE for BYTE med den gamle værdi-for-værdi-skriver (bevaret i testen som `legacy_write_text`) for
+  txt/csv, begge decimaltegn, alle valgmuligheder, flere optagelser, kommentarer ved bloksamlinger, NaN/uendelig og
+  float32. En ADC-kanal har langt færre forskellige værdier end rækker, så hver forskellig BITMØNSTER i en blok formateres én gang
+  (ikke hver forskellig værdi: `-0.0` skal beholde sit fortegn, så `np.unique` kører på int64-visningen).
+  Tidskolonnen gentager sig aldrig og springer det over. Målt: CSV 1,76 s til 0,75 til 0,95 s (ca. 2 gange, ikke de 3 gange
+  opgaven satte som mål), tekst 1,45 s til ca. 0,75 s. Resten er afkodning (ca. 0,2 s) og Pythons egen `%.7g`.
+  Støjen i sandkassen er stor (gentagne målinger 0,72 til 0,95 s); gentag på Mac'en.
+- **Excel: ingen ny afhængighed.** `xlsxwriter` blev målt (200.000 rækker x 5 kolonner: 4,5 s mod openpyxls 8,1 s, kun
+  1,8 gange) og fravalgt: for lidt vundet, og det ville have byttet en afhængighed ud i installers og `.deb`. I stedet streames
+  arkenes `<sheetData>` som XML (`_xlsx_streamed`): openpyxl skriver selv en TOM skrivebeskyttet projektmappe med arkenes
+  navne (alle pakkedele, typer, relationer, typografier uændret), og hvert ark får openpyxls egen kappe om `<sheetData>`
+  med vores rækker indeni, i samme celleform som openpyxl (`<c r t="n"><v>%.16g</v></c>`, NaN/uendelig som `<v />`, tekst som
+  `inlineStr`). 600.000 x 5 celler: ca. 3,5 s (ca. 9 gange). Er openpyxls kappe ikke den forventede (en anden version),
+  falder skriveren tilbage til den gamle celle-for-celle-vej (`fast=False`, også testorakel).
+- **Kendt forskel, bevidst:** en kommentar, der begynder med `=`, blev før lavet til en FORMEL af openpyxl; nu er den tekst
+  (en kommentar er aldrig en formel). Tegn, XML ikke kan bære, skrives som Excels `_xHHHH_` (openpyxl afviste dem med en fejl).
+- **Fremdrift og annullér:** `export_selections(..., progress=(done, total), stale=...)`; `ExportCancelled` rejses mellem
+  blokke. En eksport skriver til `<mål>.part` og omdøber, når den er færdig: en annulleret eller fejlet eksport efterlader ingen
+  halvskrevet fil og rører ikke en eksisterende fil med samme navn (før blev målet åbnet og afkortet med det samme).
+  Mål, der ikke er en almindelig fil (enhed, rør), skrives direkte. Eksportdialogen har nu `Cancel` og viser procent.
+  Vinduet, der lukkes under en eksport, annullerer den (arbejdstrådens `stale()`), i stedet for at vente på, at den bliver færdig.
+- **Ikke gjort:** fremdrift pr. optagelse (kun samlet procent, den samme information); afbrydelse i selve afslutningen af
+  Excel-filen (zip-lukningen er kort). Annullering sker ved næste blok, højst 50.000 rækker.
+- **Ikke verificeret her:** at Excel selv åbner den streamede projektmappe uden reparationsdialog (LibreOffice kan ikke
+  engang indlæse en triviel xlsx i sandkassen), og tidsgevinsten på rigtige filer. Emil kører `scripts/verify_exports.py` og
+  `pytest tests/test_integration_samples.py` på Mac'en, åbner en eksporteret `.xlsx` i Excel og gentager målingen
+  (`python scripts/bench`-scriptene i performance-reviewet eller `adichtion bench FIL --export`).
+
 ## 2026-10-04 (8) — Kommentar- og blokliste som model/view, klippoptælling på tråd (P7)
 
 `InfoPanel.set_file` byggede ét `QTableWidgetItem` pr. celle: 5000 kommentarer 311-324 ms i panelet (fil D fra
