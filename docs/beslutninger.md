@@ -2,6 +2,34 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-04 (3) — Blok-resuméer, hukommelsesstyret cache og ingen 8-bucket-gulv (P2)
+
+Reviewet (afsnit 3.2) og Emils Mac-målinger viste, at en fuld-fil-visning afkodede hele filen igen
+og igen: cachen på 256 blokke kan ikke rumme en fil, og hver optagelse havde et gulv på 8 buckets.
+
+- **Resuméer pr. blok i samplerummet** (`file._ChannelSummaries`, 32 buckets, rå min/max i dekoderens
+  dtype, konverteret ved brug med `Record.convert`, så de følger enhedsskift og negative hældninger).
+  De lagres ved den første afkodning af en blok, pr. (optagelse, kanal), uden for blokcachen og med
+  filens levetid; `clear_cache()` glemmer dem også (kold start til `adichtion bench`). Ca. 256 byte pr.
+  blok og kanal.
+- **Tolerancen er dokumenteret og testet:** et detaljepas fra resuméer bruges kun, når en pixelbucket er
+  mindst lige så bred som den bredeste resuméebucket (ca. 1/32 blok). Et resuméebucket føder alle
+  pixelbuckets, det overlapper, så en pixelbucket kan vise et ekstremum højst ét resuméebucket (500 ticks
+  ved en fuld blok) uden for sine egne samples og aldrig misse et. Samme regel gælder ved enderne af det
+  ønskede interval. Ellers afkodes som før.
+- **`Record.overview(..., from_summaries=False)` er opt-in:** eksisterende kaldere (CLI, eksport, bench)
+  får uændrede værdier; kun `lod.curve_for_range` slår det til.
+- **Cachen er styret af bytes** (25 % af ledig RAM ved åbning, mindst 256 MB, højst 1 GB; Linux
+  `MemAvailable`, Windows `GlobalMemoryStatusEx`, ellers halvdelen af den installerede RAM). Blokke af
+  16-bit-kanaler gemmes som int16, hvis alle værdier passer, og udleveres som en ny int32-array, så
+  `decode_block` returnerer det samme som før. `cache_blocks=` virker stadig (antalsgrænse oveni).
+- **Gulvet `max(8, …)` er væk** (nu `max(1, …)`): en optagelse smallere end en pixel får én bucket, så
+  kurven har højst `n_buckets` plus én pr. sådan optagelse.
+- **Fravalgt:** baggrundsopvarmning af resuméerne (P9), vektoriseret hurtig-pas over alle optagelser (P3),
+  og at lade `overview` bruge resuméer som standard (ville ændre CLI/eksport-tal ved en bivirkning).
+- Ingen afkodede værdier og ingen eksportbytes ændres. `SubBlockIndex.channel_dtype` huskes pr. kanal
+  (den gennemløb før alle sub-blokke ved hvert kald og kostede kvadratisk tid i `Record.convert`).
+
 ## 2026-10-04 (2) — Panoreringstrinnet deles op i sine dele (P1b)
 
 Emils Mac-målinger viste ca. 80 ms GUI-blokering pr. panoreringstrin, men kun ca. 40 ms var tegning;

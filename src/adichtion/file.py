@@ -62,12 +62,69 @@ class Selection:
         return self.stop - self.start
 
 
-class _BlockCache:
-    """LRU cache of decoded blocks.  Guarded by a lock so a UI can decode in a
-    worker thread while its GUI thread reads values under the cursor."""
+# -- decoded-block cache ---------------------------------------------------------------------
+CACHE_MIN_BYTES = 256 * 1024 * 1024         # the cache never gets less than this ...
+CACHE_MAX_BYTES = 1024 * 1024 * 1024        # ... nor more than this
+CACHE_RAM_FRACTION = 0.25                   # ... and in between a quarter of the memory that is free at open
 
-    def __init__(self, capacity: int):
+#: Buckets of the min/max summary kept for every decoded block (a block of 16000 ticks then
+#: gets one bucket per 500 ticks).  A detail pass whose pixel buckets are at least that wide
+#: is served from the summaries instead of from the samples (``Record.overview``).
+SUMMARY_BUCKETS = 32
+
+
+def _available_memory() -> Optional[int]:
+    """Bytes of RAM that are free right now, or None when the platform will not say."""
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:                  # Linux
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        if os.name == "nt":                                                  # Windows
+            import ctypes
+
+            class _MemStatus(ctypes.Structure):
+                _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong),
+                            ("total_phys", ctypes.c_ulonglong), ("avail_phys", ctypes.c_ulonglong),
+                            ("total_page", ctypes.c_ulonglong), ("avail_page", ctypes.c_ulonglong),
+                            ("total_virtual", ctypes.c_ulonglong), ("avail_virtual", ctypes.c_ulonglong),
+                            ("avail_ext", ctypes.c_ulonglong)]
+            st = _MemStatus()
+            st.length = ctypes.sizeof(st)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):   # type: ignore[attr-defined]
+                return int(st.avail_phys)
+            return None
+        # macOS and the rest: no portable "free" figure, so half of the installed memory stands in
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") // 2
+    except (OSError, ValueError, AttributeError, ImportError):
+        return None
+
+
+def default_cache_bytes() -> int:
+    """Size of the decoded-block cache of a newly opened file: ``CACHE_RAM_FRACTION`` of the
+    memory that is free, clamped to ``[CACHE_MIN_BYTES, CACHE_MAX_BYTES]``."""
+    free = _available_memory()
+    if free is None:
+        return CACHE_MIN_BYTES
+    return int(min(CACHE_MAX_BYTES, max(CACHE_MIN_BYTES, free * CACHE_RAM_FRACTION)))
+
+
+class _BlockCache:
+    """LRU cache of decoded blocks, limited by memory (``max_bytes``) and, optionally, by a
+    number of blocks (``capacity``).  Guarded by a lock so a UI can decode in a worker thread
+    while its GUI thread reads values under the cursor.
+
+    A block of an ADC channel is decoded to int32 but its counts are 16-bit; it is kept as int16
+    (half the memory) when every value fits, and handed out as a fresh int32 array again, so
+    callers see exactly what the decoder returned."""
+
+    def __init__(self, max_bytes: Optional[int] = None, capacity: Optional[int] = None):
+        self.max_bytes = default_cache_bytes() if max_bytes is None else int(max_bytes)
         self.capacity = capacity
+        self.nbytes = 0                 # memory held by the cached arrays
         self._d: "OrderedDict[int, np.ndarray]" = OrderedDict()
         self._lock = threading.Lock()
         self.hits = 0                   # lookups answered from the cache ...
@@ -81,18 +138,64 @@ class _BlockCache:
                 self.hits += 1
             else:
                 self.misses += 1
-            return v
+        if v is not None and v.dtype == np.int16:
+            return v.astype(np.int32)
+        return v
+
+    @staticmethod
+    def _compact(value: np.ndarray) -> np.ndarray:
+        if value.dtype == np.int32 and value.size and int(value.min()) >= -32768 and int(value.max()) <= 32767:
+            return value.astype(np.int16)
+        return value
 
     def put(self, key: int, value: np.ndarray) -> None:
+        value = self._compact(value)
         with self._lock:
+            old = self._d.pop(key, None)
+            if old is not None:
+                self.nbytes -= old.nbytes
             self._d[key] = value
-            self._d.move_to_end(key)
-            while len(self._d) > self.capacity:
-                self._d.popitem(last=False)
+            self.nbytes += value.nbytes
+            while len(self._d) > 1 and (self.nbytes > self.max_bytes
+                                        or (self.capacity is not None and len(self._d) > self.capacity)):
+                _k, evicted = self._d.popitem(last=False)
+                self.nbytes -= evicted.nbytes
 
     def clear(self) -> None:
         with self._lock:
             self._d.clear()
+            self.nbytes = 0
+
+
+class _ChannelSummaries:
+    """Min/max summary of every decoded block of one channel of one record, in the stored
+    (raw) values.  ``bounds`` are the sample numbers at which the blocks start (and the end of the
+    last); block ``b`` holds ``count[b]`` buckets of ``bounds[b+1]-bounds[b]`` samples divided as
+    evenly as ``minmax_envelope`` divides them.  A block that was never decoded has ``have[b]`` False."""
+
+    def __init__(self, bounds: np.ndarray):
+        self.bounds = bounds
+        nb = len(bounds) - 1
+        self.have = np.zeros(nb, dtype=bool)
+        self.count = np.zeros(nb, dtype=np.int32)          # buckets of the block (0: it holds no samples)
+        self.n = np.zeros(nb, dtype=np.int64)              # samples the block held when it was decoded
+        self.mins: Optional[np.ndarray] = None
+        self.maxs: Optional[np.ndarray] = None
+
+    def put(self, block: int, data: np.ndarray) -> None:
+        n = len(data)
+        if n:
+            k = min(SUMMARY_BUCKETS, n)
+            edges = (np.arange(k, dtype=np.int64) * n) // k
+            if self.mins is None:
+                shape = (len(self.have), SUMMARY_BUCKETS)
+                self.mins = np.zeros(shape, dtype=data.dtype)
+                self.maxs = np.zeros(shape, dtype=data.dtype)
+            self.mins[block, :k] = np.minimum.reduceat(data, edges)
+            self.maxs[block, :k] = np.maximum.reduceat(data, edges)
+            self.count[block] = k
+            self.n[block] = n
+        self.have[block] = True            # last: a reader that sees it also sees the numbers
 
 
 def _subblocks_from_map(blocks: bytes, chart: ChartData) -> list[SubBlock]:
@@ -130,7 +233,8 @@ class AdichtFile:
     have no data (:meth:`has_data` False, dtype ``"none"``) and a stored
     definition (:meth:`channel_definition`)."""
 
-    def __init__(self, path: str | os.PathLike, cache_blocks: int = 256):
+    def __init__(self, path: str | os.PathLike, cache_blocks: Optional[int] = None,
+                 cache_bytes: Optional[int] = None):
         self.path = os.fspath(path)
         self.mac: Optional[MacDocument] = None
         self._container: Optional[AdichtContainer] = None
@@ -146,7 +250,9 @@ class AdichtFile:
         else:
             self.kind = "adicht"
             self._open_adicht()
-        self._cache = _BlockCache(cache_blocks)
+        self._cache = _BlockCache(cache_bytes, cache_blocks)
+        self._summaries: dict[tuple[int, int], _ChannelSummaries] = {}
+        self._summaries_lock = threading.Lock()
         self._range_override: dict[int, float] = {}
         self.records: list[Record] = [Record(self, r) for r in self.chart.records]
 
@@ -181,16 +287,22 @@ class AdichtFile:
         return self._cache.hits, self._cache.misses
 
     def clear_cache(self, reset_counters: bool = True) -> None:
-        """Forget every decoded block and every filled min/max envelope (a cold start, for
+        """Forget every decoded block, block summary and filled min/max envelope (a cold start, for
         ``adichtion bench``); the counters of :meth:`cache_stats` restart too."""
         self._cache.clear()
         self._envelopes.clear()
+        self._summaries.clear()
         if reset_counters:
             self._cache.hits = self._cache.misses = 0
+
+    def cache_usage(self) -> tuple[int, int]:
+        """``(bytes held, byte limit)`` of the decoded-block cache."""
+        return self._cache.nbytes, self._cache.max_bytes
 
     def close(self) -> None:
         self._cache.clear()
         self._envelopes.clear()
+        self._summaries.clear()
         if self._container is not None:
             self._container.close()
 
@@ -338,24 +450,51 @@ class AdichtFile:
 
     def decode_block(self, record: int, block: int, channel: int) -> np.ndarray:
         """Decoded samples of one block: int32 counts or float32 values (cached).
-        Every block is self-contained, so this is O(1) blocks."""
+        Every block is self-contained, so this is O(1) blocks.  A block decoded for the
+        first time also leaves its min/max summary behind (:meth:`summary_store`)."""
         if self.mac is not None:
             mb = self.index.get(record, block, channel)
             if mb is None:
                 return np.zeros(0, dtype=np.int32)
-            hit = self._cache.get(mb.key)
-            if hit is not None:
-                return hit
-            data = decode_mac_block(memoryview(self._blocks)[mb.offset: mb.offset + mb.length], mb)
-            self._cache.put(mb.key, data)
-            return data
-        sb = self.index.get(record, block, channel)
-        hit = self._cache.get(sb.index)
+            key = mb.key
+        else:
+            sb = self.index.get(record, block, channel)
+            key = sb.index
+        hit = self._cache.get(key)
         if hit is not None:
             return hit
-        data = decode_subblock(self._body(sb), sb)
-        self._cache.put(sb.index, data)
+        if self.mac is not None:
+            data = decode_mac_block(memoryview(self._blocks)[mb.offset: mb.offset + mb.length], mb)
+        else:
+            data = decode_subblock(self._body(sb), sb)
+        self._remember_summary(record, block, channel, data)
+        self._cache.put(key, data)
         return data
+
+    def _remember_summary(self, record: int, block: int, channel: int, data: np.ndarray) -> None:
+        store = self.summary_store(record, channel, create=True)
+        if store is not None and not store.have[block]:
+            store.put(block, data)
+
+    def summary_store(self, record: int, channel: int, create: bool = False) -> Optional[_ChannelSummaries]:
+        """The min/max summaries of the blocks of ``channel`` in ``record`` that have been decoded
+        so far (None when there are none yet and ``create`` is False, or when the channel stores no
+        samples).  They live as long as the file is open and do not count against the block cache."""
+        key = (record, channel)
+        store = self._summaries.get(key)
+        if store is not None or not create:
+            return store
+        rec = self.records[record]
+        cr = self.channel_record(record, channel)
+        if cr is None or cr.dtype == "none" or not self.index.has_data(channel):
+            return None
+        with self._summaries_lock:
+            store = self._summaries.get(key)
+            if store is None:
+                ticks = np.cumsum([0] + rec.block_ticks)
+                bounds = np.array([rec.tick_to_sample(int(t), channel) for t in ticks], dtype=np.int64)
+                store = self._summaries[key] = _ChannelSummaries(bounds)
+        return store
 
     # -- consistency checks (for tests and the "verify" command) ----------------------
     def walk_subblocks(self) -> list[SubBlock]:
@@ -607,15 +746,89 @@ class Record:
                 mins, maxs = maxs, mins
         return t0, t1, mins, maxs
 
+    @staticmethod
+    def _spread(t0: float, t1: float, n_points: int, b0: np.ndarray, b1: np.ndarray,
+                mins: np.ndarray, maxs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """``(time, min, max)`` in ``n_points`` buckets over ``[t0, t1]`` from pieces that each
+        span ``[b0, b1]`` with the given min/max; a piece feeds every bucket it overlaps (one or
+        two when the buckets are wider than a piece, a run of them when it is wider)."""
+        edges = np.linspace(t0, t1, n_points + 1)
+        lo = np.full(n_points, np.inf)
+        hi = np.full(n_points, -np.inf)
+        width = (t1 - t0) / n_points
+        keep = (b1 > t0) & (b0 < t1)
+        b0, b1, mins, maxs = b0[keep], b1[keep], mins[keep], maxs[keep]
+        k0 = np.clip(np.floor((b0 - t0) / width), 0, n_points - 1).astype(np.int64)
+        k1 = np.clip(np.floor((b1 - t0 - 1e-9) / width), 0, n_points - 1).astype(np.int64)
+        counts = k1 - k0 + 1
+        idx = np.repeat(k0, counts) + (np.arange(int(counts.sum())) - np.repeat(np.cumsum(counts) - counts, counts))
+        # fmin/fmax skip the NaN of pieces whose min/max is not stored (and not yet filled)
+        np.fmin.at(lo, idx, np.repeat(mins, counts))
+        np.fmax.at(hi, idx, np.repeat(maxs, counts))
+        lo[~np.isfinite(lo)] = np.nan
+        hi[~np.isfinite(hi)] = np.nan
+        return (edges[:-1] + edges[1:]) / 2, lo, hi
+
+    def summary_overview(self, channel: int, n_points: int, start: int = 0, stop: Optional[int] = None,
+                         units: bool = True) -> Optional[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        """The :meth:`overview` envelope of ``[start, stop)`` in ``n_points`` buckets taken from the
+        min/max summaries that decoding leaves behind (``SUMMARY_BUCKETS`` per block), without
+        decoding.  None when that cannot be done: a block in the range was never decoded, or a
+        pixel bucket is narrower than a summary bucket.
+
+        The result differs from the one decoded from the samples only at the ends of each bucket: a
+        summary bucket feeds every pixel bucket it overlaps, so a pixel bucket can show extremes up to
+        one summary bucket (a 1/32 block, and never more than one pixel bucket) outside its own
+        samples; it never misses one.  The ends of the requested range are treated alike."""
+        stop = self.ticks if stop is None else min(stop, self.ticks)
+        start = max(0, start)
+        store = self.file.summary_store(self.index, channel)
+        if store is None or n_points <= 0 or stop <= start:
+            return None
+        s0, s1 = self.tick_to_sample(start, channel), self.tick_to_sample(stop, channel)
+        bounds = store.bounds
+        nb = len(bounds) - 1
+        if s1 <= s0 or nb == 0:
+            return None
+        b_lo = max(int(np.searchsorted(bounds, s0, side="right")) - 1, 0)
+        b_hi = min(int(np.searchsorted(bounds, s1, side="left")), nb)
+        if b_hi <= b_lo or not store.have[b_lo:b_hi].all():
+            return None
+        cnt = store.count[b_lo:b_hi].astype(np.int64)
+        ok = cnt > 0
+        if not ok.any() or store.mins is None:
+            return None
+        n_b, cnt, base = store.n[b_lo:b_hi][ok], cnt[ok], bounds[b_lo: b_hi][ok]
+        mins, maxs = store.mins[b_lo:b_hi][ok], store.maxs[b_lo:b_hi][ok]
+        j = np.arange(SUMMARY_BUCKETS + 1, dtype=np.int64)[None, :]
+        edges = base[:, None] + (j * n_b[:, None]) // cnt[:, None]          # sample edges, blocks x (K+1)
+        valid = j[:, :-1] < cnt[:, None]
+        rate = self.sample_rate_hz(channel)
+        ta, tb = (edges[:, :-1] / rate)[valid], (edges[:, 1:] / rate)[valid]
+        t0, t1 = start / self.tick_rate_hz, stop / self.tick_rate_hz
+        if float((tb - ta).max()) > (t1 - t0) / n_points * (1.0 + 1e-9):
+            return None
+        mn, mx = mins[valid], maxs[valid]
+        if units:
+            a, b = self.convert(channel, mn), self.convert(channel, mx)
+            mn, mx = np.fmin(a, b), np.fmax(a, b)                            # a negative slope swaps them
+        else:
+            mn, mx = mn.astype(np.float64), mx.astype(np.float64)
+        return self._spread(t0, t1, n_points, ta, tb, mn, mx)
+
     def overview(self, channel: int, n_points: int = 2000, start: int = 0, stop: Optional[int] = None,
-                 units: bool = True, coarse: bool = False, fill: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                 units: bool = True, coarse: bool = False, fill: bool = True,
+                 from_summaries: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """``(time, min, max)`` envelope of ``channel`` over ``[start, stop)`` in
         ``n_points`` buckets, for drawing a long record at screen resolution.
         Buckets of a whole block or more are served from the Map stream's
         block index without decoding; with ``coarse=True`` the index is used
         whenever the range holds at least one block, each block's min/max then
         covering every bucket it overlaps (a quick first picture a viewer can
-        refine once the samples are decoded)."""
+        refine once the samples are decoded).  With ``from_summaries=True`` a range
+        whose blocks have all been decoded before, and whose buckets are at least a
+        summary bucket wide, comes from the block summaries instead of from the samples
+        (:meth:`summary_overview` says how that differs); anything else is decoded as usual."""
         stop = self.ticks if stop is None else min(stop, self.ticks)
         start = max(0, start)
         t0 = start / self.tick_rate_hz
@@ -624,25 +837,11 @@ class Record:
         span = stop - start
         if cr is not None and n_points > 0 and (span >= n_points * BLOCK_TICKS or (coarse and span >= BLOCK_TICKS)):
             b0, b1, mins, maxs = self.block_envelope(channel, units, fill)
-            edges = np.linspace(t0, t1, n_points + 1)
-            lo = np.full(n_points, np.inf)
-            hi = np.full(n_points, -np.inf)
-            width = (t1 - t0) / n_points
-            keep = (b1 > t0) & (b0 < t1)
-            b0, b1, mins, maxs = b0[keep], b1[keep], mins[keep], maxs[keep]
-            k0 = np.clip(np.floor((b0 - t0) / width), 0, n_points - 1).astype(np.int64)
-            k1 = np.clip(np.floor((b1 - t0 - 1e-9) / width), 0, n_points - 1).astype(np.int64)
-            # a block feeds every bucket it overlaps (one or two when the buckets are wider than
-            # a block, a run of them in the coarse case)
-            counts = k1 - k0 + 1
-            idx = np.repeat(k0, counts) + (np.arange(int(counts.sum())) - np.repeat(np.cumsum(counts) - counts, counts))
-            # fmin/fmax skip the NaN of blocks whose min/max is not stored (and not yet filled)
-            np.fmin.at(lo, idx, np.repeat(mins, counts))
-            np.fmax.at(hi, idx, np.repeat(maxs, counts))
-            lo[~np.isfinite(lo)] = np.nan
-            hi[~np.isfinite(hi)] = np.nan
-            t = (edges[:-1] + edges[1:]) / 2
-            return t, lo, hi
+            return self._spread(t0, t1, n_points, b0, b1, mins, maxs)
+        if from_summaries:
+            got = self.summary_overview(channel, n_points, start, stop, units)
+            if got is not None:
+                return got
         x = self.read(channel, start, stop, units=units)
         mins, maxs = minmax_envelope(x, n_points)
         t = np.linspace(t0, t1, len(mins), endpoint=False) + (t1 - t0) / max(len(mins), 1) / 2

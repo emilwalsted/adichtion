@@ -82,6 +82,13 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 
 ## Working notes
 
+- **Block summaries and the cache** (`file._ChannelSummaries`, `_BlockCache`, `docs/beslutninger.md`
+  2026-10-04 (3)): `decode_block` leaves a 32-bucket min/max summary of each block it decodes for the
+  first time; `Record.summary_overview` / `overview(from_summaries=True)` (only `lod` asks for it) serves a
+  detail pass from them when every block in range has one and a pixel bucket is at least a summary bucket
+  wide. The cache is limited in bytes and keeps 16-bit blocks as int16; `decode_block` still returns int32.
+  Anything new that reads `Record.overview` keeps the exact (decoded) answer unless it opts in.
+
 - **Timing is numbers only** (`perf.py`, `bench.py`): an event is a code-literal name plus
   numeric fields, and `perf.event` raises on anything else, so file names, titles, comment
   texts and dates cannot reach a log or a bench report. `adichtion bench` prints no path.
