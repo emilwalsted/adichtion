@@ -2,6 +2,35 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-04 (4) — Ét gentegning pr. plot pr. flytning (P4)
+
+Emils Mac-målinger (P1b): hvert plot tegnedes 3 til 5 gange pr. brugerhandling, og selve tegnepasset (akser,
+gitter) kostede kun 3 til 4,5 ms. Aksetegning og gitter er derfor ikke ændret; opgaven blev at samle opdateringerne.
+
+- **Årsag 1, pyqtgraph:** `ViewBox` anvender sin nye transform først i `prepareForPaint`, dvs. inde i det
+  første paint-event. Kæden `sigTransformChanged` (kurven, akserne, tekstelementerne) beder da om endnu en
+  opdatering, som kommer efter det område, første paint tegnede. Resultat: to paints pr. plot pr. flytning
+  (målt med et event-filter på hvert plots viewport og `QGraphicsScene.changed`). `ChannelViewBox.updateViewRange`
+  kalder nu `updateMatrix()` med det samme (kun når viewet har en størrelse), så transformen er aktuel, når
+  event-løkken tegner.
+- **Årsag 2, grov kurve 60 ms efter:** den debouncede `_render` satte den grove kurve som et selvstændigt paint.
+  `ChannelStack._coarse_pass` kører nu i samme tur som flytningen (fra `_on_x_range`), og `ChannelPlot.coarse_key`
+  (x0, x1, buckets) får den debouncede pass til ikke at tegne den samme kurve igen. Detaljepasset i arbejdstråden
+  og dets job-indsendelse er uændret og stadig debounced.
+- **Forbehold og værn:** et synkront grovpas koster GUI-tråden tid pr. input. Filer med tusinder af optagelser
+  har et langsomt blokindeks (P3). `COARSE_SYNC_BUDGET_MS = 8` med et glidende gennemsnit (`_coarse_ms`) slår
+  derfor det synkrone pas fra, så snart et pas koster mere, og den debouncede vej (som før) tager over. Højst ét
+  synkront pas pr. billede (`COARSE_SYNC_MIN_GAP_S` 16 ms): reviewet målte 10 gange så mange grovpas i en burst af
+  kønlagte input uden den grænse. Det første pas efter åbning er ubeskyttet (accepteret; før kom det 60 ms senere).
+- **Forsinket detaljeresultat:** `_on_progress` kasserer et resultat, der ikke dækker det aktuelle view (viewet er
+  flyttet siden jobbet startede), så det ikke overskriver det friske grove billede.
+- **Målt (sandkasse, offscreen, syntetisk fil: 9 kanaler, 4 kHz, 68 MB, `bench --pan`):** `paint.plot` 1633 -> ca. 705
+  på 75 input (2,4 -> 1,04 pr. plot), pan pr. trin 325 -> 163 til 187 ms. Skærmbilleder (lyst og mørkt tema,
+  fem visninger) er pixel-identiske før og efter. Mac'en er ikke målt endnu.
+- **Ikke gjort (bevidst):** gitter og tickniveauer (opgavens oprindelige punkt 1 og 2), fordi målingerne ikke
+  støtter dem. Cursorflyt giver stadig to paints pr. plot (selve cursoren og den lille værdi-etiket øverst i hvert plot,
+  som er et børne-widget); det er en anden og billigere post.
+
 ## 2026-10-04 (3) — Blok-resuméer, hukommelsesstyret cache og ingen 8-bucket-gulv (P2)
 
 Reviewet (afsnit 3.2) og Emils Mac-målinger viste, at en fuld-fil-visning afkodede hele filen igen
