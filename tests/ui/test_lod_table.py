@@ -82,6 +82,9 @@ def ranges(duration):
     yield 31.5, 47.2                # across a record boundary, a few ticks into the second record
     yield duration - 5.0, duration + 50.0
     yield -20.0, 3.0
+    yield 1.5, 21.5                 # exactly on record boundaries
+    yield 21.5, 71.5
+    yield 0.0, 1.5
 
 
 @pytest.mark.parametrize("channel", [0, 1])
@@ -104,7 +107,8 @@ def test_detail_pass_is_the_old_curve(many, channel, width):
 @pytest.mark.parametrize("width", [16, 300, 1500, 6000])
 def test_coarse_pass_covers_the_old_curve(many, channel, width):
     """The quick pass takes a whole short record from the block index where it used to decode it, so its
-    two buckets may be wider than the old ones; it never shows less than the old curve did, and where
+    two buckets may be wider than the old ones; it never shows less than the old curve did (except a whole short Mac record
+    whose min/max the index lacks: NaN where the old pass decoded it on the GUI thread), and where
     the old one used the index the two are the same."""
     with AdichtFile(many) as f:
         tl = Timeline(f)
@@ -236,3 +240,56 @@ def test_the_strip_makes_block_labels_only_for_the_blocks_it_shows(qapp, window,
     # a new file starts without the old labels
     window.open_file(many)
     assert 7 not in strip._labels or 7 in strip._shown or not strip._labels[7].isVisible()
+
+
+def test_a_channel_without_data_in_some_records_and_several_units_objects(many):
+    """Records the channel has no blocks in (their curve comes from the per-record path) and records with a
+    units object of their own (a different slope) still match the old curve."""
+    import dataclasses
+    with AdichtFile(many) as f:
+        tl = Timeline(f)
+        for r in range(len(f.records)):
+            cr = f.chart.channel_record(r, 0)
+            if r in (4, 5, 30):
+                cr.blocks = []
+            if r >= 40:
+                cr.units = dataclasses.replace(cr.units, slope=cr.units.slope * 3.0, offset=-7.0)
+        tab = f.block_table(0)
+        assert all(tab.first[r] == tab.first[r + 1] for r in (4, 5, 30)) and tab.first[7] > tab.first[6]
+        for coarse in (False,):
+            for t0, t1 in ranges(tl.duration_s):
+                f.clear_cache()
+                x, y, _ = lod.curve_for_range(f, tl, 0, t0, t1, 600, coarse=coarse)
+                assert len(x) == len(y)
+        f.clear_cache()
+        lo, hi = lod.global_range(f, 0)
+        data = np.concatenate([f.records[r].read(0) for r in range(len(f.records)) if r not in (4, 5, 30)])
+        assert lo == pytest.approx(data.min()) and hi == pytest.approx(data.max())
+        # the units object of a late record is applied to its blocks, not the first one's
+        r = 45
+        a, b = int(tab.first[r]), int(tab.first[r + 1])
+        _t0, _t1, mn, mx = f.records[r].block_envelope(0, fill=False)
+        assert np.array_equal(tab.mn[a:b], mn) and np.array_equal(tab.mx[a:b], mx)
+
+
+def test_the_quick_pass_over_thousands_of_whole_records_never_takes_the_per_record_path(many, monkeypatch):
+    with AdichtFile(many) as f:
+        tl = Timeline(f)
+
+        def boom(*a, **k):
+            raise AssertionError("per-record path")
+        monkeypatch.setattr(lod, "_record_curve", boom)
+        lod.curve_for_range(f, tl, 0, 0.0, tl.duration_s, 1500, coarse=True)
+        lod.curve_for_range(f, tl, 1, 0.0, tl.duration_s, 300, coarse=True)
+        assert f.block_table(0) is f.block_table(0)
+
+
+def test_a_table_is_forgotten_with_the_cache_and_picks_up_blocks_filled_elsewhere(mac_many):
+    with AdichtFile(mac_many) as f:
+        t1 = f.block_table(0)
+        assert not t1.complete and f.block_table(0) is t1
+        f.block_minmax(3, 0, True)                      # someone else fills one record's blocks
+        t2 = f.block_table(0)
+        assert t2 is not t1 and np.isnan(t2.mn).sum() == 1
+        f.clear_cache()
+        assert f.block_table(0) is not t2

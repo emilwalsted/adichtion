@@ -588,7 +588,8 @@ class AdichtFile:
             for r in np.unique(record[bad]):
                 a, b = int(first[r]), int(first[r + 1])
                 mn[a:b], mx[a:b] = self.block_minmax(int(r), channel, fill)
-        complete = not (np.isnan(mn) | np.isnan(mx)).any()
+        # nothing more to fill: no NaN left, or a fill was asked for and what stays NaN is NaN in the samples
+        complete = fill or not (np.isnan(mn) | np.isnan(mx)).any()
         tk = np.array(ticks, dtype=np.int64)
         before = np.cumsum(tk) - tk
         tick0 = (before - before[first[record]]).astype(np.float64) if len(tk) else np.zeros(0)

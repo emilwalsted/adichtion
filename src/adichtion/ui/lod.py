@@ -60,14 +60,14 @@ def _record_curve(f: AdichtFile, timeline: Timeline, index: int, channel: int, l
     return np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64), level
 
 
-def _index_curves(f: AdichtFile, timeline: Timeline, channel: int, fill: bool, rec: np.ndarray,
+def _index_curves(f: AdichtFile, timeline: Timeline, channel: int, rec: np.ndarray,
                   start: np.ndarray, stop: np.ndarray, n_part: np.ndarray):
     """Min/max buckets of whole records straight from the channel's block table, with no loop over
     the records: record ``rec[i]`` over ticks ``[start[i], stop[i])`` in ``n_part[i]`` buckets, the
     same buckets :meth:`Record.overview` builds from the block index (``Record._spread``) but for
     every record at once.  Returns the bucket values ``(x, lo, hi)`` (file time, flat) and the
     record number of each bucket."""
-    tab = f.block_table(channel, fill=fill)
+    tab = f.block_table(channel)
     rate = timeline.rates[rec]
     a = start / rate
     b = stop / rate
@@ -140,6 +140,8 @@ def curve_for_range(f: AdichtFile, timeline: Timeline, channel: int, t0: float, 
     # a pixel still gets one, so the curve has at most n_buckets plus one per such record
     n_part = np.maximum(1, np.rint(n_buckets * (hi_t - lo_t) / span)).astype(np.int64)
     ok = _from_index(f, tl, channel, rec, start, stop, n_part, coarse)
+    if ok.any() and not coarse:
+        _fill_missing(f, channel, rec[ok], stale)
     n = len(rec)
     xs: list[Optional[np.ndarray]] = [None] * n
     ys: list[Optional[np.ndarray]] = [None] * n
@@ -167,7 +169,7 @@ def curve_for_range(f: AdichtFile, timeline: Timeline, channel: int, t0: float, 
     Y = np.full(total, np.nan)
     if ok.any():
         e = np.flatnonzero(ok)
-        bx, blo, bhi, owner = _index_curves(f, tl, channel, not coarse, rec[e], start[e], stop[e], n_part[e])
+        bx, blo, bhi, owner = _index_curves(f, tl, channel, rec[e], start[e], stop[e], n_part[e])
         first = np.cumsum(n_part[e]) - n_part[e]
         pos = out[e][owner] + 2 * (np.arange(len(bx)) - first[owner])
         X[pos] = X[pos + 1] = bx
@@ -179,6 +181,20 @@ def curve_for_range(f: AdichtFile, timeline: Timeline, channel: int, t0: float, 
     return X, Y, level
 
 
+def _fill_missing(f: AdichtFile, channel: int, rec: np.ndarray, stale=None) -> None:
+    """Decode the blocks of ``rec`` whose min/max the index lacks (a Mac document's), and only those, so the
+    table answers for them; ``stale()`` is checked between records.  The quick pass never calls this."""
+    tab = f.block_table(channel)
+    if tab.complete:
+        return
+    for r in rec:
+        a, b = int(tab.first[r]), int(tab.first[r + 1])
+        if np.isnan(tab.mn[a:b]).any() or np.isnan(tab.mx[a:b]).any():
+            if stale is not None and stale():
+                return
+            f.block_minmax(int(r), channel, True)
+
+
 def _from_index(f: AdichtFile, timeline: Timeline, channel: int, rec: np.ndarray, start: np.ndarray,
                 stop: np.ndarray, n_part: np.ndarray, coarse: bool) -> np.ndarray:
     """Which of the records the block index answers.  The rule the curve always had: a share of at
@@ -188,13 +204,14 @@ def _from_index(f: AdichtFile, timeline: Timeline, channel: int, rec: np.ndarray
     ``COARSE_WHOLE_BUCKETS`` buckets (each then shows the record's min/max, a first picture the decoded curve
     replaces); that keeps a file of thousands of short records off the decoder in the GUI thread."""
     covered = stop - start
-    whole = (start == 0) & (stop == timeline.block_ticks[rec])
+    # a record of a couple of ticks keeps its samples (the old rule), the index only answers real envelopes
+    whole = (start == 0) & (stop == timeline.block_ticks[rec]) & (covered > 2 * n_part)
     if coarse:
         ok = (covered >= BLOCK_TICKS) | (whole & (n_part <= COARSE_WHOLE_BUCKETS))
     else:
         ok = ((covered >= BLOCK_TICKS) & (covered / n_part >= BLOCK_TICKS / 4)) | (whole & (n_part == 1))
     if ok.any():
-        first = f.block_table(channel, fill=not coarse).first
+        first = f.block_table(channel).first
         ok &= first[rec + 1] > first[rec]               # the channel has data in the record
     return ok
 
