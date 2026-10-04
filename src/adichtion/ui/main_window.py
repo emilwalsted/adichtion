@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 import traceback
 from functools import partial
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
         self._infer_job = 0
         self._export_job = 0
         self._export_dialog: Optional[QProgressDialog] = None
+        self._export_cancel: Optional[threading.Event] = None     # set by the progress dialog's Cancel button
         self._open_job = 0                          # the file open in flight (0: none); see open_file
         self._open_path = ""
         self._open_dialog: Optional[QProgressDialog] = None
@@ -589,6 +591,8 @@ class MainWindow(QMainWindow):
             c, text = payload
             if c not in self.definitions:
                 self.set_definition(c, text)
+        elif kind == "export" and job_id == self._export_job:
+            self._export_progress(*payload)
 
     def _on_done(self, job_id: int, kind: str, result, error) -> None:
         if kind == "export" and job_id == self._export_job:
@@ -650,25 +654,42 @@ class MainWindow(QMainWindow):
         menu.popup(global_pos)
 
     def run_export(self, req: ExportRequest) -> None:
+        """Export on the worker thread, with a progress dialog that can cancel it (the file is written
+        under a temporary name and renamed when complete, so a cancelled export leaves nothing)."""
         from ..export import export_selections
         self._export_request = req
         f = self.file
+        cancel = self._export_cancel = threading.Event()
         self._export_job = self.runner.submit(
-            "export", partial(_export_job, f, req, export_selections), coalesce=False)
-        dlg = QProgressDialog(f"Exporting {req.scope_label} to {os.path.basename(req.path)}…", "", 0, 0, self)
+            "export", partial(_export_job, f, req, export_selections, cancel), coalesce=False)
+        dlg = QProgressDialog(f"Exporting {req.scope_label} to {os.path.basename(req.path)}…", "Cancel", 0, 1000, self)
         dlg.setWindowTitle("Export")
-        dlg.setCancelButton(None)
         dlg.setWindowModality(Qt.WindowModal)
         dlg.setMinimumDuration(300)
+        dlg.setAutoClose(False)                     # the dialog is closed by _finish_export, not when the bar fills
+        dlg.setAutoReset(False)
+        dlg.canceled.connect(cancel.set)
         dlg.setValue(0)
         self._export_dialog = dlg
 
+    def _export_progress(self, done: int, total: int) -> None:
+        dlg, req = self._export_dialog, self._export_request
+        if dlg is None or req is None or total <= 0 or (self._export_cancel is not None and self._export_cancel.is_set()):
+            return
+        dlg.setLabelText(f"Exporting {req.scope_label} to {os.path.basename(req.path)}… {100 * done // total} %")
+        dlg.setValue(min(999, 1000 * done // total))
+
     def _finish_export(self, result, error) -> None:
-        if self._export_dialog is not None:
-            self._export_dialog.reset()
-            self._export_dialog.deleteLater()
-            self._export_dialog = None
+        dlg, self._export_dialog = self._export_dialog, None
+        if dlg is not None:
+            dlg.canceled.disconnect()
+            dlg.reset()
+            dlg.deleteLater()
+        self._export_cancel = None
         req = self._export_request
+        if result is None and not error:
+            self.statusBar().showMessage("Export cancelled.")
+            return
         if error:
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Critical)
@@ -774,6 +795,12 @@ def _infer_job(rec, targets, stale, report):
     return len(targets)
 
 
-def _export_job(f, req, export_selections, stale, report):
-    return export_selections(f, req.selections, req.channels, req.path, fmt=req.fmt, decimal=req.decimal,
-                             header=req.header, units=req.units, comments=req.comments)
+def _export_job(f, req, export_selections, cancel, stale, report):
+    """The export; ``None`` when it was cancelled (the Cancel button, or the window closing)."""
+    from ..export import ExportCancelled
+    try:
+        return export_selections(f, req.selections, req.channels, req.path, fmt=req.fmt, decimal=req.decimal,
+                                 header=req.header, units=req.units, comments=req.comments,
+                                 stale=lambda: cancel.is_set() or stale(), progress=lambda done, total: report((done, total)))
+    except ExportCancelled:
+        return None

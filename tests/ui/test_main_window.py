@@ -7,6 +7,8 @@ import pytest
 
 from adichtion import AdichtFile
 from adichtion.export import read_labchart_text
+from PySide6.QtWidgets import QMessageBox, QPushButton
+
 from adichtion.ui.export_dialog import ExportDialog, ExportRequest
 from helpers import pump, wait_until
 
@@ -109,6 +111,68 @@ def test_exports_write_the_selection(qapp, window, synthetic, tmp_path):
     assert len(lines) == 1001 and lines[0].startswith("time_s,")
 
 
+def _slow_export(monkeypatch, gate_after: int):
+    """Chunks of 100 rows, and the worker waits at chunk ``gate_after`` until ``gate`` is set.
+    Returns ``(gate, reached)``: ``reached`` is set when the worker is waiting."""
+    import threading
+    from adichtion import export as ex
+    monkeypatch.setattr(ex, "CHUNK_ROWS", 100)
+    gate, reached, real, calls = threading.Event(), threading.Event(), ex._text_rows, []
+
+    def gated(*a, **k):
+        calls.append(1)
+        if len(calls) == gate_after:
+            reached.set()
+            assert gate.wait(20)
+        return real(*a, **k)
+
+    monkeypatch.setattr(ex, "_text_rows", gated)
+    return gate, reached
+
+
+def test_the_export_shows_progress(qapp, window, synthetic, tmp_path, monkeypatch):
+    window.open_file_sync(synthetic["path"])
+    gate, reached = _slow_export(monkeypatch, 5)
+    path = str(tmp_path / "p.csv")
+    window.run_export(ExportRequest(path=path, fmt="csv", selections=window.timeline.selections(0.0, 10.0), channels=[0, 1],
+                                    scope_label="selection"))
+    assert wait_until(qapp, reached.is_set, timeout=20)
+    assert wait_until(qapp, lambda: window._export_dialog is not None and window._export_dialog.value() > 0, timeout=10)
+    assert "%" in window._export_dialog.labelText() and not os.path.exists(path)      # written under another name until done
+    assert os.path.exists(path + ".part")
+    gate.set()
+    assert wait_until(qapp, lambda: "Exported 10,000 rows" in window.statusBar().currentMessage(), timeout=30)
+    assert window._export_dialog is None and os.path.exists(path) and not os.path.exists(path + ".part")
+
+
+def test_the_export_can_be_cancelled_and_leaves_no_file(qapp, window, synthetic, tmp_path, monkeypatch):
+    window.open_file_sync(synthetic["path"])
+    gate, reached = _slow_export(monkeypatch, 5)
+    path = str(tmp_path / "c.txt")
+    window.run_export(ExportRequest(path=path, fmt="txt", selections=window.timeline.selections(0.0, 10.0), channels=[0, 1],
+                                    scope_label="selection"))
+    assert wait_until(qapp, reached.is_set, timeout=20)
+    window._export_dialog.findChild(QPushButton).click()                     # the Cancel button
+    gate.set()
+    assert wait_until(qapp, lambda: window.statusBar().currentMessage() == "Export cancelled.", timeout=30)
+    assert window._export_dialog is None and not os.path.exists(path) and not os.path.exists(path + ".part")
+    # and the next export works as before
+    window.run_export(ExportRequest(path=path, fmt="txt", selections=window.timeline.selections(0.0, 1.0), channels=[0],
+                                    scope_label="selection"))
+    assert wait_until(qapp, lambda: "Exported 1,000 rows" in window.statusBar().currentMessage(), timeout=30)
+
+
+def test_a_failed_export_still_reports_and_leaves_the_old_file(qapp, window, synthetic, tmp_path, monkeypatch):
+    window.open_file_sync(synthetic["path"])
+    path = tmp_path / "f.csv"
+    path.write_text("old")
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    window.run_export(ExportRequest(path=str(path), fmt="csv", selections=window.timeline.selections(0.0, 1.0), channels=[99],
+                                    scope_label="selection"))
+    assert wait_until(qapp, lambda: window.statusBar().currentMessage() == "Export failed.", timeout=30)
+    assert path.read_text() == "old" and not os.path.exists(str(path) + ".part")
+
+
 def test_mac_settings_fill_the_definitions(qapp, window, synthetic, tmp_path):
     from test_macchart import settings_blob, write_res_file
     window.open_file_sync(synthetic["path"])
@@ -165,7 +229,7 @@ def test_open_dialog_filter_decides_what_the_file_is_for(qapp, window, synthetic
 
 
 def test_settings_file_without_an_open_recording_asks_for_one(qapp, window, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox, QPushButton
     shown = []
     monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: shown.append(a[1])))
     window.load_mac_settings("/x/settings")
@@ -173,7 +237,7 @@ def test_settings_file_without_an_open_recording_asks_for_one(qapp, window, monk
 
 
 def test_open_failure_is_reported_not_raised(qapp, window, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox, QPushButton
     bad = tmp_path / "bad.adicht"
     bad.write_bytes(b"not a labchart file at all" * 100)
     monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
