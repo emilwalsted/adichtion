@@ -67,10 +67,12 @@ CACHE_MIN_BYTES = 256 * 1024 * 1024         # the cache never gets less than thi
 CACHE_MAX_BYTES = 1024 * 1024 * 1024        # ... nor more than this
 CACHE_RAM_FRACTION = 0.25                   # ... and in between a quarter of the memory that is free at open
 
-#: A ``.adicht`` file of at least this many bytes is not read into memory but served as a window on its
-#: memory mapping (``AdichtFile(zero_copy=None)``, the default).  Smaller files are copied: they cost
-#: next to nothing to read, and a copy is stable if the file is changed or locked meanwhile, whereas a
-#: mapping is not (docs/beslutninger.md 2026-10-04 (7)).  ``ADICHTION_ZERO_COPY`` = ``0``/``1`` forces
+#: A ``.adicht`` file of at least this many bytes has its sample stream served as a window on the file's
+#: memory mapping instead of a copy (``AdichtFile(zero_copy=None)``, the default).  Smaller files are
+#: copied: that costs next to nothing, and a copy cannot fault if the file is truncated after opening,
+#: whereas a mapping can.  (The container maps the file whatever the size and keeps it open until
+#: ``close()``, so the Windows lock on rename/delete is not affected by this choice; docs/beslutninger.md
+#: 2026-10-04 (7).)  ``ADICHTION_ZERO_COPY`` = ``0``/``1`` forces
 #: the choice for every file, ``auto`` (or unset) means this size rule; the ``zero_copy`` argument beats both.
 ZERO_COPY_MIN_BYTES = 64 * 1024 * 1024
 
@@ -501,6 +503,16 @@ class AdichtFile:
         return None
 
     # -- decoding ------------------------------------------------------------
+    def _check_not_truncated(self) -> None:
+        """A window on a mapping faults (SIGBUS, access violation) if the file is cut short after it was
+        opened; one ``fstat`` per decoded block turns the detectable cases into an ordinary error."""
+        try:
+            size = os.fstat(self._container._fh.fileno()).st_size
+        except (OSError, ValueError):
+            return
+        if size < len(self._container.data):
+            raise AdichtFormatError(f"{self.path!r} was shortened after it was opened; open it again")
+
     def _body(self, sb: SubBlock) -> memoryview:
         return memoryview(self._blocks)[sb.body_offset: sb.body_offset + sb.body_size]
 
@@ -519,6 +531,8 @@ class AdichtFile:
         hit = self._cache.get(key)
         if hit is not None:
             return hit
+        if self.zero_copy:
+            self._check_not_truncated()
         if self.mac is not None:
             data = decode_mac_block(memoryview(self._blocks)[mb.offset: mb.offset + mb.length], mb)
         else:

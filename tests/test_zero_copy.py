@@ -149,7 +149,7 @@ def test_a_failure_while_walking_leaves_no_view_behind(synthetic, monkeypatch):
     monkeypatch.setattr(file_mod, "AdichtContainer", Spy)
     monkeypatch.setattr(file_mod, "_subblocks_from_map",
                         lambda blocks, chart: file_mod.iter_subblocks(bytes(blocks)[8:]))
-    with pytest.raises(Exception):
+    with pytest.raises(file_mod.BlocksFormatError):
         AdichtFile(synthetic["path"], zero_copy=True)
     gc.collect()
     assert seen and seen[0].data.closed
@@ -161,6 +161,8 @@ def test_close_with_a_stray_view_does_not_raise_and_use_after_close_is_an_error(
     f.close()                                   # a view that outlives close() must not make close() fail
     del stray
     gc.collect()
+    f._container.close()                        # the mapping really goes once the stray slice is gone
+    assert f._container.data.closed
     with pytest.raises(ValueError):
         f.decode_block(0, 1, 1)                 # never a crash on a closed mapping
     f.close()                                   # and closing twice is harmless
@@ -170,3 +172,33 @@ def test_mac_documents_are_read_into_memory_whatever_is_asked(mac):
     with AdichtFile(mac["path"], zero_copy=True) as f:
         assert f.kind == "mac" and f.zero_copy is False and isinstance(f._blocks, bytes)
         assert len(f.decode_block(0, 0, 0)) > 0
+
+
+def test_a_file_cut_short_after_opening_is_an_error_not_a_crash(synthetic, tmp_path):
+    import shutil
+    path = tmp_path / "cut.adicht"
+    shutil.copy(synthetic["path"], path)
+    f = AdichtFile(str(path), zero_copy=True, cache_blocks=1)
+    try:
+        f.decode_block(0, 0, 0)
+        with open(path, "r+b") as fh:
+            fh.truncate(os.path.getsize(path) // 2)
+        with pytest.raises(file_mod.AdichtFormatError, match="shortened"):
+            f.decode_block(0, 1, 1)
+    finally:
+        f.close()
+
+
+def test_block_table_and_overview_agree_between_copy_and_view(synthetic):
+    with AdichtFile(synthetic["path"], zero_copy=False) as a, AdichtFile(synthetic["path"], zero_copy=True) as b:
+        for ch in range(a.n_channels):
+            ta, tb = a.block_table(ch, fill=True), b.block_table(ch, fill=True)
+            assert np.array_equal(ta.mn, tb.mn, equal_nan=True) and np.array_equal(ta.mx, tb.mx, equal_nan=True)
+
+
+def test_an_empty_stream_has_no_view(synthetic):
+    with AdichtContainer(synthetic["path"]) as c:
+        from adichtion.container import Entry
+        assert c.stream_view(Entry("x", 0, 0, 0, 2, 2)) is None
+        e = c.find_stream("Blocks_0")
+        assert c.stream_view(Entry("x", e.first, e.size + 10 ** 9, e.last, 2, 2)) is None
