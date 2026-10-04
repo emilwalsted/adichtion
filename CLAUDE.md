@@ -45,6 +45,12 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    standalone). Both are analysis helpers the UI may call; neither changes
    what `AdichtFile` returns.
 
+   `perf.py` (the `ADICHTION_PERF` timeline: numbers-only events, aggregates, Qt-free) and
+   `bench.py` (`adichtion bench`) measure what the layers above cost; they change nothing
+   that `AdichtFile` returns (`AdichtFile.cache_stats()` and `clear_cache()` are the only
+   additions to it). `bench.py` reuses the Qt-free `ui/lod.py` and `ui/timeline.py` so it
+   times exactly what the plots run; `ui/__init__.py` imports no Qt, so that stays Qt-free.
+
 7. `ui/` — the PySide6/pyqtgraph viewer (`adichtion` without a subcommand). It talks to layers
    4–6 only; never put Qt imports below it. `src/adichtion/ui/CLAUDE.md` has
    its structure and the Qt rules that were learnt the hard way.
@@ -75,6 +81,13 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 - Work language with Emil is Danish; code, docs and UI are English.
 
 ## Working notes
+
+- **Timing is numbers only** (`perf.py`, `bench.py`): an event is a code-literal name plus
+  numeric fields, and `perf.event` raises on anything else, so file names, titles, comment
+  texts and dates cannot reach a log or a bench report. `adichtion bench` prints no path.
+  Without `ADICHTION_PERF` no timer exists and `perf.span` returns one shared no-op object.
+  When measuring the GUI from a script never run a tight `processEvents` loop without a
+  `sleep` (a GIL convoy inflates every time tenfold); `tests/ui/helpers.py` shows the pattern.
 
 - LabChart's "block" = this library's `Record` (following the ADI SDK); the
   16000-tick storage chunks are "blocks" here. Don't mix the two in the UI.

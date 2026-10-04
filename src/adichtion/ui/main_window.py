@@ -12,7 +12,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMenu, QMessageBox, QProgressDialog,
                                QSplitter, QToolBar, QWidget, QVBoxLayout)
 
-from .. import __version__
+from .. import __version__, perf
 from ..file import AdichtFile
 from . import icons, lod, theme
 from .channel_dialog import ChannelDialog
@@ -110,6 +110,11 @@ class MainWindow(QMainWindow):
         self.infer_runner.progress.connect(self._on_progress)
         self.infer_runner.done.connect(self._on_done)
         self.infer_runner.start()
+        self._stall = None                           # the GUI-stall monitor exists only with ADICHTION_PERF (adichtion.perf)
+        if perf.enabled():
+            from .perfmon import StallMonitor
+            self._stall = StallMonitor(self)
+            self._stall.start()
         self.info.blockActivated.connect(self.go_to_block)
         self.info.blockFitRequested.connect(self.fit_block)
         self.info.commentActivated.connect(self.go_to_time)
@@ -331,7 +336,8 @@ class MainWindow(QMainWindow):
     def open_file(self, path: str) -> bool:
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            f = AdichtFile(path)
+            with perf.span("open", bytes=os.path.getsize(path) if perf.enabled() else 0):
+                f = AdichtFile(path)
         except Exception:                           # noqa: BLE001 - reported to the user
             QApplication.restoreOverrideCursor()
             tb = traceback.format_exc()
@@ -353,12 +359,17 @@ class MainWindow(QMainWindow):
     def _install_file(self, f: Optional[AdichtFile]) -> None:
         old = self.file
         self.file = f
-        self.timeline = Timeline(f) if f is not None else None
+        with perf.span("install.timeline"):
+            self.timeline = Timeline(f) if f is not None else None
         self.definitions = {}
-        self.stack.set_file(f)
-        self.info.set_file(f, self.timeline)
-        self.data.set_file(f, self.timeline)
-        self.video.set_file(f, self.timeline)
+        with perf.span("install.stack"):
+            self.stack.set_file(f)
+        with perf.span("install.info"):
+            self.info.set_file(f, self.timeline)
+        with perf.span("install.data"):
+            self.data.set_file(f, self.timeline)
+        with perf.span("install.video"):
+            self.video.set_file(f, self.timeline)
         self.video_box.setVisible(self.video.has_videos)
         self.readout.setText("")
         self.setWindowTitle(f"adichtion {__version__}" + (f" – {os.path.basename(f.path)}" if f else ""))
@@ -637,6 +648,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev) -> None:
         try:
+            if self._stall is not None:
+                self._stall.stop()
+                try:
+                    perf.print_summary(self.file.cache_stats() if self.file is not None else None)
+                except Exception:                  # noqa: BLE001 - timing must never keep the window from closing
+                    pass
             self.stack.close()
             self.runner.stop()
             self.infer_runner.stop()

@@ -28,6 +28,9 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - `main_window.py` — menus, toolbar, the three panels (`info_panel`, `data_panel`,
   `video_panel`), dialogs (`channel_dialog`, `export_dialog`), inference and export
   jobs on a second `JobRunner`.
+- `perfmon.py` — `StallMonitor`, the 5 ms `QTimer` that measures the GUI thread's stalls; created by
+  `MainWindow` only when `ADICHTION_PERF` is set (`adichtion.perf`, which also times `open`, `install.*`,
+  `render.coarse`, `render.detail` and the plots' repaints).
 - `workers.py` — `JobRunner` (one thread, coalesced jobs per kind, `stale()`/`report()`)
   and `FrameGrabber` (OpenCV, latest request wins).
 

@@ -70,12 +70,17 @@ class _BlockCache:
         self.capacity = capacity
         self._d: "OrderedDict[int, np.ndarray]" = OrderedDict()
         self._lock = threading.Lock()
+        self.hits = 0                   # lookups answered from the cache ...
+        self.misses = 0                 # ... and the ones that had to decode a block (counted under the lock)
 
     def get(self, key: int) -> Optional[np.ndarray]:
         with self._lock:
             v = self._d.get(key)
             if v is not None:
                 self._d.move_to_end(key)
+                self.hits += 1
+            else:
+                self.misses += 1
             return v
 
     def put(self, key: int, value: np.ndarray) -> None:
@@ -170,6 +175,19 @@ class AdichtFile:
             raise
 
     # -- lifecycle -----------------------------------------------------------
+    def cache_stats(self) -> tuple[int, int]:
+        """``(hits, misses)`` of the decoded-block cache since the file was opened (or the
+        counters last reset by :meth:`clear_cache`); a miss is one block decoded."""
+        return self._cache.hits, self._cache.misses
+
+    def clear_cache(self, reset_counters: bool = True) -> None:
+        """Forget every decoded block and every filled min/max envelope (a cold start, for
+        ``adichtion bench``); the counters of :meth:`cache_stats` restart too."""
+        self._cache.clear()
+        self._envelopes.clear()
+        if reset_counters:
+            self._cache.hits = self._cache.misses = 0
+
     def close(self) -> None:
         self._cache.clear()
         self._envelopes.clear()

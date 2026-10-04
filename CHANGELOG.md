@@ -6,6 +6,16 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Built-in timing for finding what is slow on a real recording: start the app with
+  `ADICHTION_PERF=1` and it writes a timeline to stderr (opening the file, each stage of
+  installing it, every coarse pass, every detail pass in the worker thread with the blocks
+  decoded and the cache hits, slow frames, GUI stalls, and a summary when the window closes);
+  `ADICHTION_PERF_FILE=path` also writes it as JSON lines. Off by default: no extra timer.
+- `adichtion bench FILE` times the same operations without the GUI (opening, the whole-file
+  range, curve passes for the whole file, 10 minutes, 60 seconds and 5 seconds, coarse and
+  detailed, cold and warm, decoding per block, cursor look-ups, and with `--export` the
+  export of a 60 second selection), as a table or `--json`. Both report only numbers: no file
+  names, titles, comment texts or dates.
 - The app icon and logo ("a-trace": one ink trace on chart-recorder paper writing an "a"
   that runs on into a selected spike), as the window and dock icon, the installer icons on
   all three platforms, the About dialog and the top of the README.

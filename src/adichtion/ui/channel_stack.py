@@ -23,6 +23,9 @@ from PySide6.QtGui import QBrush, QColor, QFontMetrics, QPen
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QScrollArea, QScrollBar, QSizePolicy, QSplitter, QToolButton, QVBoxLayout,
                                QWidget)
 
+import time
+
+from .. import perf
 from ..file import AdichtFile
 from . import lod, theme
 from .plot_axis import MinPitchAxis
@@ -100,6 +103,22 @@ class ChannelPlotWidget(pg.PlotWidget):
     """A PlotWidget whose sideways wheel (a trackpad swipe, a tilt wheel) pans the time axis."""
 
     PAN_PER_NOTCH = 0.1                         # fraction of the view per 120 units of angle delta
+    FRAME_BURST_S = 0.5                         # repaints further apart than this are separate bursts, not frames
+    SLOW_FRAME_MS = 40.0                        # frames (gaps) at least this long are printed, all are aggregated
+
+    def paintEvent(self, ev):
+        if not perf.enabled():
+            super().paintEvent(ev)
+            return
+        t = time.perf_counter()
+        super().paintEvent(ev)
+        done = time.perf_counter()
+        last = getattr(self, "_perf_last_paint", None)
+        self._perf_last_paint = t
+        perf.event("frame.paint", (done - t) * 1000.0, quiet=(done - t) * 1000.0 < self.SLOW_FRAME_MS)
+        if last is not None and t - last < self.FRAME_BURST_S:       # time between two repaints within one pan/zoom
+            gap = (t - last) * 1000.0
+            perf.event("frame.gap", gap, quiet=gap < self.SLOW_FRAME_MS)
 
     def wheelEvent(self, ev):
         d = ev.angleDelta()
@@ -594,7 +613,8 @@ class ChannelStack(QWidget):
             p.vb.sigYRangeChanged.connect(self._schedule_axis_width)
             p.set_axis_width(self._axis_width)
             p.markers.set_positions(self.timeline.boundaries, [m.file_time_s for m in self.timeline.comments])
-            r = lod.global_range(f, c)
+            with perf.span("stack.global_range", channel=c):
+                r = lod.global_range(f, c)
             if r is not None:
                 p.set_y_range(*r)
             elif f.has_data(c):
@@ -944,13 +964,15 @@ class ChannelStack(QWidget):
         width = max(200, int(m.vb.width())) if m is not None else 800
         f, tl = self.file, self.timeline
         pending = []
-        for c in self._visible:
-            p = self.plots[c]
-            if p.detail_covers(x0, x1, width):
-                continue
-            x, y, level = lod.curve_for_range(f, tl, c, x0, x1, width, coarse=True)
-            p.set_curve(x, y, level, None)
-            pending.append(c)
+        with perf.span("render.coarse", buckets=width) as sp:
+            for c in self._visible:
+                p = self.plots[c]
+                if p.detail_covers(x0, x1, width):
+                    continue
+                x, y, level = lod.curve_for_range(f, tl, c, x0, x1, width, coarse=True)
+                p.set_curve(x, y, level, None)
+                pending.append(c)
+            sp.set(channels=len(pending), span_s=float(x1 - x0))
         if self._auto_zoom:
             self.zoom_to_fit()                  # the move is over (the render is debounced): fit what is drawn now
         if not pending:
@@ -1023,7 +1045,13 @@ def _render_job(f: AdichtFile, tl: Timeline, channels: list[int], a: float, b: f
     for c in channels:
         if stale():
             return None
-        x, y, level = lod.curve_for_range(f, tl, c, a, b, n, coarse=False, stale=stale)
+        with perf.span("render.detail", channel=c, buckets=int(n), span_s=float(b - a)) as sp:
+            # the counters are the file's, so the delta also holds anything the GUI thread decoded meanwhile
+            h0, m0 = f.cache_stats() if perf.enabled() else (0, 0)
+            x, y, level = lod.curve_for_range(f, tl, c, a, b, n, coarse=False, stale=stale)
+            if perf.enabled():
+                h1, m1 = f.cache_stats()
+                sp.set(decoded_blocks=m1 - m0, cache_hits=h1 - h0, level=level, points=len(x))
         if stale():
             return None
         report((c, a, b, x, y, level, n))

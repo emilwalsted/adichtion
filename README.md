@@ -152,6 +152,7 @@ adichtion export FILE -o all.xlsx --all-records      # every block; format from 
 adichtion check FILE                      decode every block and compare with the min/max LabChart stored
 adichtion infer FILE --record 14          recover the definitions of the calculated channels from the data
 adichtion macsettings MACFILE             channel settings of a LabChart 7 for Mac document or settings file
+adichtion bench FILE [--export [SECONDS]] time open, curve passes, decoding, cursor look-ups and an export (numbers only; --json)
 adichtion verify FILE export.txt --record 24 --channels 1,2,3 [--fit]   # compare with a LabChart text export
 adichtion tree FILE                       container storages and streams
 adichtion strings FILE                    tagged strings of the Map stream (debugging)
