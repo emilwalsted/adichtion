@@ -103,8 +103,8 @@ def test_playback_moves_the_cursor_and_the_panels(qapp, window, video_document):
     # instead of assuming the pump took 0.6 s (a slow CI runner overran it by 30 %).
     elapsed = time.monotonic() - started
     assert 0.3 <= t1 - 5.0 <= elapsed + 0.05 and t1 - 5.0 >= elapsed - 0.15
-    assert window.readout.text().startswith("Block 1 · 5.")
-    assert window.data.table.item(0, 0) is not None and window.data.where.text().startswith("Cursor: Block 1 · 5.")
+    assert window.readout.text().startswith(f"Block 1 · {int(t1)}.")             # (not a fixed 5.: a slow run crosses a second)
+    assert window.data.table.item(0, 0) is not None and window.data.where.text().startswith(f"Cursor: Block 1 · {int(t1)}.")
     assert "playing 1×" in v.caption.text()
     v.pause()
     assert not v.playing and window.act_play.text() == "Play video"

@@ -403,7 +403,8 @@ class MainWindow(QMainWindow):
         self._open_job = 0
         self._close_open_dialog()
         if error:
-            self.statusBar().showMessage("Ready.")
+            self.statusBar().showMessage("Could not open the file." if self.file is None else
+                                         f"Could not open the file; {os.path.basename(self.file.path)} stays open.")
             self._report_open_error(self._open_path, error)
             return
         self._finish_open(self._open_path, result)
@@ -470,6 +471,9 @@ class MainWindow(QMainWindow):
         self.info.set_definition(channel, text)
 
     def load_mac_settings(self, path: Optional[str] = None) -> None:
+        if self._open_job:                          # they would land on the file that is about to be replaced
+            self.statusBar().showMessage("Wait for the file to open first.")
+            return
         if self.file is None:
             QMessageBox.information(self, "Open a recording first",
                                     "Settings files fill in the calculated channels of a file that is already open. "
@@ -619,7 +623,7 @@ class MainWindow(QMainWindow):
     # -- export --------------------------------------------------------------------------
     def export_dialog(self, default_scope: Optional[str] = None) -> None:
         """The export dialog; ``default_scope`` ("selection" or "file") presets what to export."""
-        if self.file is None or self.timeline is None:
+        if self.file is None or self.timeline is None or self._open_job:         # a file is being opened: wait for it
             return
         if not isinstance(default_scope, str):              # a QAction's ``triggered(checked)`` lands here
             default_scope = None

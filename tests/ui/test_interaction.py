@@ -410,6 +410,7 @@ def test_the_start_dialog_lists_the_recent_files(qapp, window, synthetic, tmp_pa
 
     monkeypatch.setattr(StartupDialog, "exec", fake_exec)
     window.open_startup()
+    assert wait_until(qapp, lambda: window.file is not None, timeout=10)         # the file opens on a worker thread
     assert shown and window.file is not None and window.file.path == synthetic["path"]
     # "Open a file…" goes on to the file dialog
     asked = []

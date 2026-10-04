@@ -2,6 +2,20 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-04 (6) — Filen åbnes på en baggrundstråd (P5)
+
+`MainWindow.open_file` startede før `AdichtFile(path)` i GUI-tråden (0,45 s for 362 MB, flere sekunder for 2 GB).
+Nu åbnes filen på en egen `JobRunner`-tråd og installeres på GUI-tråden, når den er klar.
+
+- **Nyeste åbning vinder** (frem for at afvise): en macOS FileOpen eller et dobbeltklik under en åbning må ikke
+  gå tabt. Resultatet af en annulleret, erstattet eller sen åbning (vinduet lukkes) lukkes ubrugt.
+- **Dialogen** er en vindues-modal `QProgressDialog` med Annullér, vist efter 300 ms; indtil da er statuslinjen
+  eneste tegn. Eksport og indlæsning af Mac-indstillinger venter, mens en åbning kører.
+- **`open_file` returnerer True = startet.** `open_file_sync` er den gamle synkrone vej til tests og `bench --pan`.
+- Den annullerede åbnings tråd kan ikke afbrydes midt i konstruktøren; den løber færdig og lukkes.
+- Træk-og-slip findes ikke i viseren (ingen `dropEvent`), så der var ingen sådan vej at samle.
+- Ikke målt på rigtige filer: effekten på en stor fil er Emils at bekræfte på Mac'en.
+
 ## 2026-10-04 (5) — Blokindeks som flade tabeller og vektoriseret hurtigpas (P3)
 
 Reviewet målte, at `lod.curve_for_range`, `global_range` og åbningen af `ChannelStack` gennemløb alle

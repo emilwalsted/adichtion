@@ -30,6 +30,11 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - `main_window.py` — menus, toolbar, the three panels (`info_panel`, `data_panel`,
   `video_panel`), dialogs (`channel_dialog`, `export_dialog`), inference and export
   jobs on a second `JobRunner`.
+- **Opening a file is asynchronous** (`MainWindow.open_file`): `open_runner` (a third `JobRunner`) runs `_open_job`
+  (`AdichtFile(path)`, which touches no Qt); `_on_open_done` installs the file on the GUI thread. `open_file`
+  returning True means "started", not "opened". The newest request wins; a cancelled, replaced or late (window
+  closing) result is closed unused; `close_file` cancels a pending open; Export and Mac settings wait while one runs.
+  Tests and `bench --pan` use `open_file_sync` (the old synchronous path).
 - `perfmon.py` — `StallMonitor`, the 5 ms `QTimer` that measures the GUI thread's stalls; created by
   `MainWindow` only when `ADICHTION_PERF` is set (`adichtion.perf`, which also times `open`, `install.*`,
   `render.coarse`, `render.detail` and the plots' repaints).

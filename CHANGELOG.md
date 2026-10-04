@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Opening a file no longer freezes the window: it is read on a worker thread, a cancellable
+  "Opening ..." dialog appears when it takes more than a moment, and a second open replaces
+  the one still running. A file that cannot be read gives the same error box as before.
+
 ### Added
 - Built-in timing for finding what is slow on a real recording: start the app with
   `ADICHTION_PERF=1` and it writes a timeline to stderr (opening the file, each stage of
