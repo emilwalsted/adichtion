@@ -94,6 +94,10 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - **Lists centre the marker**: a comment or block picked in the file panel calls
   `set_cursor(t, center=True)` (zoom kept, clamped at the file's edges); interval playback keeps
   the selection (`set_cursor(..., keep_selection=True)`, `VideoPanel.play(stop_at=...)`).
+- **Export runs with a progress dialog** (`MainWindow.run_export`): `QProgressDialog` with a Cancel button
+  (`canceled` sets a `threading.Event`; `_export_job` turns it, or the runner's `stale()`, into `ExportCancelled` and
+  returns `None`, shown as "Export cancelled."); `report((done, total))` arrives as `progress` and is shown as a percentage.
+  `QProgressDialog.cancel()` does not emit `canceled` (only the button does): tests click the button.
 - **The export dialog remembers** its choices in `QSettings` group `export`; tests point
   `QSettings` at a temp dir (`tests/ui/conftest.py`), never the user's real settings.
 - **One `GraphicsObject` per plot for many lines** (`MarkersItem`, `CursorItem`): they paint

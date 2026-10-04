@@ -138,6 +138,11 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   requirement lists of `pyproject.toml`, a test keeps them equal).
   `tests/test_integration_macdocs.py` finds the documents below
   `ADICHTION_SAMPLES` by their first bytes and pairs them with their exports.
+- **Export writers** (`docs/beslutninger.md` 2026-10-04 (9)): text/CSV are formatted a chunk of rows at a time
+  (`_strings`, `_text_rows`), the output byte-identical to the old per-value writer (kept as `legacy_write_text`
+  in `tests/test_export_fast.py`, the oracle: change both or neither); xlsx streams `<sheetData>` into openpyxl's own
+  empty-workbook skeleton (`write_xlsx(fast=False)` is the cell-by-cell fallback and oracle). An export writes
+  `<target>.part` and renames it when complete; `export_selections(progress=, stale=)` raises `ExportCancelled`.
 - Export of channels with different rates: one table at the tick rate, slower
   channels up-sampled by LabChart's own rule (`Record.read_ticks`,
   `decimate.upsample_like_labchart`: linear, whole counts half away from zero,

@@ -21,12 +21,25 @@ chosen have different rates (the slow inputs of a LabChart for Mac document),
 the table has a row per tick and the slower channels are up-sampled as
 LabChart's own export does (:meth:`adichtion.Record.read_ticks`);
 :func:`upsampling_notice` says so in a sentence for the user.
+
+Text and CSV are formatted a block of rows at a time (one ``%``-format over the whole
+block, not one call per value) and Excel sheets are streamed as XML; both give exactly the
+bytes (text) and cell values (Excel) the value-by-value writers gave.  An export writes to
+``<name>.part`` next to the target and renames it when it is complete, so a cancelled or
+failed export leaves no half-written file (and an existing file of that name is untouched).
+:func:`export_selections` takes ``progress(rows_done, rows_total)`` and ``stale()`` (return
+True to cancel: :class:`ExportCancelled` is raised) for the viewer's progress dialog.
 """
 from __future__ import annotations
 
+import contextlib
 import io
+import math
 import os
-from typing import Iterable, Optional, Sequence, TextIO
+import re
+import zipfile
+from bisect import bisect_left
+from typing import Callable, Iterable, Iterator, Optional, Sequence, TextIO
 
 import numpy as np
 
@@ -34,6 +47,13 @@ from .file import AdichtFile, Record, Selection
 
 #: Rows an Excel worksheet can hold (2007+ format); the xlsx writer refuses more.
 XLSX_MAX_ROWS = 1_048_576
+
+#: Rows formatted (and checked for a cancel request) at a time.
+CHUNK_ROWS = 50_000
+
+
+class ExportCancelled(Exception):
+    """The export was cancelled (``stale()`` returned True); nothing was written to the target."""
 
 
 def _excel_datetime(dt) -> float:
@@ -124,7 +144,7 @@ def table_rows(record: Record, selection: Selection, channels: Sequence[int]) ->
     start, stop = max(0, selection.start), min(selection.stop, record.ticks)
     if up:
         return max(0, stop - start)
-    return record.tick_to_sample(stop, channels[0]) - record.tick_to_sample(start, channels[0])
+    return max(0, record.tick_to_sample(stop, channels[0]) - record.tick_to_sample(start, channels[0]))
 
 
 def _comment_rows(record: Record, selection: Selection, row_of_tick) -> dict[int, list[str]]:
@@ -137,11 +157,83 @@ def _comment_rows(record: Record, selection: Selection, row_of_tick) -> dict[int
     return by_row
 
 
+class _Progress:
+    """The rows written so far across all tables of one export, its cancel check and its callback."""
+
+    def __init__(self, total: int, stale: Optional[Callable[[], bool]] = None,
+                 progress: Optional[Callable[[int, int], None]] = None):
+        self.total, self.done = total, 0
+        self._stale, self._progress = stale, progress
+
+    def check(self) -> None:
+        if self._stale is not None and self._stale():
+            raise ExportCancelled("export cancelled")
+
+    def advance(self, rows: int) -> None:
+        self.done += rows
+        if self._progress is not None:
+            self._progress(self.done, self.total)
+
+
+@contextlib.contextmanager
+def _partial_file(path: str | os.PathLike) -> Iterator[str]:
+    """The path to write an export to: ``<path>.part``, renamed over ``path`` when the block
+    finishes and removed when it raises (a cancelled or failed export leaves no half-written file
+    and does not touch an existing one).  A target that exists but is not a regular file (a
+    device, a pipe) is written to directly."""
+    real = os.path.realpath(os.fspath(path))
+    if os.path.exists(real) and not os.path.isfile(real):
+        yield real
+        return
+    tmp = real + ".part"
+    try:
+        yield tmp
+        os.replace(tmp, real)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
+def _strings(values: np.ndarray, spec: str, repeats: bool = True) -> np.ndarray:
+    """``spec % v`` for every value, as an object array of ``str``.  The values of a recording are
+    ADC counts times a scale, so a block of rows holds far fewer distinct values than rows: with
+    ``repeats`` each distinct bit pattern (not each distinct value: ``-0.0`` keeps its sign) is
+    formatted once.  The time column never repeats and passes ``repeats=False``."""
+    values = np.ascontiguousarray(values, dtype=np.float64)
+    text = np.empty(len(values), dtype=object)
+    if repeats:
+        uniq, inverse = np.unique(values.view(np.int64), return_inverse=True)
+        if 2 * len(uniq) <= len(values):
+            text = np.empty(len(uniq), dtype=object)
+            text[:] = list(map(spec.__mod__, uniq.view(np.float64).tolist()))
+            return text[inverse.reshape(-1)]
+    text[:] = list(map(spec.__mod__, values.tolist()))
+    return text
+
+
+def _text_rows(t: np.ndarray, cols: Sequence[np.ndarray], lo: int, hi: int, prefix: str, sep: str,
+               decimal: str) -> str:
+    """Rows ``[lo, hi)`` of a table as text, every value as ``%.7g``: the values are formatted
+    column by column (:func:`_strings`) and the rows put together by one ``%`` over the whole
+    block, which is what makes this several times faster than a call per value (and the same
+    characters)."""
+    k = 1 + len(cols)
+    cells = np.empty((hi - lo, k), dtype=object)
+    cells[:, 0] = _strings(t[lo:hi], "%.7g", repeats=False)
+    for j, col in enumerate(cols):
+        cells[:, j + 1] = _strings(col[lo:hi], "%.7g")
+    row = prefix + sep.join(["%s"] * k) + "\n"
+    text = (row * (hi - lo)) % tuple(cells.ravel().tolist())
+    return text if decimal == "." else text.replace(".", decimal)
+
+
 def write_text(record: Record, selection: Selection, channels: Sequence[int], out: TextIO, *,
                fmt: str = "txt", header: bool = True, decimal: str = ".", units: bool = True,
-               comments: bool = True, block_column: bool = False) -> int:
+               comments: bool = True, block_column: bool = False, job: Optional[_Progress] = None) -> int:
     """Write the selection to ``out``.  Returns the number of data rows written.
-    ``block_column`` (CSV only) prefixes every row with the 1-based record number."""
+    ``block_column`` (CSV only) prefixes every row with the 1-based record number.
+    (``job`` is :func:`export_selections`' progress and cancel plumbing.)"""
     f = record.file
     channels = list(channels)
     if not channels:
@@ -163,23 +255,31 @@ def write_text(record: Record, selection: Selection, channels: Sequence[int], ou
                   + ",".join(f"{ci.title} [{record.value_label(c)}]".replace(",", " ") for ci, c in zip(ch_infos, channels))
                   + (",comment" if comments else "") + "\n")
     by_row = _comment_rows(record, selection, row_of_tick) if comments else {}
+    commented = sorted(by_row)
     prefix = f"{record.index + 1}," if (block_column and fmt == "csv") else ""
-    buf = io.StringIO()
-    for i in range(n):
-        parts = [_fmt(t[i], decimal)] + [_fmt(float(col[i]), decimal) for col in cols]
-        if i in by_row:
-            text = " | ".join(by_row[i])
-            parts.append("#* " + text if fmt == "txt" else text.replace(",", ";"))
-        buf.write(prefix + sep.join(parts) + "\n")
-        if i % 50000 == 49999:
-            out.write(buf.getvalue())
-            buf = io.StringIO()
-    out.write(buf.getvalue())
+    lo = 0
+    while lo < n:
+        if job is not None:
+            job.check()
+        hi = min(lo + CHUNK_ROWS, n)
+        pos = lo
+        for r in commented[bisect_left(commented, lo):bisect_left(commented, hi)]:
+            if r > pos:
+                out.write(_text_rows(t, cols, pos, r, prefix, sep, decimal))
+            text = " | ".join(by_row[r])
+            out.write(_text_rows(t, cols, r, r + 1, prefix, sep, decimal)[:-1] + sep
+                      + ("#* " + text if fmt == "txt" else text.replace(",", ";")) + "\n")
+            pos = r + 1
+        if pos < hi:
+            out.write(_text_rows(t, cols, pos, hi, prefix, sep, decimal))
+        if job is not None:
+            job.advance(hi - lo)
+        lo = hi
     return n
 
 
 def export_file(record: Record, selection: Selection, channels: Sequence[int], path: str | os.PathLike, **kw) -> int:
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with _partial_file(path) as tmp, open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         return write_text(record, selection, channels, fh, **kw)
 
 
@@ -189,7 +289,9 @@ def whole_file(f: AdichtFile) -> list[Selection]:
 
 
 def export_selections(f: AdichtFile, selections: Sequence[Selection], channels: Sequence[int],
-                      path: str | os.PathLike, fmt: str = "txt", **kw) -> int:
+                      path: str | os.PathLike, fmt: str = "txt", *,
+                      stale: Optional[Callable[[], bool]] = None,
+                      progress: Optional[Callable[[int, int], None]] = None, **kw) -> int:
     """Export several selections (of one or more records) into one file.
 
     ``fmt`` is ``"txt"``, ``"csv"`` or ``"xlsx"``; the keyword arguments are those of
@@ -197,31 +299,175 @@ def export_selections(f: AdichtFile, selections: Sequence[Selection], channels: 
     the number of data rows written.  Text and CSV exports of several records repeat
     the header per record (txt) or carry a ``block`` column (csv), as described in
     the module docstring.
+
+    ``progress(rows_done, rows_total)`` is called after every block of rows, and
+    ``stale()`` returning True cancels the export: :class:`ExportCancelled` is raised and
+    the target is left as it was (see the module docstring).
     """
     selections = [s for s in selections if s.stop > s.start]
     if not selections:
         raise ValueError("nothing to export: the selection is empty")
-    if fmt == "xlsx":
-        return write_xlsx(f, selections, channels, path, **kw)
-    if fmt not in ("txt", "csv"):
+    if fmt not in ("txt", "csv", "xlsx"):
         raise ValueError(f"unknown export format {fmt!r}")
+    channels = list(channels)
+    if not channels:
+        raise ValueError("no channels selected")
+    job = _Progress(sum(table_rows(f.records[s.record], s, channels) for s in selections), stale, progress)
+    if fmt == "xlsx":
+        return write_xlsx(f, selections, channels, path, job=job, **kw)
     header = kw.pop("header", True)
     rows = 0
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with _partial_file(path) as tmp, open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         for i, sel in enumerate(selections):
             rec = f.records[sel.record]
             rows += write_text(rec, sel, channels, fh, fmt=fmt,
                                header=header and (fmt == "txt" or i == 0),
-                               block_column=len(selections) > 1, **kw)
+                               block_column=len(selections) > 1, job=job, **kw)
     return rows
 
 
+def get_column_letter(n: int) -> str:
+    """Excel column letters of the 1-based column ``n`` (1 -> A, 27 -> AA)."""
+    out = ""
+    while n:
+        n, r = divmod(n - 1, 26)
+        out = chr(65 + r) + out
+    return out
+
+
+_XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
+_XML_ESCAPED_LOOKALIKE = re.compile(r"_(x[0-9A-Fa-f]{4}_)")
+
+
+def _xml_text(s: str) -> str:
+    """Text for a ``<t>`` element: markup escaped, characters XML cannot carry written as Excel's
+    own ``_xHHHH_`` escape (which Excel turns back into the character), a literal ``_xHHHH_`` protected."""
+    s = _XML_ESCAPED_LOOKALIKE.sub(r"_x005F_\1", s)
+    s = _XML_ILLEGAL.sub(lambda m: f"_x{ord(m.group()):04X}_", s)
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _xlsx_cell(ref: str, v) -> str:
+    """One cell as openpyxl writes it: a number as ``t="n"`` with ``%.16g`` (NaN and infinity an empty ``<v />``),
+    text as an inline string, ``None`` as no cell."""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{_xml_text(v)}</t></is></c>'
+    v = float(v)
+    return f'<c r="{ref}" t="n">' + ("<v>%.16g</v>" % v if math.isfinite(v) else "<v />") + "</c>"
+
+
+def _xlsx_row(number: int, values: Sequence) -> str:
+    return (f'<row r="{number}">' + "".join(_xlsx_cell(f"{get_column_letter(j + 1)}{number}", v)
+                                            for j, v in enumerate(values)) + "</row>")
+
+
+def _xlsx_numbers(block: np.ndarray, first_row: int) -> str:
+    """The rows of ``block`` (all finite) as sheet rows from ``first_row``: one ``%`` over the block."""
+    n, k = block.shape
+    rows = np.arange(first_row, first_row + n)
+    args = np.empty((n, 1 + 2 * k), dtype=object)
+    args[:, 0] = rows
+    for j in range(k):
+        args[:, 1 + 2 * j] = rows
+        args[:, 2 + 2 * j] = _strings(block[:, j], "%.16g")
+    row = '<row r="%d">' + "".join(f'<c r="{get_column_letter(j + 1)}%d" t="n"><v>%s</v></c>' for j in range(k)) + "</row>"
+    return (row * n) % tuple(args.ravel().tolist())
+
+
+def _xlsx_sheet_rows(f: AdichtFile, rec: Record, sel: Selection, channels: Sequence[int], write: Callable[[str], object], *,
+                     header: bool, units: bool, comments: bool, job: Optional[_Progress]) -> int:
+    """The ``<row>`` elements of the sheet of one selection, through ``write``; returns its data rows."""
+    t, cols, rate, row_of_tick = _table(rec, sel, channels, units)
+    n = len(t)
+    first = 1
+    if header:
+        write(_xlsx_row(1, ["Block", sel.record + 1, "start", rec.start_local.strftime("%Y-%m-%d %H:%M:%S"),
+                            "selection start (s)", sel.start / rec.tick_rate_hz, "interval (s)", 1.0 / rate]))
+        write(_xlsx_row(2, ["time_s"] + [f"{f.channel_info(c).title} [{rec.value_label(c)}]" for c in channels]
+                        + (["comment"] if comments else [])))
+        first = 3
+    by_row = _comment_rows(rec, sel, row_of_tick) if comments else {}
+    comment_col = get_column_letter(len(channels) + 2)
+    for lo in range(0, n, CHUNK_ROWS):
+        if job is not None:
+            job.check()
+        hi = min(lo + CHUNK_ROWS, n)
+        block = np.empty((hi - lo, 1 + len(cols)))
+        block[:, 0] = t[lo:hi]
+        for j, col in enumerate(cols):
+            block[:, j + 1] = col[lo:hi]
+        if np.isfinite(block).all():
+            text = _xlsx_numbers(block, first + lo)
+            if by_row:
+                # the rows that carry a comment get the comment cell before their closing tag
+                rows = text.split("</row>")
+                for r in [r for r in by_row if lo <= r < hi]:
+                    rows[r - lo] += _xlsx_cell(f"{comment_col}{first + r}", " | ".join(by_row[r]))
+                text = "</row>".join(rows)
+            write(text)
+        else:
+            vals = block.tolist()
+            write("".join(_xlsx_row(first + lo + i, vals[i] + ([" | ".join(by_row[lo + i])] if comments and lo + i in by_row else []))
+                          for i in range(hi - lo)))
+        if job is not None:
+            job.advance(hi - lo)
+    return n
+
+
+def _xlsx_streamed(f: AdichtFile, sheets: Sequence[tuple[str, Record, Selection]], channels: Sequence[int],
+                   path: str, *, header: bool, units: bool, comments: bool, job: Optional[_Progress]) -> bool:
+    """Write the workbook with the sheet data streamed as XML instead of cell by cell through
+    openpyxl (a dozen times faster).  The package around the sheets (content types, workbook,
+    styles, relationships) is what openpyxl itself writes for an empty workbook of these sheets, and
+    each sheet keeps openpyxl's envelope around its ``<sheetData>``; only the rows are ours.
+    Returns False, having written nothing, when openpyxl's layout is not the one this relies on."""
+    from openpyxl import Workbook
+    wb = Workbook(write_only=True)
+    for name, _rec, _sel in sheets:
+        wb.create_sheet(name)
+    skeleton = io.BytesIO()
+    wb.save(skeleton)
+    zin = zipfile.ZipFile(skeleton)
+    envelopes: dict[str, tuple[str, str]] = {}
+    for i in range(len(sheets)):
+        part = f"xl/worksheets/sheet{i + 1}.xml"
+        try:
+            xml = zin.read(part).decode("utf-8")
+        except KeyError:
+            return False
+        halves = re.split(r"<sheetData\s*/>|<sheetData>\s*</sheetData>", xml)
+        if len(halves) != 2:
+            return False
+        envelopes[part] = (halves[0], halves[1])
+    est_bytes = sum(table_rows(rec, sel, channels) for _n, rec, sel in sheets) * (len(channels) + 2) * 60
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zout:
+        for item in zin.infolist():
+            if item.filename not in envelopes:
+                zout.writestr(item, zin.read(item.filename))
+                continue
+            head, tail = envelopes[item.filename]
+            _name, rec, sel = sheets[int(item.filename[len("xl/worksheets/sheet"):-4]) - 1]
+            zi = zipfile.ZipInfo(item.filename, item.date_time)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            with zout.open(zi, "w", force_zip64=est_bytes > (1 << 30)) as w:
+                def put(text: str, w=w) -> None:
+                    w.write(text.encode("utf-8"))
+                put(head + "<sheetData>")
+                _xlsx_sheet_rows(f, rec, sel, channels, put, header=header, units=units, comments=comments, job=job)
+                put("</sheetData>" + tail)
+    return True
+
+
 def write_xlsx(f: AdichtFile, selections: Sequence[Selection], channels: Sequence[int], path: str | os.PathLike, *,
-               header: bool = True, decimal: str = ".", units: bool = True, comments: bool = True) -> int:
+               header: bool = True, decimal: str = ".", units: bool = True, comments: bool = True,
+               job: Optional[_Progress] = None, fast: bool = True) -> int:
     """Excel workbook with one sheet per selection ("Block 3", or "Block 3 (2)" for a
     second selection of the same record).  Numbers are written as numbers (``decimal``
     is ignored: Excel applies its own locale).  Refuses a selection longer than a
-    worksheet (:data:`XLSX_MAX_ROWS`)."""
+    worksheet (:data:`XLSX_MAX_ROWS`).  ``fast=False`` writes cell by cell through openpyxl
+    (what this function did before the streamed writer; the tests compare the two)."""
     try:
         from openpyxl import Workbook
     except ImportError as exc:                           # pragma: no cover - depends on the environment
@@ -229,34 +475,44 @@ def write_xlsx(f: AdichtFile, selections: Sequence[Selection], channels: Sequenc
     channels = list(channels)
     if not channels:
         raise ValueError("no channels selected")
+    sheets: list[tuple[str, Record, Selection]] = []
+    seen: dict[int, int] = {}
+    rows = 0
     for sel in selections:
         rec = f.records[sel.record]
         n = table_rows(rec, sel, channels)
         if n + 1 > XLSX_MAX_ROWS:
             raise ValueError(f"block {sel.record + 1}: {n} rows do not fit an Excel sheet "
                              f"({XLSX_MAX_ROWS - 1} data rows); export a shorter selection or use text/CSV")
-    wb = Workbook(write_only=True)
-    rows = 0
-    seen: dict[int, int] = {}
-    for sel in selections:
-        rec = f.records[sel.record]
-        t, cols, rate, row_of_tick = _table(rec, sel, channels, units)
         k = seen.get(sel.record, 0) + 1
         seen[sel.record] = k
-        ws = wb.create_sheet(f"Block {sel.record + 1}" + (f" ({k})" if k > 1 else ""))
-        if header:
-            ws.append(["Block", sel.record + 1, "start", rec.start_local.strftime("%Y-%m-%d %H:%M:%S"),
-                       "selection start (s)", sel.start / rec.tick_rate_hz, "interval (s)", 1.0 / rate])
-            ws.append(["time_s"] + [f"{f.channel_info(c).title} [{rec.value_label(c)}]" for c in channels]
-                      + (["comment"] if comments else []))
-        by_row = _comment_rows(rec, sel, row_of_tick) if comments else {}
-        for i in range(len(t)):
-            row = [float(t[i])] + [float(col[i]) for col in cols]
-            if comments:
-                row.append(" | ".join(by_row[i]) if i in by_row else None)
-            ws.append(row)
-        rows += len(t)
-    wb.save(os.fspath(path))
+        sheets.append((f"Block {sel.record + 1}" + (f" ({k})" if k > 1 else ""), rec, sel))
+        rows += n
+    if job is None:
+        job = _Progress(rows)
+    with _partial_file(path) as tmp:
+        if fast and _xlsx_streamed(f, sheets, channels, tmp, header=header, units=units, comments=comments, job=job):
+            return rows
+        wb = Workbook(write_only=True)
+        for name, rec, sel in sheets:
+            t, cols, rate, row_of_tick = _table(rec, sel, channels, units)
+            ws = wb.create_sheet(name)
+            if header:
+                ws.append(["Block", sel.record + 1, "start", rec.start_local.strftime("%Y-%m-%d %H:%M:%S"),
+                           "selection start (s)", sel.start / rec.tick_rate_hz, "interval (s)", 1.0 / rate])
+                ws.append(["time_s"] + [f"{f.channel_info(c).title} [{rec.value_label(c)}]" for c in channels]
+                          + (["comment"] if comments else []))
+            by_row = _comment_rows(rec, sel, row_of_tick) if comments else {}
+            for i in range(len(t)):
+                if i % CHUNK_ROWS == 0:
+                    job.check()
+                row = [float(t[i])] + [float(col[i]) for col in cols]
+                if comments:
+                    row.append(" | ".join(by_row[i]) if i in by_row else None)
+                ws.append(row)
+                if i % CHUNK_ROWS == CHUNK_ROWS - 1 or i == len(t) - 1:
+                    job.advance(i % CHUNK_ROWS + 1)
+        wb.save(tmp)
     return rows
 
 
