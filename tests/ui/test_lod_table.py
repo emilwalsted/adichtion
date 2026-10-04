@@ -213,3 +213,26 @@ def test_a_stale_job_returns_what_it_has(many):
             return len(calls) > 2
         x, y, _ = lod.curve_for_range(f, tl, 0, 100.0, 130.0, 300, coarse=False, stale=stale)
         assert len(x) == len(y)
+
+
+def test_the_strip_makes_block_labels_only_for_the_blocks_it_shows(qapp, window, many):
+    window.open_file(many)
+    strip = window.stack.strip
+    tl = window.stack.timeline
+    n = len(tl.blocks)
+    assert 0 < len(strip._labels) < n and len(strip._shown) == len(strip._labels)
+    # whole file: the shown labels sit side by side without overlapping
+    x0, x1 = strip.vb.viewRange()[0]
+    px = (x1 - x0)
+    shown = sorted(strip._shown)
+    spans = [((tl.blocks[i].start_s - x0) / px * strip.vb.width(), strip._label_width(i)) for i in shown]
+    assert all(a[0] + a[1] <= b[0] + 1e-6 for a, b in zip(spans, spans[1:]))
+    # zoomed to one record: its label, and none of the far-away ones
+    b = tl.blocks[7]
+    window.stack.set_range(b.start_s, b.stop_s)
+    qapp.processEvents()
+    assert 7 in strip._shown and all(abs(i - 7) <= 1 for i in strip._shown)
+    assert strip._labels[7].isVisible() and not any(strip._labels[i].isVisible() for i in strip._labels if i not in strip._shown)
+    # a new file starts without the old labels
+    window.open_file(many)
+    assert 7 not in strip._labels or 7 in strip._shown or not strip._labels[7].isVisible()

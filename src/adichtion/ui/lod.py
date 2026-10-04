@@ -19,6 +19,11 @@ from ..file import AdichtFile
 from .timeline import Timeline
 
 
+# the quick pass answers a whole record from the block index when the record spans no more buckets than this;
+# at most n_buckets / COARSE_WHOLE_BUCKETS such records fit a view, so the ones left to the per-record path are few
+COARSE_WHOLE_BUCKETS = 8
+
+
 def interleave(t: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Min/max buckets as a zig-zag line: each bucket time twice, min then max."""
     x = np.repeat(t, 2)
@@ -111,9 +116,9 @@ def curve_for_range(f: AdichtFile, timeline: Timeline, channel: int, t0: float, 
     ``"samples"``, ``"envelope"`` or ``"coarse"``.  Blocks are separated by a NaN so
     the plot leaves a gap between them.  ``stale()`` may abort a long job early.
 
-    A record whose share of the range is answered by the block index (a whole record in a bucket
-    or two, or a stretch of at least one storage block, see :func:`_from_index`) is handled for
-    all such records at once from the channel's block table; the few others (the records at the
+    A record whose share of the range is answered by the block index (a whole record in a few buckets,
+    or a stretch of at least one storage block, see :func:`_from_index`) is handled for all such
+    records at once from the channel's block table; the few others (the records at the
     ends of the range, or a range inside one record) take :func:`_record_curve` one by one."""
     n_buckets = max(16, int(n_buckets))
     span = max(t1 - t0, 1e-9)
@@ -179,12 +184,13 @@ def _from_index(f: AdichtFile, timeline: Timeline, channel: int, rec: np.ndarray
     """Which of the records the block index answers.  The rule the curve always had: a share of at
     least one storage block (``BLOCK_TICKS``), and for the decoded pass a bucket a quarter block wide
     or more.  Added with the block table: a WHOLE record in one bucket (the record's own min/max, which
-    is exactly what decoding it would give) in both passes, and in two buckets for the quick pass;
-    that keeps a file of thousands of short records off the decoder in the GUI thread."""
+    is exactly what decoding it would give) in both passes, and for the quick pass in up to
+    ``COARSE_WHOLE_BUCKETS`` buckets (each then shows the record's min/max, a first picture the decoded curve
+    replaces); that keeps a file of thousands of short records off the decoder in the GUI thread."""
     covered = stop - start
     whole = (start == 0) & (stop == timeline.block_ticks[rec])
     if coarse:
-        ok = (covered >= BLOCK_TICKS) | (whole & (n_part <= 2))
+        ok = (covered >= BLOCK_TICKS) | (whole & (n_part <= COARSE_WHOLE_BUCKETS))
     else:
         ok = ((covered >= BLOCK_TICKS) & (covered / n_part >= BLOCK_TICKS / 4)) | (whole & (n_part == 1))
     if ok.any():

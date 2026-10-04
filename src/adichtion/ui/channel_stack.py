@@ -501,7 +501,9 @@ class MarkerStrip(pg.PlotWidget):
                                         brush=pg.mkBrush(*pal["comment_flag"]), hoverable=True,
                                         tip=lambda x, y, data: str(data))
         item.addItem(self.flags, ignoreBounds=True)
-        self._labels: list[pg.TextItem] = []          # one per block
+        self._labels: dict[int, pg.TextItem] = {}     # block index -> label, made when it is first shown
+        self._shown: set[int] = set()                 # the blocks whose label is visible
+        self._label_w: dict[int, float] = {}          # digits in the number -> width of a label plus its gap
         self._comment_labels: dict[int, pg.TextItem] = {}
         self._timeline: Optional[Timeline] = None
         self._pal = pal
@@ -512,9 +514,10 @@ class MarkerStrip(pg.PlotWidget):
 
     def set_timeline(self, timeline: Optional[Timeline]) -> None:
         item = self.getPlotItem()
-        for lbl in list(self._labels) + list(self._comment_labels.values()):
+        for lbl in list(self._labels.values()) + list(self._comment_labels.values()):
             item.removeItem(lbl)
-        self._labels = []
+        self._labels = {}
+        self._shown = set()
         self._comment_labels = {}
         self._timeline = timeline
         if timeline is None:
@@ -525,16 +528,29 @@ class MarkerStrip(pg.PlotWidget):
         self.flags.setData(x=[c.file_time_s for c in timeline.comments],
                            y=[0.22] * len(timeline.comments),
                            data=[f"#{c.comment.id}  {c.comment.text}" for c in timeline.comments])
-        for b in timeline.blocks:
-            lbl = pg.TextItem(f"Block {b.number}", color=self._pal["fg"], anchor=(0, 0))
-            lbl.setPos(b.start_s, 1.0)
-            item.addItem(lbl, ignoreBounds=True)
-            self._labels.append(lbl)
-        self._relayout()
+        self._relayout()                # the block labels are made as they come into view, a few dozen at most
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         self._relayout()
+
+    def _block_label(self, i: int) -> pg.TextItem:
+        lbl = self._labels.get(i)
+        if lbl is None:
+            b = self._timeline.blocks[i]
+            lbl = pg.TextItem(f"Block {b.number}", color=self._pal["fg"], anchor=(0, 0))
+            lbl.setPos(b.start_s, 1.0)
+            self.getPlotItem().addItem(lbl, ignoreBounds=True)
+            self._labels[i] = lbl
+        return lbl
+
+    def _label_width(self, i: int) -> float:
+        """Width of block ``i``'s label plus a gap, measured once per number of digits."""
+        digits = len(str(self._timeline.blocks[i].number))
+        w = self._label_w.get(digits)
+        if w is None:
+            w = self._label_w[digits] = self._block_label(i).boundingRect().width() + 6
+        return w
 
     def _relayout(self, *args) -> None:
         with perf.quiet_span("strip.relayout"):
@@ -543,19 +559,31 @@ class MarkerStrip(pg.PlotWidget):
     def _relayout_labels(self) -> None:
         """Hide block labels that would overlap their neighbour; name the comments when few are in view."""
         tl = self.__dict__.get("_timeline")          # resizeEvent fires inside PlotWidget.__init__
-        if tl is None or not self._labels:
+        if tl is None or not tl.blocks:
             return
         x0, x1 = self.vb.viewRange()[0]
         width = max(1.0, float(self.vb.width()))
         px_per_s = width / max(x1 - x0, 1e-9)
+        # the labels that fit side by side, first come first served: walk the visible blocks, and after
+        # a shown label jump straight to the first block that starts clear of it
+        starts = tl.starts
+        i = int(np.searchsorted(starts, x0 - 1 / px_per_s, side="left"))
+        end = int(np.searchsorted(starts, x1, side="right"))
+        shown: set[int] = set()
         last_right = -1e9
-        for b, lbl in zip(tl.blocks, self._labels):
-            px = (b.start_s - x0) * px_per_s
-            w = lbl.boundingRect().width() + 6
-            show = x0 - 1 / px_per_s <= b.start_s <= x1 and px >= last_right
-            lbl.setVisible(show)
-            if show:
-                last_right = px + w
+        while i < end:
+            px = (starts[i] - x0) * px_per_s
+            if px >= last_right:
+                shown.add(i)
+                last_right = px + self._label_width(i)
+                i += 1
+            else:
+                i = max(i + 1, int(np.searchsorted(starts, x0 + last_right / px_per_s, side="left")))
+        for j in self._shown - shown:
+            self._labels[j].setVisible(False)
+        for j in shown:
+            self._block_label(j).setVisible(True)
+        self._shown = shown
         visible = [i for i, c in enumerate(tl.comments) if x0 <= c.file_time_s <= x1]
         show_text = len(visible) <= 40
         for i, lbl in self._comment_labels.items():

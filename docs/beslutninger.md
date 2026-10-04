@@ -2,6 +2,51 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-04 (5) — Blokindeks som flade tabeller og vektoriseret hurtigpas (P3)
+
+Reviewet målte, at `lod.curve_for_range`, `global_range` og åbningen af `ChannelStack` gennemløb alle
+optagelser én ad gangen i GUI-tråden (ca. 0,24 ms pr. optagelse). Filer med tusinder af korte optagelser
+fik sekunders frysning ved hver rendering.
+
+- **`AdichtFile.block_table(channel, fill=False)`** bygger én gang pr. kanal et `ChannelBlockTable`: flade
+  numpy-arrays af alle lagerblokke i alle optagelser (optagelse, start- og sluttick, min/max i
+  `Record.read`s enheder, `first[r]`..`first[r+1]` = optagelsens blokke). Enhedsomregningen sker én gang pr.
+  distinkt enhedsobjekt på alle dets blokke, og min/max sættes i orden elementvis (negativ hældning), så
+  tallene er bit-identiske med `Record.block_envelope`. En blok uden gemt min/max er NaN i begge; `fill=True`
+  afkoder dem som `block_minmax` (kun det kald, ikke selve tabellen, afkoder). En ufuldstændig tabel bygges
+  igen, når nogen beder om `fill`, eller når en anden har udfyldt blokke siden (`_envelope_gen`).
+  `clear_cache()` glemmer tabellerne. Tabellen holdes i filen, ikke i Timeline: den afhænger kun af filen.
+- **Hurtigpasset og det udfyldende pas deler ét kodevej** (`_index_curves`): for alle optagelser, som
+  blokindekset kan besvare, ét sæt `np.fmin/fmax.at` over de berørte blokke (ét udsnit af tabellen) i stedet
+  for en Python-løkke pr. optagelse; de få øvrige (enderne af intervallet, eller et interval inde i én
+  optagelse) tager den gamle vej `_record_curve`, uændret. Kurvens opbygning er den gamle: samme antal
+  buckets pr. optagelse (`max(1, round(...))`), samme NaN-skillelinje mellem optagelser, samme x-værdier.
+  Den gamle implementering ligger som reference i `tests/ui/test_lod_table.py`; detaljepasset er lig den
+  inden for float-tolerance, hurtigpasset også, bortset fra de nye regler nedenfor.
+- **To nye regler for hvad indekset besvarer** (`_from_index`): en HEL optagelse i én bucket er blokindekset
+  eksakt (optagelsens egen min/max, hvad afkodning giver), i begge pas; og i hurtigpasset op til
+  `COARSE_WHOLE_BUCKETS` = 8 buckets pr. hel optagelse (hver viser da optagelsens min/max, et første billede
+  som den afkodede kurve erstatter). Før afkodede hurtigpasset hver kort optagelse i GUI-tråden første gang
+  (3000 optagelser: sekunder koldt). Hurtigpasset viser aldrig mindre end det gamle (testet), kun bredere.
+- **`global_range`** er nu nanmin/nanmax over tabellen.
+- **Blok-etiketterne i markørstrimlen** (`MarkerStrip`) oprettes lazy: de var en `pg.TextItem` pr. optagelse
+  (3000 stk. = ca. 1,9 s af installationen), og hver flytning gennemløb dem alle. Nu gennemløbes kun de
+  synlige blokke, og efter en vist etiket hoppes til første blok, der starter fri af den (`searchsorted`), så
+  højst ca. bredde/etiketbredde etiketter findes. Etiketbredden måles én gang pr. antal cifre.
+- **Målt (sandkasse, syntetiske filer, offscreen Qt):** fil E (2 kanaler, 3000 optagelser): hurtigpas fuld
+  visning 511 -> 1,4 ms pr. kanal, y-område alle kanaler 208 -> 17 ms, `_install_file` 4153 -> 327 ms; fil C
+  (600 optagelser): 939 -> 133 ms. Målet "under 10 ms" og "under 500 ms" er nået i sandkassen; Mac'en er ikke
+  målt.
+- **Fravalgt:** at flette optagelser smallere end en pixel ind i fælles buckets (opgavens "højst to gange
+  pixelbredden i punkter"): kurven får som før en bucket pr. optagelse, dvs. højst n_buckets plus én pr. sådan
+  optagelse (P2's regel); 3000 optagelser giver ca. 6000 punkter, som tegner uden problem, og en sammenflettet
+  kurve ville miste skillelinjerne mellem optagelser. Heller ikke vektoriseret: `interval_stats` og de
+  optagelser, der kræver afkodning (n buckets pr. optagelse, ikke hele optagelsen); de er arbejdstrådens og
+  små i antal. `Record.overview`/`block_envelope` er uændrede (CLI og eksport får de samme tal).
+- **Ikke i tabellen:** Mac-dokumenter er med (samme `channel_record`/`block_minmax`); kun en test på syntetiske
+  Mac-dokumenter med manglende min/max og en kanal uden data er mulig i sandkassen. Rigtige dokumenter:
+  `pytest tests/test_integration_macdocs.py` på Mac'en.
+
 ## 2026-10-04 (4) — Ét gentegning pr. plot pr. flytning (P4)
 
 Emils Mac-målinger (P1b): hvert plot tegnedes 3 til 5 gange pr. brugerhandling, og selve tegnepasset (akser,

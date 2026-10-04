@@ -37,7 +37,8 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    `qtmovie.py` — the API the UI will use: lazy per-block decoding with an LRU
    cache, unit conversion per record, selections by time or comments, min/max
    envelopes for plotting (from the file's block index when possible),
-   LabChart's up-sampling, video clips (and the timing of LabChart for Mac
+   LabChart's up-sampling, `AdichtFile.block_table` (one flat table of the block index per channel, for the
+   viewer's vectorised curves), video clips (and the timing of LabChart for Mac
    movies).
 5. `export.py`, `cli.py` — text/CSV export and the command line.
 6. `infer.py` (numerical recovery of calculated-channel definitions, on top of

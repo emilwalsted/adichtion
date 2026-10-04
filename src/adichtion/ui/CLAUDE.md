@@ -19,7 +19,9 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   plot palette (`plot_palette()`), `PLOT_AXIS_WIDTH`, `PLOT_ROW_MIN_HEIGHT`.
 - `timeline.py` (Qt-free) — the file axis: blocks end to end, `locate(t)`,
   `selections(t0, t1)`, comments with file times. `lod.py` (Qt-free) — level-of-detail
-  curves, value under the cursor, interval statistics; runs on the worker thread.
+  curves (vectorised over `AdichtFile.block_table`, one table of the block index per channel, with
+  `Timeline.starts/stops/rates/block_ticks` as the per-record arrays), value under the cursor, interval
+  statistics; runs on the worker thread.
 - `channel_stack.py` — `ChannelStack` (splitter of `ChannelPlot`s + `MarkerStrip` + a horizontal
   time scroll bar `hbar`, kept in step with the x range by `_sync_hbar`/`_on_hbar`),
   cursor/selection, LOD rendering through its own `JobRunner`.

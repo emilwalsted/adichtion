@@ -53,6 +53,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   placeholder (not downloaded) is reported as unreadable.
 
 ### Changed
+- Opening and viewing a file with thousands of short blocks is much faster. The quick curve pass and the
+  y range now read one table of the block index per channel (built once, in `AdichtFile.block_table`)
+  instead of asking every block in turn: whole-file view of a 3000-block file 511 -> 1.4 ms per channel in
+  the sandbox, the y range of all channels 208 -> 17 ms, installing the file 4.2 s -> 0.33 s. The block
+  labels above the plots are made only for the blocks in view. A whole short block is answered from the
+  block index in the quick pass instead of being decoded on the GUI thread. No decoded value and no export
+  changes.
 - Panning and zooming repaint each channel once per move instead of two to five times. Two causes:
   pyqtgraph applied a view's new transform lazily inside the first repaint, which dirtied the plot
   again and made it paint a second time; and the first picture of a view the decoded curve does
