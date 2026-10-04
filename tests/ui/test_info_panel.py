@@ -144,9 +144,12 @@ def test_clip_count_is_looked_up_off_the_gui_thread(qapp, panel, tmp_path, monke
     assert text.index("(0 found)") > text.index("3 video clips")
 
 
-def test_a_late_clip_count_for_an_earlier_file_is_dropped(qapp, panel, tmp_path, synthetic):
+def test_a_late_clip_count_for_an_earlier_file_is_dropped(qapp, panel, tmp_path):
+    # the second file is its own (the session-wide `synthetic` file can have its clip written beside it by
+    # another test, which would make nothing missing and no "(0 found)" appear)
+    (tmp_path / "g").mkdir()
     f = AdichtFile(_many_comments(tmp_path, n_records=2, per_record=5, video=True))
-    g = AdichtFile(synthetic["path"])
+    g = AdichtFile(_many_comments(tmp_path / "g", n_records=1, per_record=5, video=True))
     panel.set_file(f, Timeline(f))
     token = panel._video_token
     panel.set_file(g, Timeline(g))
