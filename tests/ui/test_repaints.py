@@ -37,7 +37,7 @@ def _settled(qapp, st, t0, t1):
 
 
 def test_a_pan_inside_the_decoded_margin_paints_each_plot_once(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     _settled(qapp, st, 10.0, 20.0)
     counter = _PaintCounter(st)
@@ -53,7 +53,7 @@ def test_a_pan_inside_the_decoded_margin_paints_each_plot_once(qapp, window, syn
 
 
 def test_every_range_change_leaves_the_view_transform_current(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     for fn in (lambda: st.set_range(5.0, 7.0), lambda: st.scroll_view(0.5), lambda: st.zoom_in(), lambda: st.zoom_out(),
                lambda: st._master().vb.pan_fraction(-0.1)):
@@ -62,7 +62,7 @@ def test_every_range_change_leaves_the_view_transform_current(qapp, window, synt
 
 
 def test_an_uncovered_view_gets_its_coarse_picture_with_the_move_and_only_once(qapp, window, synthetic, monkeypatch):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     _settled(qapp, st, 10.0, 20.0)
     calls = []
@@ -89,7 +89,7 @@ def test_an_uncovered_view_gets_its_coarse_picture_with_the_move_and_only_once(q
 
 
 def test_refresh_draws_the_coarse_picture_again(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     _settled(qapp, st, 10.0, 20.0)
     st.refresh()
@@ -100,7 +100,7 @@ def test_refresh_draws_the_coarse_picture_again(qapp, window, synthetic):
 def test_a_slow_coarse_pass_is_left_to_the_debounced_timer(qapp, window, synthetic, monkeypatch):
     """A file whose block index is expensive to walk (thousands of records) must not stall every wheel notch: once a
     pass has taken longer than the budget, the picture waits for the debounced pass, as before."""
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     _settled(qapp, st, 10.0, 20.0)
     calls = []
@@ -124,7 +124,7 @@ def test_a_slow_coarse_pass_is_left_to_the_debounced_timer(qapp, window, synthet
 def test_a_burst_of_inputs_draws_the_coarse_picture_once_not_per_input(qapp, window, synthetic, monkeypatch):
     """Queued inputs (a busy GUI thread) must not each pay for a coarse pass: at most one per frame, the debounced
     pass draws the final view."""
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     _settled(qapp, st, 10.0, 20.0)
     calls = []
@@ -145,7 +145,7 @@ def test_a_burst_of_inputs_draws_the_coarse_picture_once_not_per_input(qapp, win
 
 def test_a_detail_result_for_an_older_view_is_dropped(qapp, window, synthetic):
     import numpy as np
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     _settled(qapp, st, 10.0, 20.0)
     st._coarse_ms, st._coarse_end = 0.0, 0.0

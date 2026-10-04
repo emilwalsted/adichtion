@@ -36,7 +36,7 @@ def _open_quietly(w, path: str) -> None:
     from ..file import AdichtFile
 
     AdichtFile(path).close()                                # raises on a bad file, with no dialog
-    if not w.open_file(path):
+    if not w.open_file_sync(path):
         raise ValueError("the window could not open the file")
 
 

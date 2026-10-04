@@ -29,7 +29,7 @@ def mac_doc(tmp_path_factory):
 
 
 def test_calculated_channels_are_named_but_not_shown(qapp, window, mac_doc):
-    assert window.open_file(mac_doc["path"])
+    assert window.open_file_sync(mac_doc["path"])
     assert window.stack.visible_channels == [0, 2, 3, 4]
     assert "LabChart for Mac document (7.2)" in window.info.summary.text()
     assert "1 calculated channel not stored" in window.info.summary.text()
@@ -45,7 +45,7 @@ def test_calculated_channels_are_named_but_not_shown(qapp, window, mac_doc):
 def test_channel_and_export_dialogs_grey_out_what_is_not_stored(qapp, window, mac_doc):
     from adichtion.ui.channel_dialog import ChannelDialog
     from adichtion.ui.export_dialog import ExportDialog
-    window.open_file(mac_doc["path"])
+    window.open_file_sync(mac_doc["path"])
     f = window.file
     dlg = ChannelDialog(f.channel_titles, [False, True, False, False, False], [0, 1, 2], window,
                         available=[f.has_data(c) for c in range(5)], notes=["", "Arithmetic: Ch4-Ch3", "", "", ""])
@@ -72,7 +72,7 @@ def test_channel_and_export_dialogs_grey_out_what_is_not_stored(qapp, window, ma
 
 
 def test_cursor_values_between_slow_samples(qapp, window, mac_doc):
-    window.open_file(mac_doc["path"])
+    window.open_file_sync(mac_doc["path"])
     window.stack.set_cursor(1.2345)                    # tick 4938: not a multiple of 40
     pump(qapp, 0.05)
     t = window.data.table
@@ -86,7 +86,7 @@ def test_cursor_values_between_slow_samples(qapp, window, mac_doc):
 
 
 def test_a_channel_without_stored_minmax_gets_its_range_from_the_decoded_curve(qapp, window, mac_doc):
-    window.open_file(mac_doc["path"])
+    window.open_file_sync(mac_doc["path"])
     assert 3 in window.stack._y_unset
     assert wait_until(qapp, lambda: 3 not in window.stack._y_unset, timeout=20)
     lo, hi = window.stack.plots[3].vb.viewRange()[1]
@@ -125,7 +125,7 @@ def test_a_mac_movie_follows_the_cursor_by_its_frame_stamps(qapp, window, tmp_pa
     stamps = clock0 + np.round((np.arange(FPS * SECONDS) / FPS - offset) * 1e6).astype(np.int64)
     stamps[0] = clock0 + 20_000
     add_labchart_sync_track(movie, stamps)
-    window.open_file(str(doc))
+    window.open_file_sync(str(doc))
     v = window.video
     assert window.video_box.isVisible() and v.has_videos
     window.stack.set_cursor(4.0)
