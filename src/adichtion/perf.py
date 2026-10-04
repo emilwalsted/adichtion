@@ -1,0 +1,185 @@
+"""Built-in timing for the viewer (``ADICHTION_PERF=1``).  Qt-free, standard library only.
+
+Set ``ADICHTION_PERF=1`` and the app writes a short timeline to stderr: one line per
+measured step (opening the file, each stage of installing it, every coarse pass, every
+detail pass in the worker thread, slow frames, GUI stalls) and a summary when the
+window closes.  ``ADICHTION_PERF_FILE=path`` also writes the same events as JSON lines
+(append mode), so a run can be sent in for analysis.  Without the variable nothing is
+timed: :func:`span` returns one shared do-nothing context manager and no timers exist.
+
+**Only numbers leave the process.**  An event is a code-literal name plus numeric
+fields (milliseconds, counts, rates); :func:`event` refuses anything else.  File names,
+comment texts, dates and subject identifiers can therefore never end up in a log, by
+construction and not by care (``tests/test_perf.py`` pins it).
+
+The same module carries the aggregates (count, total, max per event name) that the
+summary prints and that ``adichtion bench`` reuses for its tables.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import threading
+import time
+from typing import Any, Optional, TextIO
+
+ENV_VAR = "ADICHTION_PERF"
+ENV_FILE = "ADICHTION_PERF_FILE"
+
+_TRUE = ("1", "true", "yes", "on")
+_LEVELS = ("samples", "envelope", "coarse")        # the one non-numeric field allowed: a code-literal LOD level
+
+_lock = threading.Lock()
+_enabled = False
+_stream: Optional[TextIO] = None
+_file: Optional[TextIO] = None
+_t0 = time.perf_counter()
+_stats: dict[str, list[float]] = {}                # name -> [count, total_ms, max_ms]
+
+
+def enabled() -> bool:
+    return _enabled
+
+
+def configure(on: bool, path: Optional[str] = None, stream: Optional[TextIO] = None) -> None:
+    """Switch the timeline on or off (tests; the app takes the environment at start-up).
+    ``stream`` replaces stderr, ``path`` is the optional JSON-lines file."""
+    global _enabled, _stream, _file, _t0
+    with _lock:
+        if _file is not None:
+            try:
+                _file.close()
+            except OSError:
+                pass
+        _file = None
+        _enabled = bool(on)
+        _stream = stream
+        _stats.clear()
+        _t0 = time.perf_counter()
+        if on and path:
+            try:
+                _file = open(path, "a", encoding="utf-8", buffering=1)
+            except OSError as exc:
+                print(f"perf: cannot write {ENV_FILE}: {exc.strerror}", file=sys.stderr)
+
+
+def configure_from_env(environ=None) -> bool:
+    env = os.environ if environ is None else environ
+    on = env.get(ENV_VAR, "").strip().lower() in _TRUE
+    configure(on, env.get(ENV_FILE) or None)
+    return on
+
+
+def _clean(fields: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for k, v in fields.items():
+        if isinstance(v, bool):
+            out[k] = int(v)
+        elif isinstance(v, int):
+            out[k] = v
+        elif isinstance(v, float):
+            out[k] = round(v, 3)
+        elif k == "level" and v in _LEVELS:
+            out[k] = v
+        else:
+            raise ValueError(f"perf field {k!r} must be a number (got {type(v).__name__}): "
+                             "timings carry no names, texts or dates")
+    return out
+
+
+def _emit(name: str, ms: Optional[float], fields: dict[str, Any], quiet: bool) -> None:
+    now = time.perf_counter() - _t0
+    with _lock:
+        if ms is not None:
+            s = _stats.setdefault(name, [0, 0.0, 0.0])
+            s[0] += 1
+            s[1] += ms
+            s[2] = max(s[2], ms)
+        if quiet:
+            return
+        parts = [f"{k}={v}" for k, v in fields.items()]
+        line = f"perf {now:9.3f}s  {name:<22}" + (f" {ms:9.2f} ms" if ms is not None else " " * 13) + ("  " + " ".join(parts) if parts else "")
+        print(line, file=_stream or sys.stderr, flush=True)
+        if _file is not None:
+            rec: dict[str, Any] = {"t": round(now, 4), "event": name}
+            if ms is not None:
+                rec["ms"] = round(ms, 3)
+            rec.update(fields)
+            _file.write(json.dumps(rec) + "\n")
+
+
+def event(name: str, ms: Optional[float] = None, quiet: bool = False, **fields) -> None:
+    """Record one event (no-op unless enabled).  ``quiet`` only aggregates, for events too
+    frequent to print one by one (frames, ticks of the stall monitor)."""
+    if not _enabled:
+        return
+    _emit(name, ms, _clean(fields), quiet)
+
+
+class _Span:
+    __slots__ = ("name", "fields", "_t")
+
+    def __init__(self, name: str, fields: dict[str, Any]):
+        self.name, self.fields = name, fields
+
+    def set(self, **fields) -> None:
+        self.fields.update(fields)
+
+    def __enter__(self) -> "_Span":
+        self._t = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        event(self.name, (time.perf_counter() - self._t) * 1000.0, **self.fields)
+
+
+class _NullSpan:
+    """Shared by every span while timing is off: costs one function call, allocates nothing."""
+    __slots__ = ()
+
+    def set(self, **fields) -> None:
+        pass
+
+    def __enter__(self) -> "_NullSpan":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        pass
+
+
+_NULL = _NullSpan()
+
+
+def span(name: str, **fields):
+    """``with perf.span("render.coarse", channels=4) as sp: ...`` times the block;
+    ``sp.set(blocks=3)`` adds numeric fields learnt along the way."""
+    if not _enabled:
+        return _NULL
+    return _Span(name, dict(fields))
+
+
+def summary() -> dict[str, dict[str, float]]:
+    """``{name: {"count", "total_ms", "mean_ms", "max_ms"}}`` of everything recorded so far."""
+    with _lock:
+        return {k: {"count": int(v[0]), "total_ms": round(v[1], 3), "mean_ms": round(v[1] / v[0], 3) if v[0] else 0.0,
+                    "max_ms": round(v[2], 3)} for k, v in sorted(_stats.items())}
+
+
+def print_summary(cache: Optional[tuple[int, int]] = None) -> None:
+    """The summary table at the end of a run; ``cache`` is the file's ``(hits, misses)``
+    (a miss is one decoded block)."""
+    if not _enabled:
+        return
+    out = _stream or sys.stderr
+    rows = summary()
+    if cache is not None:
+        hits, misses = cache
+        event("cache", None, hits=hits, decoded_blocks=misses,
+              hit_rate=round(hits / (hits + misses), 3) if hits + misses else 0.0)
+    print("perf summary (ms)          count      total       mean        max", file=out)
+    for name, s in rows.items():
+        print(f"  {name:<22} {s['count']:7d} {s['total_ms']:10.1f} {s['mean_ms']:10.2f} {s['max_ms']:10.2f}", file=out, flush=True)
+
+
+configure_from_env()

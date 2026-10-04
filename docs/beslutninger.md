@@ -2,6 +2,32 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-04 — Indbygget tidsmåling: kun tal, og intet når den er slået fra
+
+Performance-reviewet kunne kun måle i en sandkasse med softwarerenderet Qt, så forslagene
+P2 til P9 kan ikke vurderes uden tal fra Emils Mac med rigtige optagelser. `ADICHTION_PERF=1`
+(stderr, valgfrit `ADICHTION_PERF_FILE` som JSON-linjer) og `adichtion bench FIL` giver dem.
+
+- **Kun tal ud af processen.** En hændelse er et navn skrevet i koden plus numeriske felter;
+  `perf.event` afviser alt andet (undtagen et af tre faste LOD-niveauer). Filnavne, kanaltitler,
+  kommentartekster, datoer og forsøgsperson-id'er kan derfor ikke havne i en log, hvad enten
+  det er med vilje eller ved en fejl. `adichtion bench` udskriver heller ikke stien (et
+  filnavn kan bære et id). Testene låser det.
+- **Slået fra er den ikke bare billig, men fraværende.** `perf.span` giver ét delt tomt
+  objekt, `MainWindow` opretter ingen `StallMonitor` (ingen 5 ms-timer), og `paintEvent` på
+  kanalplottene går direkte til `super()`. Cache-tællerne (`AdichtFile.cache_stats()`) er to
+  heltal under den lås cachen allerede tager.
+- **Frame-tid er afstanden mellem to gentegninger inden for samme træk** (gentegninger mere end
+  0,5 s fra hinanden er adskilte bursts, ikke langsomme frames); hvert plot måles for sig, så
+  med flere kanaler ligger gentegningerne efter hinanden. Kun frames fra 40 ms og GUI-hul fra
+  50 ms udskrives enkeltvis, alle indgår i opsummeringen.
+- **`bench` måler alle kanaler pr. kurvepas** (som en rendering tegner dem) og rapporterer kold
+  (cachen og de udfyldte envelopes ryddet) og varm (andet kald). Vinduer længere end filen
+  gentages ikke. Ingen visning i appen endnu (valgfri i opgaven).
+- Fravalgt: `cProfile`/sampling-profiler (tal pr. trin er det, P2 til P9 skal bruge, og en
+  profiler ændrer tiderne); et separat `bench`-script uden for pakken (kommandoen skal findes i
+  den installerede app, hvor Emil kører den).
+
 ## 2026-09-29 (2) — Mac-dokumenternes film, genberegning og eksport med opsampling
 
 Emils svar på de tre spørgsmål fra 28-09-2026 (6):

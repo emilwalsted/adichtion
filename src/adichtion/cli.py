@@ -10,6 +10,7 @@ verify    compare decoded samples with a LabChart text export (the oracle)
 check     decode every block and compare with the min/max LabChart stored
 videos    the video clips recorded with the records
 infer     recover the definitions of calculated channels from the data
+bench     time the viewer's operations on a file, without the GUI (only numbers are reported)
 macsettings  channel settings (calculated-channel definitions) of a LabChart 7 for Mac document or settings file
 strings   dump the tagged UTF-16 strings of the Map stream (debugging)
 """
@@ -290,6 +291,25 @@ def cmd_infer(a: argparse.Namespace) -> None:
                 print(f"    {h}")
 
 
+def cmd_bench(a: argparse.Namespace) -> None:
+    """Time opening, curve passes, block decoding, cursor look-ups and (optionally) an export."""
+    import json
+
+    from .bench import format_table, run_bench
+
+    if not os.path.isfile(a.file):
+        sys.exit(f"error: {a.file} is not a file")
+    try:
+        report = run_bench(a.file, width=a.width, export_seconds=a.export)
+    except Exception as exc:  # noqa: BLE001 - report and exit
+        sys.exit(f"error: {exc}")
+    if a.output:
+        with open(a.output, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2)
+            fh.write("\n")
+    print(json.dumps(report, indent=2) if a.json else format_table(report))
+
+
 def cmd_macsettings(a: argparse.Namespace) -> None:
     """Channel settings of a LabChart 7 for Mac document or settings file."""
     from .macchart import KEY_N_CHANNELS, MacChartError, MacResFile, channel_settings, document_properties
@@ -356,6 +376,15 @@ def main(argv: Optional[list[str]] = None) -> None:
     s.add_argument("--top", type=int, default=3, help="hypotheses listed per channel (default 3)")
     s.add_argument("--all", action="store_true", help="also test the raw (int16) channels")
     s.set_defaults(fn=cmd_infer)
+
+    s = sub.add_parser("bench", help="time the viewer's operations on a file (open, curves, decoding, cursor, export)")
+    s.add_argument("file")
+    s.add_argument("--width", type=int, default=1200, help="pixel buckets per curve (default 1200)")
+    s.add_argument("--export", type=float, nargs="?", const=60.0, metavar="SECONDS",
+                   help="also time the export of this many seconds from the middle of the longest record (default 60)")
+    s.add_argument("--json", action="store_true", help="print the report as JSON instead of the table")
+    s.add_argument("-o", "--output", help="also write the JSON report to this file")
+    s.set_defaults(fn=cmd_bench)
 
     s = sub.add_parser("macsettings", help="channel settings of a LabChart 7 for Mac document or settings file")
     s.add_argument("file"); s.add_argument("-v", "--verbose", action="store_true", help="every property of every channel")

@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 from typing import Optional
 
-CLI_COMMANDS = ("info", "tree", "comments", "strings", "videos", "check", "export", "verify", "infer", "macsettings")
+CLI_COMMANDS = ("info", "tree", "comments", "strings", "videos", "check", "export", "verify", "infer", "macsettings", "bench")
 
 
 def wants_cli(argv: list[str]) -> bool:
