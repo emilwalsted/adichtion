@@ -35,6 +35,11 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   returning True means "started", not "opened". The newest request wins; a cancelled, replaced or late (window
   closing) result is closed unused; `close_file` cancels a pending open; Export and Mac settings wait while one runs.
   Tests and `bench --pan` use `open_file_sync` (the old synchronous path).
+- `info_panel.py` — the file panel. Blocks and Comments are `_RowsView`s over a `_RowsModel` (a cell's text is made when
+  it is shown; never one item per cell: 5000 comments cost 300 ms that way), Channels stays a small `QTableWidget`.
+  `_RowsView` keeps `cellClicked`/`cellDoubleClicked`/`rowCount()`. The "(n found)" video count is looked up on a
+  thread (`_video_counted`, token-guarded); never call `Record.video_file` for every record on the GUI thread
+  (a file-system lookup each: use `video_candidate` for the path alone).
 - `perfmon.py` — `StallMonitor`, the 5 ms `QTimer` that measures the GUI thread's stalls; created by
   `MainWindow` only when `ADICHTION_PERF` is set (`adichtion.perf`, which also times `open`, `install.*`,
   `render.coarse`, `render.detail` and the plots' repaints).

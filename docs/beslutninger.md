@@ -2,6 +2,27 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-04 (8) — Kommentar- og blokliste som model/view, klippoptælling på tråd (P7)
+
+`InfoPanel.set_file` byggede ét `QTableWidgetItem` pr. celle: 5000 kommentarer 311-324 ms i panelet (fil D fra
+performance-reviewet, 20 blokke), og `r.video_file` lavede ét `os.path.exists` pr. optagelse i oversigtslinjen.
+
+- **Valgt:** Comments og Blocks er `QTableView` over en `_RowsModel` (`QAbstractTableModel`, der laver en celles
+  tekst først, når viewet beder om den). Fast rækkehøjde og `setResizeContentsPrecision(200)` gør, at hverken række-
+  højde eller kolonnebredde spørger alle rækker. `info.set_file` er nu ca. 2 ms (samme måling, offscreen); hele åbningen
+  af filen ca. 455 ms til ca. 150 ms. Channels-tabellen er uændret `QTableWidget` (få rækker, `item(r, c)` bruges af tests).
+- **Fravalgt: udfyld fanen første gang den vises.** Det flytter kun ventetiden til første klik på fanen og
+  kræver, at alt, der læser tabellen, ved at fanen kan være tom; modellen er både enklere og hurtig for alle faner.
+- **`_RowsView` beholder `cellClicked`/`cellDoubleClicked`/`rowCount()`** som `QTableWidget` havde dem, så panelets
+  signaler og de eksisterende tests står uændret. Kommentarteksten er nu også tooltip (nyt, billigt). Der var ingen
+  sortering at bevare (tabellerne har aldrig kunnet sorteres; rækkerne står i filens rækkefølge).
+- **Klippoptælling:** `Record.video_candidate` (ren stiberegning, intet filsystem) er nyt; `video_file` bruger den og laver
+  stadig ét opslag pr. kald. Panelet tæller de fundne klip på en baggrundstråd og tilføjer "(n found)" til oversigten,
+  når nogle mangler (samme tekst og placering som før; vises altså lidt senere). Et sent svar for en tidligere fil
+  forkastes med et token. `video_panel` kalder fortsat `video_file` for den viste optagelse alene.
+- Ingen afkodede værdier, ingen eksportbytes og intet i API'ets returværdier er ændret. Udseendet af tabellerne
+  (kolonnebredder, rækkehøjde i selve tabellerne, valgfarve) er kun set headless: Emil bør kigge på dem på Mac'en.
+
 ## 2026-10-04 (7) — Zero-copy datastrøm over en størrelsesgrænse (P6)
 
 `AdichtFile._blocks` var en kopi af hele `Blocks_0` (362 MB: 0,45 s og 726 MB spidshukommelse ved åbning).

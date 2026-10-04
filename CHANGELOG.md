@@ -6,6 +6,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- The file panel opens a file with thousands of comments or blocks at once: the Comments and Blocks tables
+  are lists that make a row's text only when it is shown (5000 comments: 311 ms to 2 ms in the panel; the
+  whole open of a 20-block file with 5000 comments 455 ms to 150 ms, measured offscreen). Looks, columns,
+  clicks and tab titles are as before, and a comment's text is now also its tooltip. The "(n found)" count
+  of video clips next to the summary is looked up on a thread, so a movies folder on a network drive no
+  longer holds the window up (one lookup per block before).
 - A `.adicht` file of 64 MB or more is no longer copied into memory when it is opened: its sample stream
   is read straight from the file's memory mapping (362 MB: opening 0.45 s to 0.1 s, peak memory 726 MB to
   381 MB). Smaller files, files with a fragmented cluster chain and Mac documents are copied as before.
