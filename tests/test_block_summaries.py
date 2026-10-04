@@ -58,8 +58,6 @@ def test_summary_matches_decoded_min_max_per_bucket(doc, channel):
                 for j in range(k):
                     part = x[(j * len(x)) // k: ((j + 1) * len(x)) // k]
                     assert store.mins[b, j] == part.min() and store.maxs[b, j] == part.max()
-        # the stored dtype is the decoder's (int32 counts or float32), never a converted value
-        assert f.summary_store(0, channel).mins.dtype == f.decode_block(0, 0, channel).dtype
 
 
 def test_blocks_decoded_in_any_order_leave_summaries_and_reads_stay_exact(doc):
@@ -245,3 +243,15 @@ def test_mac_document_summaries(tmp_path):
             assert got is not None and got[1].shape == (90,)
             assert (got[1] <= exact[1] + 1e-9).all() and (got[2] >= exact[2] - 1e-9).all()
             assert np.isfinite(got[1]).all()
+
+
+def test_summary_mixes_block_types_and_ignores_nan():
+    from adichtion.file import _ChannelSummaries
+    st = _ChannelSummaries(np.array([0, 10, 20]))
+    st.put(0, np.arange(10, dtype=np.int32))
+    st.put(1, np.linspace(0.1, 0.9, 10).astype(np.float32))        # not truncated to the first block's type
+    assert st.maxs[1, :10].max() == pytest.approx(0.9) and st.mins[1, 0] == pytest.approx(0.1)
+    x = np.array([1, np.nan, 3, 4], dtype=np.float32)
+    st2 = _ChannelSummaries(np.array([0, 4]))
+    st2.put(0, x)
+    assert st2.mins[0, 2] == 3 and st2.maxs[0, 3] == 4 and np.isnan(st2.mins[0, 1])

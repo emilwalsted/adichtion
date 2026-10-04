@@ -179,22 +179,22 @@ class _ChannelSummaries:
         self.have = np.zeros(nb, dtype=bool)
         self.count = np.zeros(nb, dtype=np.int32)          # buckets of the block (0: it holds no samples)
         self.n = np.zeros(nb, dtype=np.int64)              # samples the block held when it was decoded
-        self.mins: Optional[np.ndarray] = None
-        self.maxs: Optional[np.ndarray] = None
+        # float64 holds int32 counts and float32 values exactly, whatever mix of block types a channel has
+        self.mins = np.zeros((nb, SUMMARY_BUCKETS), dtype=np.float64)
+        self.maxs = np.zeros((nb, SUMMARY_BUCKETS), dtype=np.float64)
+        self._lock = threading.Lock()
 
     def put(self, block: int, data: np.ndarray) -> None:
         n = len(data)
-        if n:
-            k = min(SUMMARY_BUCKETS, n)
-            edges = (np.arange(k, dtype=np.int64) * n) // k
-            if self.mins is None:
-                shape = (len(self.have), SUMMARY_BUCKETS)
-                self.mins = np.zeros(shape, dtype=data.dtype)
-                self.maxs = np.zeros(shape, dtype=data.dtype)
-            self.mins[block, :k] = np.minimum.reduceat(data, edges)
-            self.maxs[block, :k] = np.maximum.reduceat(data, edges)
-            self.count[block] = k
-            self.n[block] = n
+        with self._lock:                   # two threads decoding the same block write the same numbers
+            if n:
+                k = min(SUMMARY_BUCKETS, n)
+                edges = (np.arange(k, dtype=np.int64) * n) // k
+                # fmin/fmax ignore NaN (a bucket of only NaN stays NaN), as the envelope spreading does
+                self.mins[block, :k] = np.fmin.reduceat(data, edges)
+                self.maxs[block, :k] = np.fmax.reduceat(data, edges)
+                self.count[block] = k
+                self.n[block] = n
         self.have[block] = True            # last: a reader that sees it also sees the numbers
 
 
@@ -291,7 +291,8 @@ class AdichtFile:
         ``adichtion bench``); the counters of :meth:`cache_stats` restart too."""
         self._cache.clear()
         self._envelopes.clear()
-        self._summaries.clear()
+        with self._summaries_lock:
+            self._summaries.clear()
         if reset_counters:
             self._cache.hits = self._cache.misses = 0
 
@@ -796,7 +797,7 @@ class Record:
             return None
         cnt = store.count[b_lo:b_hi].astype(np.int64)
         ok = cnt > 0
-        if not ok.any() or store.mins is None:
+        if not ok.any():
             return None
         n_b, cnt, base = store.n[b_lo:b_hi][ok], cnt[ok], bounds[b_lo: b_hi][ok]
         mins, maxs = store.mins[b_lo:b_hi][ok], store.maxs[b_lo:b_hi][ok]
