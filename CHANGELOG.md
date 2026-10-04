@@ -53,6 +53,15 @@ versions follow [Semantic Versioning](https://semver.org/).
   placeholder (not downloaded) is reported as unreadable.
 
 ### Changed
+- Viewing a whole long file is faster the second time and no longer pays for every short record.
+  Each block that is decoded leaves a small min/max summary (32 buckets) behind, and a detail
+  pass whose pixels are at least that wide (a 1/32 block) is drawn from the summaries instead of
+  decoding again, also after the block cache has been emptied; the first view of a file still
+  decodes. A pixel bucket can then show an extreme at most one summary bucket (500 ticks of a
+  full block) beyond its own samples, never miss one. The decoded values, the eight-bucket
+  minimum per record (gone: a record narrower than a few pixels now gets as many buckets as it
+  has pixels) and the exports are unchanged. The block cache is now limited by memory (a quarter
+  of the free RAM, 256 MB to 1 GB; blocks of 16-bit channels kept as 16-bit) instead of by 256 blocks.
 - A horizontal scroll bar under the graphs moves the zoomed time axis (enabled only while the
   view is zoomed); the splash stays up for at least 3 seconds; the empty band between the toolbar
   and the first channel is smaller.

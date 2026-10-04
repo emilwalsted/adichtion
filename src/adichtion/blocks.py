@@ -298,12 +298,16 @@ class SubBlockIndex:
         return [self.get(record, b, channel) for b in range(len(self.blocks_per_record[record]))]
 
     def channel_dtype(self, channel: int) -> str:
-        """``"float32"`` if any sub-block of the channel is 32-bit, else ``"int16"``."""
-        for r in range(len(self.blocks_per_record)):
-            for b in range(len(self.blocks_per_record[r])):
-                if self.get(r, b, channel).is_float:
-                    return "float32"
-        return "int16"
+        """``"float32"`` if any sub-block of the channel is 32-bit, else ``"int16"``
+        (decided once per channel: the sub-blocks do not change after opening)."""
+        memo = self.__dict__.setdefault("_dtype_memo", {})
+        if channel not in memo:
+            memo[channel] = "int16"
+            for r in range(len(self.blocks_per_record)):
+                if any(self.get(r, b, channel).is_float for b in range(len(self.blocks_per_record[r]))):
+                    memo[channel] = "float32"
+                    break
+        return memo[channel]
 
     def samples_per_tick(self, record: int, channel: int) -> float:
         """Sampling rate of the channel relative to the record's tick rate."""

@@ -3,7 +3,8 @@
 A curve on the file axis is built per block overlapped by the requested range:
 when the range holds fewer samples than about twice the pixel budget, the
 samples themselves are used; otherwise a min/max envelope with one bucket pair
-per pixel.  ``coarse=True`` takes the envelope from the file's block index
+per pixel, taken from the block index, from the min/max summaries that decoding leaves
+behind (``Record.summary_overview``), or from the decoded samples, in that order of preference.  ``coarse=True`` takes the envelope from the file's block index
 wherever the range holds whole blocks (no decoding), which is what the plots
 show first while the worker decodes the real thing.
 """
@@ -47,7 +48,9 @@ def curve_for_range(f: AdichtFile, timeline: Timeline, channel: int, t0: float, 
         stop = min(b.ticks, int(np.ceil((hi_t - b.start_s) * b.tick_rate_hz)) + 1)
         if stop <= start:
             continue
-        n_part = max(8, int(round(n_buckets * (hi_t - lo_t) / span)))
+        # a share of the buckets in proportion to the time this block covers; a block narrower than
+        # a pixel still gets one, so the curve has at most n_buckets plus one per such block
+        n_part = max(1, int(round(n_buckets * (hi_t - lo_t) / span)))
         spt = rec.samples_per_tick(channel)
         n_samples = int(round((stop - start) * spt))
         bucket_ticks = (stop - start) / n_part
@@ -63,7 +66,9 @@ def curve_for_range(f: AdichtFile, timeline: Timeline, channel: int, t0: float, 
             x = rec.time(start, stop, channel) + b.start_s
             levels.add("samples")
         else:
-            t, mn, mx = rec.overview(channel, n_part, start, stop)
+            # blocks decoded before answer from their min/max summaries when a bucket is at least
+            # as wide as a summary bucket (no decoding); otherwise the samples are decoded
+            t, mn, mx = rec.overview(channel, n_part, start, stop, from_summaries=True)
             x, y = interleave(t + b.start_s, mn, mx)
             levels.add("envelope")
         if xs:
