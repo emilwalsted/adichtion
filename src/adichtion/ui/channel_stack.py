@@ -28,7 +28,7 @@ import time
 from .. import perf
 from ..file import AdichtFile
 from . import lod, theme
-from .plot_axis import MinPitchAxis
+from .plot_axis import MinPitchAxis, TimedAxis
 from .timeline import Timeline
 from .workers import JobRunner
 
@@ -45,6 +45,32 @@ def _pen(colour, width: float = 1.0, style=Qt.SolidLine) -> QPen:
     pen = pg.mkPen(colour, width=width, style=style)
     pen.setCosmetic(True)
     return pen
+
+
+class _input_span:
+    """``ADICHTION_PERF``: one user input that moves the view (wheel zoom, drag, sideways swipe).  Times the whole
+    synchronous handling, which includes every range signal it fires, and counts the inputs and the range signals
+    they cause (``input.<kind>``, ``input.<kind>.x_range`` in the summary's counts), so the cascade per input shows
+    as a ratio.  The repaints come later (the event loop), see ``paint.plot`` against ``input.*``."""
+    __slots__ = ("kind", "_span", "_before")
+
+    def __init__(self, kind: str):
+        self.kind = kind
+
+    def __enter__(self):
+        if perf.enabled():
+            self._before = perf.count("signal.x_range.all", 0)
+            self._span = perf.quiet_span(f"input.{self.kind}", slow_ms=30.0)
+            self._span.__enter__()
+        else:
+            self._span = None
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._span is not None:
+            self._span.__exit__(*exc)
+            perf.count(f"input.{self.kind}")
+            perf.count(f"input.{self.kind}.x_range", perf.count("signal.x_range.all", 0) - self._before)
 
 
 class ChannelViewBox(pg.ViewBox):
@@ -64,8 +90,17 @@ class ChannelViewBox(pg.ViewBox):
         self.setMouseMode(self.PanMode)
         self.drag_selects = True
 
+    def linkedViewChanged(self, view, axis):
+        with perf.quiet_span("vb.linked"):
+            super().linkedViewChanged(view, axis)
+
+    def updateViewRange(self, *args, **kwargs):
+        with perf.quiet_span("vb.update_range"):
+            super().updateViewRange(*args, **kwargs)
+
     def wheelEvent(self, ev, axis=None):
-        super().wheelEvent(ev, axis=0 if axis is None else axis)
+        with _input_span("wheel"):
+            super().wheelEvent(ev, axis=0 if axis is None else axis)
 
     def mouseDragEvent(self, ev, axis=None):
         if ev.isStart():                        # the role is fixed for the whole drag (Alt pressed midway changes nothing)
@@ -76,7 +111,8 @@ class ChannelViewBox(pg.ViewBox):
             x1 = self.mapSceneToView(ev.scenePos()).x()
             self.sigSelectDrag.emit(float(x0), float(x1), bool(ev.isFinish()))
             return
-        super().mouseDragEvent(ev, axis=0 if axis is None else axis)
+        with _input_span("drag"):
+            super().mouseDragEvent(ev, axis=0 if axis is None else axis)
 
     def mouseClickEvent(self, ev):
         if ev.button() == Qt.LeftButton:
@@ -92,7 +128,8 @@ class ChannelViewBox(pg.ViewBox):
     def pan_fraction(self, fraction: float) -> None:
         """Move the view by ``fraction`` of its width (positive = later in time)."""
         x0, x1 = self.viewRange()[0]
-        self.translateBy(x=fraction * (x1 - x0))
+        with _input_span("swipe"):
+            self.translateBy(x=fraction * (x1 - x0))
 
     def pixels_per_second(self) -> float:
         x0, x1 = self.viewRange()[0]
@@ -113,6 +150,7 @@ class ChannelPlotWidget(pg.PlotWidget):
         t = time.perf_counter()
         super().paintEvent(ev)
         done = time.perf_counter()
+        perf.count("paint.plot")
         last = getattr(self, "_perf_last_paint", None)
         self._perf_last_paint = t
         perf.event("frame.paint", (done - t) * 1000.0, quiet=(done - t) * 1000.0 < self.SLOW_FRAME_MS)
@@ -154,6 +192,10 @@ class MarkersItem(pg.GraphicsObject):
         return self.viewRect()
 
     def paint(self, p, *args):
+        with perf.quiet_span("markers.paint"):
+            self._paint(p)
+
+    def _paint(self, p) -> None:
         r = self.viewRect()
         x0, x1 = r.left(), r.right()
         top, bottom = r.top(), r.bottom()
@@ -191,6 +233,10 @@ class CursorItem(pg.GraphicsObject):
         return self.viewRect()
 
     def paint(self, p, *args):
+        with perf.quiet_span("cursor.paint"):
+            self._paint(p)
+
+    def _paint(self, p) -> None:
         r = self.viewRect()
         top, bottom = r.top(), r.bottom()
         if self._sel is not None:
@@ -231,7 +277,8 @@ class ChannelPlot(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.vb = ChannelViewBox()
-        self.widget = ChannelPlotWidget(viewBox=self.vb, axisItems={"left": MinPitchAxis(orientation="left")})
+        self.widget = ChannelPlotWidget(viewBox=self.vb, axisItems={"left": MinPitchAxis(orientation="left"),
+                                                                                 "bottom": TimedAxis(orientation="bottom")})
         self.widget.setFocusPolicy(Qt.NoFocus)
         self.item = self.widget.getPlotItem()
         self.item.hideButtons()
@@ -288,8 +335,13 @@ class ChannelPlot(QWidget):
         self.btn_y_in.clicked.connect(lambda: self.zoom_y(0.8))
         self.btn_y_out.clicked.connect(lambda: self.zoom_y(1.25))
         self.btn_y_auto.clicked.connect(self.auto_y)
+        self.vb.sigXRangeChanged.connect(self._count_x_range)
         self.set_value(None)
         self.set_definition(None)
+
+    @staticmethod
+    def _count_x_range(*args) -> None:
+        perf.count("signal.x_range.all")           # every visible plot's own range signal (the master's and the linked ones)
 
     def _small_button(self, text: str, tip: str) -> QToolButton:
         b = QToolButton(self.buttons)
@@ -366,7 +418,8 @@ class ChannelPlot(QWidget):
         self._curve_x, self._curve_y, self.level = x, y, level
         self._detail_cover = cover
         self._detail_density = density
-        self.curve.setData(x, y, connect="finite", skipFiniteCheck=False)
+        with perf.quiet_span("curve.set_data"):
+            self.curve.setData(x, y, connect="finite", skipFiniteCheck=False)
 
     def detail_covers(self, t0: float, t1: float, width_px: int) -> bool:
         """Whether the decoded curve already shows ``[t0, t1]`` at (nearly) pixel resolution."""
@@ -410,9 +463,10 @@ class ChannelPlot(QWidget):
         self.vb.setYRange(c - half, c + half, padding=0)
 
     def auto_y(self) -> None:
-        r = self.visible_y_range()
-        if r is not None:
-            self.set_y_range(*r)
+        with perf.quiet_span("plot.auto_y"):
+            r = self.visible_y_range()
+            if r is not None:
+                self.set_y_range(*r)
 
 
 class MarkerStrip(pg.PlotWidget):
@@ -475,6 +529,10 @@ class MarkerStrip(pg.PlotWidget):
         self._relayout()
 
     def _relayout(self, *args) -> None:
+        with perf.quiet_span("strip.relayout"):
+            self._relayout_labels()
+
+    def _relayout_labels(self) -> None:
         """Hide block labels that would overlap their neighbour; name the comments when few are in view."""
         tl = self.__dict__.get("_timeline")          # resizeEvent fires inside PlotWidget.__init__
         if tl is None or not self._labels:
@@ -809,10 +867,14 @@ class ChannelStack(QWidget):
         self.autoZoomChanged.emit(on)
 
     def _on_x_range(self, *args) -> None:
-        x0, x1 = self.view_range()
-        self._sync_hbar(x0, x1)
-        self.rangeChanged.emit(x0, x1)
-        self._schedule_render()
+        perf.count("signal.x_range")                   # the master's signal: one per move (the linked views follow it)
+        with perf.quiet_span("stack.x_range"):
+            x0, x1 = self.view_range()
+            with perf.quiet_span("stack.sync_hbar"):
+                self._sync_hbar(x0, x1)
+            with perf.quiet_span("stack.range_changed"):         # the slots of every listener, e.g. the main window's
+                self.rangeChanged.emit(x0, x1)
+            self._schedule_render()
 
     #: Most steps the time scroll bar is given (QScrollBar is int32; the scale keeps hours-long files inside it).
     HBAR_STEPS = 1_000_000
@@ -940,16 +1002,18 @@ class ChannelStack(QWidget):
             self.selectionChanged.emit(None)
 
     def _paint_cursor(self) -> None:
-        for p in self.plots:
-            p.cursor.set(self._cursor, self._selection)
-        self.strip.cursor.set(self._cursor, self._selection)
+        with perf.quiet_span("cursor.set"):
+            for p in self.plots:
+                p.cursor.set(self._cursor, self._selection)
+            self.strip.cursor.set(self._cursor, self._selection)
 
     def _update_values(self) -> None:
         if self.file is None or self.timeline is None:
             return
-        for c in range(len(self.plots)):
-            v = lod.value_at(self.file, self.timeline, c, self._cursor) if self._cursor is not None else None
-            self.plots[c].set_value(v)
+        with perf.quiet_span("cursor.values"):
+            for c in range(len(self.plots)):
+                v = lod.value_at(self.file, self.timeline, c, self._cursor) if self._cursor is not None else None
+                self.plots[c].set_value(v)
 
     # -- rendering -------------------------------------------------------------------------
     def _schedule_render(self) -> None:
@@ -957,6 +1021,10 @@ class ChannelStack(QWidget):
             self._timer.start()
 
     def _render(self) -> None:
+        with perf.quiet_span("stack.render"):               # the debounced pass: the coarse curves, the auto-zoom, the job submit
+            self._render_now()
+
+    def _render_now(self) -> None:
         if self.file is None or self.timeline is None or not self._visible:
             return
         x0, x1 = self.view_range()
@@ -984,13 +1052,15 @@ class ChannelStack(QWidget):
 
     def _on_progress(self, job_id: int, kind: str, payload) -> None:
         if kind != "render" or job_id != self._render_job:
+            perf.count("render.result_stale")
             return
         c, a, b, x, y, level, n = payload
         if 0 <= c < len(self.plots):
-            self.plots[c].set_curve(x, y, level, (a, b), n / max(b - a, 1e-9))
-            if (self._auto_zoom and c in self._visible) or c in self._y_unset:
-                self._y_unset.discard(c)
-                self.plots[c].auto_y()          # the decoded curve replaces the coarse one: fit to that
+            with perf.quiet_span("stack.on_progress"):    # a decoded curve arriving from the worker, on the GUI thread
+                self.plots[c].set_curve(x, y, level, (a, b), n / max(b - a, 1e-9))
+                if (self._auto_zoom and c in self._visible) or c in self._y_unset:
+                    self._y_unset.discard(c)
+                    self.plots[c].auto_y()          # the decoded curve replaces the coarse one: fit to that
 
     def _on_done(self, job_id: int, kind: str, result, error) -> None:
         if error and kind == "render":
@@ -1002,6 +1072,10 @@ class ChannelStack(QWidget):
             self._axis_timer.start()
 
     def _update_axis_width(self) -> None:
+        with perf.quiet_span("stack.axis_width"):
+            self._update_axis_width_now()
+
+    def _update_axis_width_now(self) -> None:
         """Every channel gets the width the widest tick labels among them need (no loose gap
         between the unit and the trace), so the plots keep lining up."""
         if not self._visible:

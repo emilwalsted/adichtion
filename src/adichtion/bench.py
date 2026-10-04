@@ -169,4 +169,7 @@ def format_table(r: dict) -> str:
     e = r.get("export")
     if e:
         lines.append(f"export     {e['seconds']:.0f} s x {e['channels']} channels: {e['rows']} rows, {e['bytes'] / 1e6:.1f} MB in {e['ms']:.0f} ms")
+    if r.get("pan"):
+        from .ui.panbench import format_pan             # Qt-free until run_pan is called
+        lines.append(format_pan(r["pan"]))
     return "\n".join(lines)

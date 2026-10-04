@@ -88,6 +88,10 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   Without `ADICHTION_PERF` no timer exists and `perf.span` returns one shared no-op object.
   When measuring the GUI from a script never run a tight `processEvents` loop without a
   `sleep` (a GIL convoy inflates every time tenfold); `tests/ui/helpers.py` shows the pattern.
+  `perf.quiet_span` (aggregated, printed only above `slow_ms`) and `perf.count` (totals in the
+  summary) serve the steps that run many times per pan step; the viewer's pan events are listed in
+  `src/adichtion/ui/CLAUDE.md`. `adichtion bench FILE --pan` (`ui/panbench.py`, Qt imported only
+  when it runs, so `bench.py` stays Qt-free) drives a real `MainWindow`.
 
 - LabChart's "block" = this library's `Record` (following the ADI SDK); the
   16000-tick storage chunks are "blocks" here. Don't mix the two in the UI.

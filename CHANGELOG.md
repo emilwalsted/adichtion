@@ -11,6 +11,15 @@ versions follow [Semantic Versioning](https://semver.org/).
   installing it, every coarse pass, every detail pass in the worker thread with the blocks
   decoded and the cache hits, slow frames, GUI stalls, and a summary when the window closes);
   `ADICHTION_PERF_FILE=path` also writes it as JSON lines. Off by default: no extra timer.
+- The timing also breaks a pan or zoom step into its parts (`ADICHTION_PERF=1`, same command as
+  before): the range signal cascade (`stack.x_range`, `stack.sync_hbar`, `stack.range_changed`,
+  `strip.relayout`, `vb.linked`, `vb.update_range`), the axes' tick computation
+  (`axis.ticks`, `axis.draw_specs`), the curve update (`curve.set_data`), the markers and cursor,
+  the worker's results arriving on the GUI thread (`stack.on_progress`), and every top-level Qt
+  event of the GUI thread by type and widget class (`ev.Paint.…`, `ev.MetaCall.…`, `ev.Timer.…`;
+  `ADICHTION_PERF_EVENTS=0` leaves that part out). Counts of range signals, repaints and
+  wheel/drag/swipe inputs are in the summary. `adichtion bench FILE --pan [STEPS]` drives the
+  real window through a pan and zoom scenario and reports the same numbers.
 - `adichtion bench FILE` times the same operations without the GUI (opening, the whole-file
   range, curve passes for the whole file, 10 minutes, 60 seconds and 5 seconds, coarse and
   detailed, cold and warm, decoding per block, cursor look-ups, and with `--export` the

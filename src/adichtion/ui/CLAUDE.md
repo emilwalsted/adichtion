@@ -31,6 +31,21 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - `perfmon.py` — `StallMonitor`, the 5 ms `QTimer` that measures the GUI thread's stalls; created by
   `MainWindow` only when `ADICHTION_PERF` is set (`adichtion.perf`, which also times `open`, `install.*`,
   `render.coarse`, `render.detail` and the plots' repaints).
+- `panbench.py` — `adichtion bench FILE --pan`: runs a pan and zoom scenario on a real `MainWindow`
+  and returns the `ADICHTION_PERF` numbers (Qt imported inside `run_pan` only).
+- **The pan timeline (`ADICHTION_PERF=1`).** Per move: `input.wheel|drag|swipe` (the whole synchronous
+  handling of one input, with `input.<kind>` and `input.<kind>.x_range` counted: range signals per input),
+  `stack.x_range` (the master's signal) containing `stack.sync_hbar` and `stack.range_changed` (every
+  listener of `ChannelStack.rangeChanged`), `vb.linked` and `vb.update_range` (the x-linked ViewBoxes),
+  `strip.relayout`, `axis.ticks` inside `axis.draw_specs` (both inside the repaint `frame.paint`),
+  `markers.paint`, `cursor.paint`, `cursor.set`, `cursor.values`, `curve.set_data`, `plot.auto_y`,
+  `stack.render` (the debounced pass, with `render.coarse` inside), `stack.on_progress` (a decoded curve
+  arriving on the GUI thread), `stack.axis_width`. Counts: `signal.x_range` (master), `signal.x_range.all`
+  (every view's), `paint.plot` (plot repaints), `render.result_stale`. Spans nest, so totals are not
+  additive. `ev.<Type>.<receiver class>` is every top-level Qt event of the GUI thread, timed by
+  `perfmon.timed_notify` from `AdichtionApplication.notify` (only when the timing is on; a
+  QGraphicsView repaints inside its `MetaCall`, so `ev.MetaCall.GraphicsScene` contains `frame.paint`).
+  The names are code (event type from a fixed set, a class of this program or its toolkits, at most 200 distinct names, else `ev.Other`), never data. A modal dialog's own event loop is inside the event that opened it, so that event shows the dialog's open time. `bench --pan` reports `event_types_timed` 0 when it runs in a process that already had a QApplication (no `notify` hook then). `ev.MetaCall.GraphicsScene` is expected to contain `frame.paint` (the sandbox's offscreen run showed totals of the same size; confirm on the Mac).
 - `workers.py` — `JobRunner` (one thread, coalesced jobs per kind, `stale()`/`report()`)
   and `FrameGrabber` (OpenCV, latest request wins).
 

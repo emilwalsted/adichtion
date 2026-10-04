@@ -71,6 +71,32 @@ def test_only_numbers_can_be_logged():
     assert out.getvalue() == ""
 
 
+def test_counts_and_quiet_spans(capsys):
+    assert perf.count("paint.plot") == 0 and perf.counts() == {}          # off: nothing counted, nothing returned
+    assert perf.quiet_span("a") is perf.span("b")                          # off: the same shared do-nothing object
+    out = io.StringIO()
+    perf.configure(True, stream=out)
+    assert perf.count("paint.plot") == 1 and perf.count("paint.plot", 2) == 3 and perf.count("paint.plot", 0) == 3
+    with perf.quiet_span("axis.ticks"):                                    # fast: aggregated only
+        pass
+    with perf.quiet_span("axis.slow", slow_ms=0.0):                        # at or over the limit: printed as well
+        pass
+    text = out.getvalue()
+    assert "axis.ticks" not in text and "axis.slow" in text and "paint.plot" not in text
+    assert perf.summary()["axis.ticks"]["count"] == 1 and perf.counts() == {"paint.plot": 3}
+    perf.print_summary()
+    assert "perf counts" in out.getvalue() and "paint.plot" in out.getvalue()
+    perf.configure(True, stream=out)                                       # a new run starts from zero
+    assert perf.counts() == {} and perf.summary() == {}
+
+
+def test_event_timing_switch():
+    assert perf.events_enabled({}) is True                                 # on whenever timing is on
+    assert perf.events_enabled({"ADICHTION_PERF_EVENTS": "0"}) is False
+    assert perf.events_enabled({"ADICHTION_PERF_EVENTS": "off"}) is False
+    assert perf.events_enabled({"ADICHTION_PERF_EVENTS": "1"}) is True
+
+
 # -- the file's cache counters ----------------------------------------------------------------
 
 def test_cache_stats_count_decodes_and_hits(synthetic):
