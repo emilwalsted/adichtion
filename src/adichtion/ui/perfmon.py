@@ -55,6 +55,9 @@ _EVENT_TYPES = frozenset({
     "StyleChange", "PolishRequest", "DeferredDelete", "Enter", "Leave", "HoverMove", "ToolTip", "SockAct",
 })
 _in_event = False
+_CODE_MODULES = frozenset({"adichtion", "pyqtgraph", "PySide6", "shiboken6"})
+_MAX_NAMES = 200
+_seen: set[str] = set()
 
 
 def timed_notify(call, receiver, ev):
@@ -78,8 +81,13 @@ def timed_notify(call, receiver, ev):
             kind = ev.type().name
         except Exception:                                # noqa: BLE001 - an unnamed event type is not worth an error
             kind = "Other"
-        if kind in _EVENT_TYPES:
-            name = f"ev.{kind}.{type(receiver).__name__}"
-        else:
-            name = "ev.Other"
+        cls = type(receiver)
+        # only classes of this program or its toolkits are named, and at most _MAX_NAMES distinct names in all
+        known = cls.__module__.split(".")[0] in _CODE_MODULES
+        name = f"ev.{kind}.{cls.__name__}" if kind in _EVENT_TYPES and known else "ev.Other"
+        if name not in _seen:
+            if len(_seen) >= _MAX_NAMES:
+                name = "ev.Other"
+            else:
+                _seen.add(name)
         perf.event(name, ms, quiet=ms < SLOW_EVENT_MS)

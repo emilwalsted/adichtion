@@ -45,7 +45,7 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   additive. `ev.<Type>.<receiver class>` is every top-level Qt event of the GUI thread, timed by
   `perfmon.timed_notify` from `AdichtionApplication.notify` (only when the timing is on; a
   QGraphicsView repaints inside its `MetaCall`, so `ev.MetaCall.GraphicsScene` contains `frame.paint`).
-  The names are code (event type from a fixed set, class name), never data.
+  The names are code (event type from a fixed set, a class of this program or its toolkits, at most 200 distinct names, else `ev.Other`), never data. A modal dialog's own event loop is inside the event that opened it, so that event shows the dialog's open time. `bench --pan` reports `event_types_timed` 0 when it runs in a process that already had a QApplication (no `notify` hook then). `ev.MetaCall.GraphicsScene` is expected to contain `frame.paint` (the sandbox's offscreen run showed totals of the same size; confirm on the Mac).
 - `workers.py` — `JobRunner` (one thread, coalesced jobs per kind, `stale()`/`report()`)
   and `FrameGrabber` (OpenCV, latest request wins).
 

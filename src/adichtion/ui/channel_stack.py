@@ -341,7 +341,7 @@ class ChannelPlot(QWidget):
 
     @staticmethod
     def _count_x_range(*args) -> None:
-        perf.count("signal.x_range.all")           # every view's own range signal (the master's, the 8 linked ones)
+        perf.count("signal.x_range.all")           # every visible plot's own range signal (the master's and the linked ones)
 
     def _small_button(self, text: str, tip: str) -> QToolButton:
         b = QToolButton(self.buttons)

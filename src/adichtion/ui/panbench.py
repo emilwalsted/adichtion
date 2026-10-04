@@ -25,6 +25,21 @@ DEFAULT_PAUSE_MS = 40
 DEFAULT_VIEW_S = 600.0                  # the view the scenario starts from: 10 minutes (a quarter of the file when that is shorter)
 
 
+def _platform() -> str:
+    """The Qt platform plugin, from a fixed list (the environment variable is free text)."""
+    p = os.environ.get("QT_QPA_PLATFORM", "").split(":")[0].lower()
+    return p if p in ("offscreen", "cocoa", "windows", "xcb", "wayland", "minimal") else "native"
+
+
+def _open_quietly(w, path: str) -> None:
+    """Open the file; a failure raises instead of showing the window's modal error box (it would hang a headless run)."""
+    from ..file import AdichtFile
+
+    AdichtFile(path).close()                                # raises on a bad file, with no dialog
+    if not w.open_file(path):
+        raise ValueError("the window could not open the file")
+
+
 def _pump(app, seconds: float) -> None:
     """Event-loop time with sleeps in between (a worker's results arrive as queued signals)."""
     end = time.monotonic() + seconds
@@ -54,18 +69,21 @@ def run_pan(path: str, steps: int = DEFAULT_STEPS, pause_ms: int = DEFAULT_PAUSE
     from . import theme
     from .channel_stack import _input_span
 
-    perf.configure(True, stream=io.StringIO())              # events on, nothing printed; the table below is the report
-    from .app import _application_class                     # after configure: the class times events only when perf is on
-    app = QApplication.instance() or _application_class()(["adichtion-bench"])
-    theme.apply_theme(app)
-    from .main_window import MainWindow
-
-    w = MainWindow()
-    w.resize(width, height)
-    w.show()
+    saved = perf.snapshot()                                  # the caller's own ADICHTION_PERF setup, put back at the end
+    w = None
     try:
+        perf.configure(True, stream=io.StringIO())          # events on, nothing printed; the table below is the report
+        from .app import _application_class                 # after configure: the class times events only when perf is on
+        had_app = QApplication.instance() is not None       # an existing application has no notify hook: no ev.* rows then
+        app = QApplication.instance() or _application_class()(["adichtion-bench"])
+        theme.apply_theme(app)
+        from .main_window import MainWindow
+
+        w = MainWindow()
+        w.resize(width, height)
+        w.show()
         _pump(app, 0.2)
-        w.open_file(path)
+        _open_quietly(w, path)
         stack = w.stack
         if stack.timeline is None or not stack.visible_channels:
             raise ValueError("the file has no channel with data to show")
@@ -108,16 +126,17 @@ def run_pan(path: str, steps: int = DEFAULT_STEPS, pause_ms: int = DEFAULT_PAUSE
                          "channels_shown": len(stack.visible_channels),
                          "pan_wall_ms_per_step": round(pan_wall * 1000.0 / max(1, steps), 3),
                          "zoom_wall_ms_per_step": round(zoom_wall * 1000.0 / max(1, zoom_steps), 3) if zoom_steps else 0.0,
-                         "platform": os.environ.get("QT_QPA_PLATFORM", "") or "native"},
+                         "platform": _platform(), "event_types_timed": int(not had_app)},
             "events": events,
             "counts": counts,
         }
         return report
     finally:
-        w.close()
-        w.deleteLater()
-        app.processEvents()
-        perf.configure(False)
+        if w is not None:
+            w.close()
+            w.deleteLater()
+            app.processEvents()
+        perf.restore(saved)
 
 
 def format_pan(r: dict[str, Any]) -> str:

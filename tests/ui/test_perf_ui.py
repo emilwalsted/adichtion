@@ -2,6 +2,7 @@
 on means the steps of opening and rendering are timed."""
 import io
 import json
+import os
 
 import pytest
 from PySide6.QtCore import QTimer
@@ -100,7 +101,7 @@ def test_a_pan_is_broken_into_its_steps_and_counted(qapp, synthetic):
         assert name in s, name
     assert s["input.swipe"]["count"] == 5 and s["stack.x_range"]["count"] == 5
     assert c["input.swipe"] == 5 and c["signal.x_range"] == 5
-    assert c["signal.x_range.all"] >= 5 * len(w.stack.visible_channels)   # the master's and every linked view's own signal
+    assert c["signal.x_range.all"] == 5 * len(w.stack.visible_channels)    # one per visible plot per move, the master's included
     assert c["input.swipe.x_range"] == c["signal.x_range.all"]              # all of it caused inside the five inputs
     assert c["paint.plot"] >= 5
 
@@ -138,6 +139,19 @@ def test_event_timing_names_are_code_and_only_the_outermost_event_counts(qapp):
     names = set(perf.summary())
     assert names == {"ev.Timer.QObject", "ev.Other"}
     assert perf.summary()["ev.Timer.QObject"]["count"] == 1 and len(calls) == 2
+    class Local:                                                      # a class of neither this program nor a toolkit is never named
+        pass
+    perf.configure(True, stream=io.StringIO())
+    perfmon.timed_notify(lambda r, e: True, Local(), QEvent(QEvent.Timer))
+    assert set(perf.summary()) == {"ev.Other"}
+    perf.configure(True, stream=io.StringIO())
+    with pytest.raises(RuntimeError):                                 # an exception leaves nothing stuck: the next event is timed again
+        perfmon.timed_notify(lambda r, e: (_ for _ in ()).throw(RuntimeError()), obj, QEvent(QEvent.Timer))
+    perfmon.timed_notify(lambda r, e: True, obj, QEvent(QEvent.Timer))
+    assert perf.summary()["ev.Timer.QObject"]["count"] == 2
+    perf.configure(True, stream=io.StringIO())
+    with pytest.raises(ValueError):
+        perf.count("subject 42")
 
 
 def test_bench_pan_drives_the_window_and_reports_only_numbers(synthetic, tmp_path, capsys):
@@ -159,3 +173,17 @@ def test_bench_pan_drives_the_window_and_reports_only_numbers(synthetic, tmp_pat
     for forbidden in ("subj-0042", "baseline", "flow", "pmo", "inh2o", str(tmp_path).lower()):
         assert forbidden not in text, forbidden
     assert not perf.enabled()                                         # the scenario leaves timing off again
+
+
+def test_bench_pan_times_qt_events_through_the_application_class(synthetic):
+    """A fresh process: the application class that installs ``notify`` (the pytest QApplication would shadow it)."""
+    import subprocess
+    import sys
+
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", ADICHTION_PERF="", PYTHONPATH=os.pathsep.join(p for p in sys.path if p))   # the tests move HOME: keep the user site
+    out = subprocess.run([sys.executable, "-m", "adichtion", "bench", synthetic["path"], "--pan", "4", "--json"],
+                         capture_output=True, text=True, env=env, timeout=120)
+    assert out.returncode == 0, out.stderr[-300:]
+    events = json.loads(out.stdout)["pan"]["events"]
+    assert any(k.startswith("ev.") for k in events), sorted(events)
+    assert all(k.startswith("ev.") is False or k.count(".") == 2 or k == "ev.Other" for k in events)

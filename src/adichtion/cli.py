@@ -318,9 +318,11 @@ def cmd_bench(a: argparse.Namespace) -> None:
     if a.pan is not None:
         try:
             from .ui.panbench import run_pan
-            report["pan"] = run_pan(a.file, steps=a.pan)
+            import PySide6, pyqtgraph  # noqa: F401,E401 - the UI extra
         except ImportError:
             sys.exit("error: --pan drives the viewer window and needs the UI extra (pip install 'adichtion[ui]')")
+        try:
+            report["pan"] = run_pan(a.file, steps=a.pan)
         except Exception as exc:  # noqa: BLE001 - report and exit
             sys.exit(f"error: the pan scenario could not be run ({type(exc).__name__})")
     if a.output:

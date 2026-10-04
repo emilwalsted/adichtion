@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import numbers
 import os
+import re
 import sys
 import threading
 import time
@@ -32,10 +33,12 @@ ENV_EVENTS = "ADICHTION_PERF_EVENTS"
 _TRUE = ("1", "true", "yes", "on")
 _LEVELS = ("samples", "envelope", "coarse")        # the one non-numeric field allowed: a code-literal LOD level
 
+_NAME_RE = re.compile(r"[A-Za-z0-9_.]{1,64}")      # an event name is code: letters, digits, underscore, dot
 _lock = threading.Lock()
 _io_lock = threading.Lock()                        # serialises the output lines (separate from the aggregates' lock)
 _enabled = False
 _stream: Optional[TextIO] = None
+_path: Optional[str] = None
 _file: Optional[TextIO] = None
 _t0 = time.perf_counter()
 _stats: dict[str, list[float]] = {}                # name -> [count, total_ms, max_ms]
@@ -49,8 +52,9 @@ def enabled() -> bool:
 def configure(on: bool, path: Optional[str] = None, stream: Optional[TextIO] = None) -> None:
     """Switch the timeline on or off (tests; the app takes the environment at start-up).
     ``stream`` replaces stderr, ``path`` is the optional JSON-lines file."""
-    global _enabled, _stream, _file, _t0
+    global _enabled, _stream, _file, _t0, _path
     with _lock:
+        _path = path
         if _file is not None:
             try:
                 _file.close()
@@ -68,6 +72,16 @@ def configure(on: bool, path: Optional[str] = None, stream: Optional[TextIO] = N
                 _file = os.fdopen(fd, "a", encoding="utf-8", buffering=1)
             except OSError as exc:
                 print(f"perf: cannot write {ENV_FILE}: {exc.strerror}", file=sys.stderr)
+
+
+def snapshot() -> tuple:
+    """The current switch, file path and stream, for :func:`restore` (the bench scenario borrows the timeline)."""
+    return (_enabled, _path, _stream)
+
+
+def restore(state: tuple) -> None:
+    on, path, stream = state
+    configure(on, path, stream)
 
 
 def configure_from_env(environ=None) -> bool:
@@ -133,6 +147,8 @@ def event(name: str, ms: Optional[float] = None, quiet: bool = False, **fields) 
     their count, total and maximum are in the summary."""
     if not _enabled:
         return
+    if not _NAME_RE.fullmatch(name):
+        raise ValueError("perf event names are code-literal identifiers, never texts")
     _emit(name, ms, _clean(fields), quiet)
 
 
@@ -142,6 +158,8 @@ def count(name: str, n: int = 1) -> int:
     Returns the new total (0 when timing is off), so a caller can tell how many happened between two points."""
     if not _enabled:
         return 0
+    if not _NAME_RE.fullmatch(name):
+        raise ValueError("perf count names are code-literal identifiers, never texts")
     with _lock:
         total = _counts[name] = _counts.get(name, 0) + int(n)
     return total
