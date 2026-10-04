@@ -44,7 +44,7 @@ from .decimate import minmax_envelope, upsample_like_labchart
 from .macdoc import MacDocument, decode_mac_block, is_mac_document, read_mac_document
 from .model import ChannelInfo, ChannelRecordInfo, ChartData, Comment, RecordInfo, UnitsConversion, VideoClip
 from .qtmovie import MovieError, read_movie_timing
-from .video import movies_folder, read_videos, video_path
+from .video import movies_folder, read_videos, video_candidate_path
 
 __all__ = ["AdichtFile", "ChannelBlockTable", "Record", "Selection"]
 
@@ -700,13 +700,21 @@ class Record:
         return self.file.video_for(self.index)
 
     @property
-    def video_file(self) -> Optional[str]:
-        """Path of the clip's file if it exists in the ``<name> movies`` folder (for a Mac
-        document: and its timing could be read, which rules out cloud placeholders)."""
+    def video_candidate(self) -> Optional[str]:
+        """Where :attr:`video_file` looks (``None`` when it cannot be a usable clip); a path
+        computation only, so it is cheap and safe to call for every record of a big file."""
         v = self.video
         if v is None or (self.file.kind == "mac" and not v.stamped):
             return None
-        return video_path(self.file.path, v)
+        return video_candidate_path(self.file.path, v)
+
+    @property
+    def video_file(self) -> Optional[str]:
+        """Path of the clip's file if it exists in the ``<name> movies`` folder (for a Mac
+        document: and its timing could be read, which rules out cloud placeholders). One
+        file-system lookup per call: ask for it when the clip is shown, not for every record."""
+        p = self.video_candidate
+        return p if p is not None and os.path.exists(p) else None
 
     def __repr__(self) -> str:
         return f"Record({self.index}, {self.start_local:%Y-%m-%d %H:%M:%S}, {self.duration_s:.2f} s, {len(self.comments)} comments)"

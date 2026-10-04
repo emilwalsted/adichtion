@@ -75,9 +75,14 @@ def movies_folder(adicht_path: str | os.PathLike) -> str:
     return stem + MOVIES_SUFFIX
 
 
-def video_path(adicht_path: str | os.PathLike, clip: VideoClip) -> Optional[str]:
-    """Full path of a clip's file if it exists next to the document."""
+def video_candidate_path(adicht_path: str | os.PathLike, clip: VideoClip) -> Optional[str]:
+    """Where a clip's file would be next to the document; touches no file system."""
     if not clip.has_video:
         return None
-    p = os.path.join(movies_folder(adicht_path), clip.file_name)
-    return p if os.path.exists(p) else None
+    return os.path.join(movies_folder(adicht_path), clip.file_name)
+
+
+def video_path(adicht_path: str | os.PathLike, clip: VideoClip) -> Optional[str]:
+    """Full path of a clip's file if it exists next to the document."""
+    p = video_candidate_path(adicht_path, clip)
+    return p if p is not None and os.path.exists(p) else None
