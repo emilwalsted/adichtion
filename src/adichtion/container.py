@@ -13,6 +13,8 @@ from __future__ import annotations
 import mmap
 import os
 import struct
+import sys
+from array import array
 from dataclasses import dataclass, field
 from typing import Iterator, Optional
 
@@ -58,8 +60,10 @@ class AdichtContainer:
     """Read-only access to the streams of an ``.adicht`` file.
 
     The file is memory mapped; streams are materialised as ``bytes`` on demand
-    with :meth:`read_stream`.  Use it as a context manager or call
-    :meth:`close`.
+    with :meth:`read_stream`, or, when the stream is one contiguous run of
+    clusters, served as a zero-copy ``memoryview`` of the mapping with
+    :meth:`stream_view`.  Use it as a context manager or call :meth:`close`;
+    closing releases every view :meth:`stream_view` handed out.
     """
 
     def __init__(self, path: str | os.PathLike):
@@ -83,12 +87,26 @@ class AdichtContainer:
         self.n_clusters = (len(d) - self.header_size) // self.cluster_size
         self.entries_per_page = self.cluster_size // 8
         self._tree: Optional[Entry] = None
+        self._views: list[memoryview] = []      # the zero-copy views handed out by stream_view
 
     # -- lifecycle -----------------------------------------------------------
     def close(self) -> None:
+        """Release the views, unmap and close the file.  Safe to call twice.  A slice of a view that
+        somebody still holds (a worker thread in the middle of a decode, a traceback keeping a
+        frame alive) makes ``mmap.close`` raise ``BufferError``; that is swallowed and the mapping
+        goes when the last slice does, so ``close`` itself never fails."""
+        views, self._views = self._views, []
+        for v in views:
+            try:
+                v.release()
+            except (BufferError, ValueError):
+                pass
         try:
             if isinstance(self.data, mmap.mmap):
-                self.data.close()
+                try:
+                    self.data.close()
+                except BufferError:
+                    pass
         finally:
             self._fh.close()
 
@@ -144,6 +162,36 @@ class AdichtContainer:
             if len(buf) >= entry.size:
                 break
         return bytes(buf[: entry.size])
+
+    def _is_contiguous(self, first: int, last: int) -> bool:
+        """True when the cluster map links every cluster from ``first`` to ``last`` to its successor
+        (``c`` -> ``c + 1``): one read of the (contiguous) map slice, not a walk cluster by cluster."""
+        if last < first or first < 2 or sys.byteorder != "little":
+            return False
+        base = self.offset(self.map_first)
+        raw = self.data[base + first * 8: base + last * 8]
+        if len(raw) != (last - first) * 8:
+            return False
+        links = array("i")
+        links.frombytes(bytes(raw))
+        return links[0::2] == array("i", range(first + 1, last + 1))
+
+    def stream_view(self, entry: Entry) -> Optional[memoryview]:
+        """The content of a stream as a zero-copy ``memoryview`` of the mapping, or ``None`` when that
+        is not possible (no mapping, an empty entry, a chain that is not one contiguous run of
+        clusters, or a stream that reaches past the end of the file): the caller then uses
+        :meth:`read_stream`.  The view is released by :meth:`close`; do not keep slices of it
+        beyond that."""
+        if not isinstance(self.data, mmap.mmap) or entry.first <= 0 or entry.size <= 0:
+            return None
+        start = self.offset(entry.first)
+        if start < 0 or start + entry.size > len(self.data) or not self._is_contiguous(entry.first, entry.last):
+            return None
+        if self.offset(entry.last) + self.cluster_size < start + entry.size:
+            return None                                     # the chain is shorter than the stream says
+        view = memoryview(self.data)[start: start + entry.size]
+        self._views.append(view)
+        return view
 
     # -- directory -----------------------------------------------------------
     @staticmethod

@@ -293,23 +293,34 @@ def build_video_stream(records: Sequence[SynthRecord]) -> bytes:
 
 
 # -- container ------------------------------------------------------------------
-def build_container(streams: dict, cluster_size: int = 4096, version: int = 29) -> bytes:
+def build_container(streams: dict, cluster_size: int = 4096, version: int = 29, fragment: bool = False) -> bytes:
     """Lay out streams contiguously (cluster numbers start at 2), then the
     directory tables (one per storage), then the cluster-map pages.  A value
-    that is a ``dict`` becomes a nested storage."""
+    that is a ``dict`` becomes a nested storage.  With ``fragment`` a stream
+    of three or more clusters is laid out in runs of two clusters with an
+    unused cluster between them, so its chain is not contiguous (what a
+    container that has been edited in place looks like)."""
     entries_per_page = cluster_size // 8
     body = bytearray()
     cluster = 2
-    links: list[tuple[int, int]] = []       # (first, last) runs to link in the cluster map
+    links: list[list[int]] = []             # the clusters of every stream, in chain order
 
     def place(data: bytes) -> tuple[int, int]:
         nonlocal cluster, body
         n = max(1, math.ceil(len(data) / cluster_size))
-        first = cluster
-        body += data + bytes(n * cluster_size - len(data))
-        cluster += n
-        links.append((first, first + n - 1))
-        return first, first + n - 1
+        padded = data + bytes(n * cluster_size - len(data))
+        chain: list[int] = []
+        step = 2 if fragment and n >= 3 else n
+        for i in range(0, n, step):
+            run = min(step, n - i)
+            chain.extend(range(cluster, cluster + run))
+            body += padded[i * cluster_size:(i + run) * cluster_size]
+            cluster += run
+            if run == step and i + run < n:
+                body += bytes(cluster_size)          # the gap: a cluster no chain visits
+                cluster += 1
+        links.append(chain)
+        return chain[0], chain[-1]
 
     def entry(name: str, first: int, size: int, last: int, typ: int) -> bytes:
         e = bytearray(ENTRY_SIZE)
@@ -339,9 +350,9 @@ def build_container(streams: dict, cluster_size: int = 4096, version: int = 29) 
     pages = math.ceil((cluster + 1) / entries_per_page)
     capacity = pages * entries_per_page
     cmap = bytearray(pages * cluster_size)
-    for first, last in links:
-        for c in range(first, last + 1):
-            struct.pack_into("<ii", cmap, c * 8, c + 1 if c < last else 0, c - 1 if c > first else 0)
+    for chain in links:
+        for i, c in enumerate(chain):
+            struct.pack_into("<ii", cmap, c * 8, chain[i + 1] if i + 1 < len(chain) else 0, chain[i - 1] if i else 0)
     body += cmap
     hdr = bytearray(HEADER_SIZE)
     hdr[:len(CONTAINER_MAGIC)] = CONTAINER_MAGIC
@@ -353,10 +364,11 @@ def build_container(streams: dict, cluster_size: int = 4096, version: int = 29) 
 
 def write_synthetic(path, channels: Sequence[SynthChannel], records: Sequence[SynthRecord], tick_rate: int = 1000,
                     cluster_size: int = 4096, version: int = 29, layout: str = "sequential",
-                    video: bool = False) -> None:
+                    video: bool = False, fragment: bool = False) -> None:
     """Write a synthetic document.  ``version`` selects the v26 or v29 flavour
     of the Map stream (``layout="legacy"`` writes the scan-only layout);
-    ``video=True`` adds the video module's stream."""
+    ``video=True`` adds the video module's stream; ``fragment=True`` lays the
+    streams out in non-contiguous cluster chains (see :func:`build_container`)."""
     blocks, index = build_blocks_stream(channels, records)
     if layout == "legacy":
         mp = build_map_stream_legacy(channels, records, tick_rate)
@@ -366,7 +378,7 @@ def write_synthetic(path, channels: Sequence[SynthChannel], records: Sequence[Sy
     if video:
         streams["ChildDocuments"] = {"ADIStdPart4": build_video_stream(records)}
     with open(path, "wb") as fh:
-        fh.write(build_container(streams, cluster_size, version))
+        fh.write(build_container(streams, cluster_size, version, fragment))
 
 
 # -- LabChart for Mac documents (docs/MAC_FORMAT.md) ------------------------------------------

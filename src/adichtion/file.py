@@ -67,6 +67,25 @@ CACHE_MIN_BYTES = 256 * 1024 * 1024         # the cache never gets less than thi
 CACHE_MAX_BYTES = 1024 * 1024 * 1024        # ... nor more than this
 CACHE_RAM_FRACTION = 0.25                   # ... and in between a quarter of the memory that is free at open
 
+#: A ``.adicht`` file of at least this many bytes is not read into memory but served as a window on its
+#: memory mapping (``AdichtFile(zero_copy=None)``, the default).  Smaller files are copied: they cost
+#: next to nothing to read, and a copy is stable if the file is changed or locked meanwhile, whereas a
+#: mapping is not (docs/beslutninger.md 2026-10-04 (7)).  ``ADICHTION_ZERO_COPY`` = ``0``/``1`` forces
+#: the choice for every file, ``auto`` (or unset) means this size rule; the ``zero_copy`` argument beats both.
+ZERO_COPY_MIN_BYTES = 64 * 1024 * 1024
+
+
+def _zero_copy_wanted(size: int, requested: Optional[bool]) -> bool:
+    if requested is not None:
+        return bool(requested)
+    env = os.environ.get("ADICHTION_ZERO_COPY", "").strip().lower()
+    if env in ("1", "on", "true", "yes"):
+        return True
+    if env in ("0", "off", "false", "no"):
+        return False
+    return size >= ZERO_COPY_MIN_BYTES
+
+
 #: Buckets of the min/max summary kept for every decoded block (a block of 16000 ticks then
 #: gets one bucket per 500 ticks).  A detail pass whose pixel buckets are at least that wide
 #: is served from the summaries instead of from the samples (``Record.overview``).
@@ -198,11 +217,19 @@ class _ChannelSummaries:
         self.have[block] = True            # last: a reader that sees it also sees the numbers
 
 
-def _subblocks_from_map(blocks: bytes, chart: ChartData) -> list[SubBlock]:
+def _subblocks_from_map(blocks: bytes | memoryview, chart: ChartData) -> list[SubBlock]:
     """Build the sub-block list from the Map stream's block index (one header
     read per sub-block, no walk of the chain).  Order: record, block, channel."""
     out: list[SubBlock] = []
     view = memoryview(blocks)
+    try:        # release the view even when the index is bad: it may be a window on the file's mapping
+        _fill_subblocks_from_map(view, chart, out)
+    finally:
+        view.release()
+    return out
+
+
+def _fill_subblocks_from_map(view: memoryview, chart: ChartData, out: list[SubBlock]) -> None:
     for rec in chart.records:
         for b in range(len(rec.blocks)):
             for ch in rec.channels:
@@ -222,7 +249,6 @@ def _subblocks_from_map(blocks: bytes, chart: ChartData) -> list[SubBlock]:
                     n_samples = (n - 12) // ssize
                 out.append(SubBlock(index=len(out), offset=off, body_offset=body_offset, body_size=n - 12,
                                     flags=flags, n_samples=n_samples))
-    return out
 
 
 @dataclass(frozen=True)
@@ -253,8 +279,9 @@ class AdichtFile:
     definition (:meth:`channel_definition`)."""
 
     def __init__(self, path: str | os.PathLike, cache_blocks: Optional[int] = None,
-                 cache_bytes: Optional[int] = None):
+                 cache_bytes: Optional[int] = None, zero_copy: Optional[bool] = None):
         self.path = os.fspath(path)
+        self.zero_copy = False          # True when the sample stream is a window on the file's mapping
         self.mac: Optional[MacDocument] = None
         self._container: Optional[AdichtContainer] = None
         self._envelopes: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
@@ -270,14 +297,14 @@ class AdichtFile:
             self.videos: list[VideoClip] = self._mac_videos()
         else:
             self.kind = "adicht"
-            self._open_adicht()
+            self._open_adicht(zero_copy)
         self._cache = _BlockCache(cache_bytes, cache_blocks)
         self._summaries: dict[tuple[int, int], _ChannelSummaries] = {}
         self._summaries_lock = threading.Lock()
         self._range_override: dict[int, float] = {}
         self.records: list[Record] = [Record(self, r) for r in self.chart.records]
 
-    def _open_adicht(self) -> None:
+    def _open_adicht(self, zero_copy: Optional[bool] = None) -> None:
         self._container = AdichtContainer(self.path)
         try:
             self._map_entry = self._container.find_stream("Map")
@@ -285,7 +312,10 @@ class AdichtFile:
             if self._map_entry is None or self._blocks_entry is None:
                 raise AdichtFormatError("file has no Map / Blocks_0 stream")
             self.chart: ChartData = parse_chart_data(self._container.read_stream(self._map_entry))
-            self._blocks: bytes = self._container.read_stream(self._blocks_entry)
+            view = (self._container.stream_view(self._blocks_entry)
+                    if _zero_copy_wanted(len(self._container.data), zero_copy) else None)
+            self.zero_copy = view is not None       # None: not wanted, or no contiguous run: copy
+            self._blocks: bytes | memoryview = view if view is not None else self._container.read_stream(self._blocks_entry)
             if self.chart.parse_mode == "sequential":
                 subblocks = _subblocks_from_map(self._blocks, self.chart)
             else:
@@ -298,6 +328,7 @@ class AdichtFile:
                                         f"{self.chart.n_channels} channel entries")
             self.videos = read_videos(self._container)
         except Exception:
+            self._blocks = b""              # drop our own window first; the container releases its views
             self._container.close()
             raise
 
