@@ -2,6 +2,29 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-04 (7) — Zero-copy datastrøm over en størrelsesgrænse (P6)
+
+`AdichtFile._blocks` var en kopi af hele `Blocks_0` (362 MB: 0,45 s og 726 MB spidshukommelse ved åbning).
+Nu er den et `memoryview` over containerens mmap, når strømmen er én sammenhængende klyngekæde
+(`AdichtContainer.stream_view`; kæden kontrolleres i ét udsnit af klyngekortet), ellers kopi som før.
+
+- **Mellemvalget, ikke ren zero-copy:** kun filer på mindst 64 MB (`file.ZERO_COPY_MIN_BYTES`) får
+  vinduet; `ADICHTION_ZERO_COPY=0`/`1` og `AdichtFile(zero_copy=)` overstyrer (argument, så miljø, så størrelse).
+  Mac-dokumenter læses som hidtil ind i hukommelsen (ikke ændret, opgavens punkt 3 valgt fra).
+- **Risici, som opgaven bad Emil afveje:** (a) mmap'en holdes åben til `close()` for ALLE filer, også
+  før denne ændring, så Windows' lås mod omdøb/slet er ikke nyt og ikke afhængig af grænsen; (b) netværksdrev
+  og skyplaceholdere kan give sidefejl i GUI-/arbejdstråden ved afkodning, nu også for store filer; (c) en
+  fil, der afkortes efter åbning, ville give SIGBUS/access violation. Delvist afbødet: hver afkodning af
+  en ny blok (zero-copy) sammenligner filens størrelse med mappingens (`_check_not_truncated`), så den
+  opdagelige afkortning giver `AdichtFormatError`. Racet er ikke lukket, og ændring uden afkortning opdages ikke.
+- **Oprydning:** `close()` frigiver containerens views og sluger `BufferError`, hvis en slice stadig lever (en
+  arbejdstråd midt i en afkodning eller en traceback); mappingen lukkes da, når sidste slice dør. Brug efter
+  `close()` giver `ValueError`, ikke et nedbrud (testet med fire tråde mod close, ingen SIGSEGV).
+  `iter_subblocks` og `_subblocks_from_map` frigiver deres views i `finally`.
+- Ikke gjort: afvisning af ikke-lokale drev (kræver platformsheuristik); ukendt `ADICHTION_ZERO_COPY`-værdi
+  falder lydløst tilbage til størrelsesreglen. Ikke målt på rigtige filer eller på Windows: Emil prøver, at en
+  åben fil kan omdøbes/slettes, at et netværksdrev opfører sig, og kører `tests/test_integration_samples.py`.
+
 ## 2026-10-04 (6) — Filen åbnes på en baggrundstråd (P5)
 
 `MainWindow.open_file` startede før `AdichtFile(path)` i GUI-tråden (0,45 s for 362 MB, flere sekunder for 2 GB).

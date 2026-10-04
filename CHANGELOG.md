@@ -6,6 +6,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- A `.adicht` file of 64 MB or more is no longer copied into memory when it is opened: its sample stream
+  is read straight from the file's memory mapping (362 MB: opening 0.45 s to 0.1 s, peak memory 726 MB to
+  381 MB). Smaller files, files with a fragmented cluster chain and Mac documents are copied as before.
+  `ADICHTION_ZERO_COPY=0` turns it off, `=1` forces it. A file shortened after it was opened gives an
+  error instead of a crash.
 - Opening a file no longer freezes the window: it is read on a worker thread, a cancellable
   "Opening ..." dialog appears when it takes more than a moment, and a second open replaces
   the one still running. A file that cannot be read gives the same error box as before.

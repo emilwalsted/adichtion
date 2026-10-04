@@ -93,27 +93,30 @@ class SubBlock:
 def iter_subblocks(stream: bytes | memoryview) -> Iterator[SubBlock]:
     """Walk the sub-block chain of a ``Blocks_0`` stream (headers only)."""
     view = memoryview(stream)
-    if bytes(view[:4]) != MAGIC:
-        raise BlocksFormatError("Blocks stream does not start with 55 55 03 aa")
-    pos = 4
-    idx = 0
-    total = len(view)
-    while pos + HEADER_SIZE <= total:
-        n, _check, negn, flags = struct.unpack_from("<iiii", view, pos)
-        if negn != -n or n < 12:
-            raise BlocksFormatError(f"bad sub-block header at stream offset {pos}")
-        body_offset = pos + HEADER_SIZE
-        body_size = n - 12
-        ssize = 4 if flags & FLAG_32BIT else 2
-        if flags & FLAG_PACKED and not flags & FLAG_UNPACKED:
-            raw, = struct.unpack_from("<i", view, body_offset)
-            n_samples = raw // ssize
-        else:
-            n_samples = body_size // ssize
-        yield SubBlock(index=idx, offset=pos, body_offset=body_offset, body_size=body_size,
-                       flags=flags, n_samples=n_samples)
-        idx += 1
-        pos += n + 4
+    try:                # release the view even when the walk fails: it may be a window on a mapping
+        if bytes(view[:4]) != MAGIC:
+            raise BlocksFormatError("Blocks stream does not start with 55 55 03 aa")
+        pos = 4
+        idx = 0
+        total = len(view)
+        while pos + HEADER_SIZE <= total:
+            n, _check, negn, flags = struct.unpack_from("<iiii", view, pos)
+            if negn != -n or n < 12:
+                raise BlocksFormatError(f"bad sub-block header at stream offset {pos}")
+            body_offset = pos + HEADER_SIZE
+            body_size = n - 12
+            ssize = 4 if flags & FLAG_32BIT else 2
+            if flags & FLAG_PACKED and not flags & FLAG_UNPACKED:
+                raw, = struct.unpack_from("<i", view, body_offset)
+                n_samples = raw // ssize
+            else:
+                n_samples = body_size // ssize
+            yield SubBlock(index=idx, offset=pos, body_offset=body_offset, body_size=body_size,
+                           flags=flags, n_samples=n_samples)
+            idx += 1
+            pos += n + 4
+    finally:
+        view.release()
 
 
 # -- PackBits ------------------------------------------------------------------
