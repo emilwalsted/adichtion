@@ -149,9 +149,32 @@ def test_bench_on_a_mac_document_with_a_calculated_channel(tmp_path, capsys):
 def test_bench_errors_are_plain(tmp_path, capsys):
     with pytest.raises(SystemExit) as e:
         cli_main(["bench", str(tmp_path / "missing.adicht")])
-    assert "not a file" in str(e.value)
+    assert str(e.value) == "error: the file does not exist"
     junk = tmp_path / "junk.adicht"
     junk.write_bytes(b"not a labchart file at all" * 10)
     with pytest.raises(SystemExit) as e:
         cli_main(["bench", str(junk)])
-    assert str(e.value).startswith("error:")
+    assert str(e.value).startswith("error:") and "junk" not in str(e.value) and str(tmp_path) not in str(e.value)
+    for bad in (["--width", "0"], ["--export", "0"], ["-o", str(tmp_path / "nodir" / "x.json")]):
+        with pytest.raises(SystemExit) as e:
+            cli_main(["bench", str(junk), *bad])
+        assert str(e.value).startswith("error:") and str(tmp_path) not in str(e.value)
+
+
+def test_numpy_numbers_are_accepted_and_a_broken_sink_switches_timing_off():
+    out = io.StringIO()
+    perf.configure(True, stream=out)
+    perf.event("e", 1.0, a=np.int64(3), b=np.float32(1.5), c=float("nan"))
+    assert "a=3" in out.getvalue() and "b=1.5" in out.getvalue()
+
+    class Broken:
+        def write(self, _):
+            raise BrokenPipeError
+
+        def flush(self):
+            raise BrokenPipeError
+
+    perf.configure(True, stream=Broken())
+    with perf.span("x"):
+        pass                                          # must not raise out of the measured code
+    assert not perf.enabled()

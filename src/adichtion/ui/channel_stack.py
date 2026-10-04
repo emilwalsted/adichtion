@@ -972,7 +972,7 @@ class ChannelStack(QWidget):
                 x, y, level = lod.curve_for_range(f, tl, c, x0, x1, width, coarse=True)
                 p.set_curve(x, y, level, None)
                 pending.append(c)
-            sp.set(channels=len(pending), span_s=x1 - x0)
+            sp.set(channels=len(pending), span_s=float(x1 - x0))
         if self._auto_zoom:
             self.zoom_to_fit()                  # the move is over (the render is debounced): fit what is drawn now
         if not pending:
@@ -1045,7 +1045,8 @@ def _render_job(f: AdichtFile, tl: Timeline, channels: list[int], a: float, b: f
     for c in channels:
         if stale():
             return None
-        with perf.span("render.detail", channel=c, buckets=n, span_s=b - a) as sp:
+        with perf.span("render.detail", channel=c, buckets=int(n), span_s=float(b - a)) as sp:
+            # the counters are the file's, so the delta also holds anything the GUI thread decoded meanwhile
             h0, m0 = f.cache_stats() if perf.enabled() else (0, 0)
             x, y, level = lod.curve_for_range(f, tl, c, a, b, n, coarse=False, stale=stale)
             if perf.enabled():

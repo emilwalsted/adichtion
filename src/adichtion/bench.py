@@ -11,8 +11,8 @@ channels and records, sampling rates and timings, never the file name, titles, c
 texts, dates or anything else that could identify a recording or a subject
 (``tests/test_perf.py`` pins it).
 
-Cold means the decoded-block cache and the filled envelopes were cleared first; warm is
-the same call again.  Times are wall-clock milliseconds of one run on the machine the
+Cold means adichtion's own caches (decoded blocks, filled envelopes) were cleared first, not
+the operating system's file cache; warm is the same call again.  Times are wall-clock milliseconds of one run on the machine the
 command runs on, which is the point: the numbers are Emil's own Mac with a real file.
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ def run_bench(path: str, width: int = DEFAULT_WIDTH, export_seconds: Optional[fl
     try:
         timeline = Timeline(f)
         channels = [c for c in range(f.n_channels) if f.has_data(c)]
-        total_blocks = sum(int(np.ceil(r.ticks / 16000)) for r in f.records)
+        total_blocks = sum(len(r.block_ticks) for r in f.records)
         report: dict[str, Any] = {
             "file": {"bytes": size, "kind": f.kind, "records": len(f.records), "channels": f.n_channels,
                      "channels_with_data": len(channels), "duration_s": _round(timeline.duration_s),
@@ -67,6 +67,8 @@ def run_bench(path: str, width: int = DEFAULT_WIDTH, export_seconds: Optional[fl
             report.update(global_range_ms=0.0, curves=[], decode={}, cursor={}, export=None)
             return report
 
+        for c in channels:                                  # one throw-away pass: imports and numpy warm-up are not the file's cost
+            lod.curve_for_range(f, timeline, c, 0.0, min(1.0, timeline.duration_s), 64, coarse=True)
         f.clear_cache()
         ms, _ = _ms(lambda: [lod.global_range(f, c) for c in channels])
         report["global_range_ms"] = _round(ms)
@@ -109,7 +111,7 @@ def run_bench(path: str, width: int = DEFAULT_WIDTH, export_seconds: Optional[fl
         for ri, bi in picked:
             n_samples += len(f.decode_block(ri, bi, ch))
         el = (time.perf_counter() - t) * 1000.0
-        report["decode"] = {"blocks": len(picked), "total_ms": _round(el),
+        report["decode"] = {"channel_rate_hz": float(f.records[0].sample_rate_hz(ch)), "blocks": len(picked), "total_ms": _round(el),
                             "ms_per_block": _round(el / max(1, len(picked))),
                             "samples_per_block": int(n_samples / max(1, len(picked)))}
 

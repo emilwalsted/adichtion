@@ -297,12 +297,22 @@ def cmd_bench(a: argparse.Namespace) -> None:
 
     from .bench import format_table, run_bench
 
+    # no path in any message: a file name can carry a subject id, and this command's output may be sent in
     if not os.path.isfile(a.file):
-        sys.exit(f"error: {a.file} is not a file")
+        sys.exit("error: the file does not exist")
+    if a.width < 1:
+        sys.exit("error: --width must be at least 1")
+    if a.export is not None and a.export <= 0:
+        sys.exit("error: --export needs a positive number of seconds")
+    if a.output:
+        try:
+            open(a.output, "a", encoding="utf-8").close()
+        except OSError as exc:
+            sys.exit(f"error: cannot write the output file ({exc.strerror})")
     try:
         report = run_bench(a.file, width=a.width, export_seconds=a.export)
     except Exception as exc:  # noqa: BLE001 - report and exit
-        sys.exit(f"error: {exc}")
+        sys.exit(f"error: the file could not be measured ({type(exc).__name__})")
     if a.output:
         with open(a.output, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=2)

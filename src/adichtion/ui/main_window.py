@@ -650,7 +650,10 @@ class MainWindow(QMainWindow):
         try:
             if self._stall is not None:
                 self._stall.stop()
-                perf.print_summary(self.file.cache_stats() if self.file is not None else None)
+                try:
+                    perf.print_summary(self.file.cache_stats() if self.file is not None else None)
+                except Exception:                  # noqa: BLE001 - timing must never keep the window from closing
+                    pass
             self.stack.close()
             self.runner.stop()
             self.infer_runner.stop()

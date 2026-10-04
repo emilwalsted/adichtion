@@ -18,6 +18,7 @@ summary prints and that ``adichtion bench`` reuses for its tables.
 from __future__ import annotations
 
 import json
+import numbers
 import os
 import sys
 import threading
@@ -31,6 +32,7 @@ _TRUE = ("1", "true", "yes", "on")
 _LEVELS = ("samples", "envelope", "coarse")        # the one non-numeric field allowed: a code-literal LOD level
 
 _lock = threading.Lock()
+_io_lock = threading.Lock()                        # serialises the output lines (separate from the aggregates' lock)
 _enabled = False
 _stream: Optional[TextIO] = None
 _file: Optional[TextIO] = None
@@ -59,7 +61,8 @@ def configure(on: bool, path: Optional[str] = None, stream: Optional[TextIO] = N
         _t0 = time.perf_counter()
         if on and path:
             try:
-                _file = open(path, "a", encoding="utf-8", buffering=1)
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                _file = os.fdopen(fd, "a", encoding="utf-8", buffering=1)
             except OSError as exc:
                 print(f"perf: cannot write {ENV_FILE}: {exc.strerror}", file=sys.stderr)
 
@@ -76,10 +79,11 @@ def _clean(fields: dict[str, Any]) -> dict[str, Any]:
     for k, v in fields.items():
         if isinstance(v, bool):
             out[k] = int(v)
-        elif isinstance(v, int):
-            out[k] = v
-        elif isinstance(v, float):
-            out[k] = round(v, 3)
+        elif isinstance(v, numbers.Integral):          # numpy integers too
+            out[k] = int(v)
+        elif isinstance(v, numbers.Real):
+            f = float(v)
+            out[k] = round(f, 3) if f == f and f not in (float("inf"), float("-inf")) else None   # JSON has no NaN
         elif k == "level" and v in _LEVELS:
             out[k] = v
         else:
@@ -96,22 +100,34 @@ def _emit(name: str, ms: Optional[float], fields: dict[str, Any], quiet: bool) -
             s[0] += 1
             s[1] += ms
             s[2] = max(s[2], ms)
-        if quiet:
-            return
-        parts = [f"{k}={v}" for k, v in fields.items()]
-        line = f"perf {now:9.3f}s  {name:<22}" + (f" {ms:9.2f} ms" if ms is not None else " " * 13) + ("  " + " ".join(parts) if parts else "")
-        print(line, file=_stream or sys.stderr, flush=True)
-        if _file is not None:
-            rec: dict[str, Any] = {"t": round(now, 4), "event": name}
-            if ms is not None:
-                rec["ms"] = round(ms, 3)
-            rec.update(fields)
-            _file.write(json.dumps(rec) + "\n")
+    if quiet:
+        return
+    parts = [f"{k}={v}" for k, v in fields.items()]
+    line = f"perf {now:9.3f}s  {name:<22}" + (f" {ms:9.2f} ms" if ms is not None else " " * 13) + ("  " + " ".join(parts) if parts else "")
+    rec: dict[str, Any] = {"t": round(now, 4), "event": name}
+    if ms is not None:
+        rec["ms"] = round(ms, 3)
+    rec.update(fields)
+    # the I/O is outside the stats lock (a blocked stderr must not freeze the GUI thread's quiet events), and a
+    # failing sink (closed pipe, full disk) switches timing off rather than raising out of the code being measured
+    with _io_lock:
+        try:
+            print(line, file=_stream or sys.stderr, flush=True)
+            if _file is not None:
+                _file.write(json.dumps(rec) + "\n")
+        except (OSError, ValueError):
+            _disable_after_io_error()
+
+
+def _disable_after_io_error() -> None:
+    global _enabled
+    _enabled = False
 
 
 def event(name: str, ms: Optional[float] = None, quiet: bool = False, **fields) -> None:
-    """Record one event (no-op unless enabled).  ``quiet`` only aggregates, for events too
-    frequent to print one by one (frames, ticks of the stall monitor)."""
+    """Record one event (no-op unless enabled).  ``quiet`` only aggregates (nothing printed, nothing in the
+    JSON-lines file), for events too frequent to print one by one (frames, ticks of the stall monitor);
+    their count, total and maximum are in the summary."""
     if not _enabled:
         return
     _emit(name, ms, _clean(fields), quiet)
@@ -173,6 +189,13 @@ def print_summary(cache: Optional[tuple[int, int]] = None) -> None:
         return
     out = _stream or sys.stderr
     rows = summary()
+    try:
+        _print_summary(out, rows, cache)
+    except (OSError, ValueError):
+        _disable_after_io_error()
+
+
+def _print_summary(out, rows, cache) -> None:
     if cache is not None:
         hits, misses = cache
         event("cache", None, hits=hits, decoded_blocks=misses,

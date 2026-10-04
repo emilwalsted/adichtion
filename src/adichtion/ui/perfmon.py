@@ -3,7 +3,7 @@
 A 5 ms ``QTimer`` that measures the gap between its own ticks: whenever the GUI thread is
 busy (decoding on it, a slow paint, a layout pass) the next tick comes late, and the gap
 is the stall the user feels as a freeze.  Gaps of ``REPORT_MS`` or more are printed as
-``gui.stall`` lines, every gap is aggregated (``gui.gap``: the maximum is the longest
+``gui.gap`` lines, every gap is aggregated (also ``gui.gap``: the maximum is the longest
 stall of the run).  Created only when timing is on, so a normal run has no extra timer.
 """
 from __future__ import annotations
