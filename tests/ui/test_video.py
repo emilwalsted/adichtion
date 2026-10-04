@@ -76,7 +76,7 @@ def test_grab_frame_seeks_reads_forward_and_survives_the_tail(qapp, video_docume
 
 
 def test_frame_follows_the_cursor(qapp, window, video_document):
-    window.open_file(video_document)
+    window.open_file_sync(video_document)
     v = window.video
     assert window.video_box.isVisible() and v.has_videos and not v.has_clip
     window.stack.set_cursor(5.0)
@@ -91,7 +91,7 @@ def test_frame_follows_the_cursor(qapp, window, video_document):
 
 
 def test_playback_moves_the_cursor_and_the_panels(qapp, window, video_document):
-    window.open_file(video_document)
+    window.open_file_sync(video_document)
     v = window.video
     window.stack.set_cursor(5.0)
     started = time.monotonic()
@@ -103,8 +103,8 @@ def test_playback_moves_the_cursor_and_the_panels(qapp, window, video_document):
     # instead of assuming the pump took 0.6 s (a slow CI runner overran it by 30 %).
     elapsed = time.monotonic() - started
     assert 0.3 <= t1 - 5.0 <= elapsed + 0.05 and t1 - 5.0 >= elapsed - 0.15
-    assert window.readout.text().startswith("Block 1 · 5.")
-    assert window.data.table.item(0, 0) is not None and window.data.where.text().startswith("Cursor: Block 1 · 5.")
+    assert window.readout.text().startswith(f"Block 1 · {int(t1)}.")             # (not a fixed 5.: a slow run crosses a second)
+    assert window.data.table.item(0, 0) is not None and window.data.where.text().startswith(f"Cursor: Block 1 · {int(t1)}.")
     assert "playing 1×" in v.caption.text()
     v.pause()
     assert not v.playing and window.act_play.text() == "Play video"
@@ -141,7 +141,7 @@ def test_playback_moves_the_cursor_and_the_panels(qapp, window, video_document):
 
 
 def test_playback_stops_at_the_end_of_the_block(qapp, window, video_document):
-    window.open_file(video_document)
+    window.open_file_sync(video_document)
     v = window.video
     v.set_rate(8.0)
     window.stack.set_cursor(39.0)
@@ -152,7 +152,7 @@ def test_playback_stops_at_the_end_of_the_block(qapp, window, video_document):
 
 
 def test_view_pages_along_with_the_playing_cursor(qapp, window, video_document):
-    window.open_file(video_document)
+    window.open_file_sync(video_document)
     window.stack.set_range(0.0, 2.0)
     window.stack.set_cursor(1.9)
     window.video.set_rate(2.0)

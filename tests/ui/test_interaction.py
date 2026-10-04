@@ -53,7 +53,7 @@ def ranges(stack):
 # -- 1. never zoom out past the file, 2. never out of step ------------------------------------
 
 def test_the_whole_file_is_the_widest_view(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     assert st.view_range() == pytest.approx((0.0, 45.0))
     st.zoom_out()
@@ -75,7 +75,7 @@ def test_the_whole_file_is_the_widest_view(qapp, window, synthetic):
 
 @pytest.mark.parametrize("index", [1, 3])
 def test_panning_any_plot_stops_at_the_file_and_keeps_every_plot_in_step(qapp, window, synthetic, index):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     vb = st.plots[index].vb
     st.set_range(30.0, 40.0)
@@ -89,7 +89,7 @@ def test_panning_any_plot_stops_at_the_file_and_keeps_every_plot_in_step(qapp, w
 
 
 def test_panning_with_the_mouse_stays_in_step(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     st.set_range(30.0, 40.0)
     pump(qapp, 0.05)
@@ -108,7 +108,7 @@ def test_panning_with_the_mouse_stays_in_step(qapp, window, synthetic):
 # -- 7. an interval by drag, by Shift+click; the context menu ---------------------------------
 
 def test_a_drag_selects_an_interval_and_a_short_one_is_a_click(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     drag(st.plots[1], 10.0, 20.0)
     pump(qapp, 0.05)
@@ -138,7 +138,7 @@ def test_a_drag_selects_an_interval_and_a_short_one_is_a_click(qapp, window, syn
 
 
 def test_the_drag_mode_can_be_swapped(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     st.set_range(10.0, 30.0)
     window.act_drag_selects.setChecked(False)                         # a plain drag pans, Alt+drag selects
@@ -154,7 +154,7 @@ def test_the_drag_mode_can_be_swapped(qapp, window, synthetic):
 
 
 def test_right_click_offers_export_of_the_interval_or_the_whole_recording(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     seen = []
     st.contextRequested.connect(seen.append)
@@ -171,7 +171,7 @@ def test_right_click_offers_export_of_the_interval_or_the_whole_recording(qapp, 
 
 
 def test_the_context_menu_presets_the_export_scope(qapp, window, synthetic, monkeypatch):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     made = []
 
@@ -196,7 +196,7 @@ def test_the_context_menu_presets_the_export_scope(qapp, window, synthetic, monk
 # -- 8. the export dialog remembers --------------------------------------------------------------
 
 def test_the_export_dialog_remembers_the_last_choices(qapp, window, synthetic, tmp_path, monkeypatch):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     f, tl, settings = window.file, window.timeline, window.settings
     settings.remove("export")
     asked = []
@@ -259,7 +259,7 @@ from test_video import video_document  # noqa: E402,F401  (the fixture that writ
 
 @needs_cv2
 def test_space_plays_the_selected_interval_and_stops_at_its_end(qapp, window, video_document):
-    window.open_file(video_document)
+    window.open_file_sync(video_document)
     st, v = window.stack, window.video
     v.set_rate(4.0)
     st.set_cursor(30.0)
@@ -286,7 +286,7 @@ def test_space_plays_the_selected_interval_and_stops_at_its_end(qapp, window, vi
 # -- 10. auto zoom and zoom to fit -----------------------------------------------------------------
 
 def test_auto_zoom_fits_the_y_axes_after_every_move(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     assert window.act_auto_zoom.isCheckable() and window.act_zoom_fit.isEnabled()
     assert window.act_zoom_fit.text() == "Zoom to fit" and window.act_auto_zoom.text() == "Auto zoom"
@@ -319,7 +319,7 @@ def test_auto_zoom_fits_the_y_axes_after_every_move(qapp, window, synthetic):
 # -- 6. a comment or block picked from a list ------------------------------------------------------
 
 def test_a_comment_or_block_from_the_list_centres_the_view_on_its_marker(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     st.set_range(0.0, 10.0)
     window.info.comments.cellClicked.emit(1, 0)                       # comment #2 at 16.005 s
@@ -410,6 +410,7 @@ def test_the_start_dialog_lists_the_recent_files(qapp, window, synthetic, tmp_pa
 
     monkeypatch.setattr(StartupDialog, "exec", fake_exec)
     window.open_startup()
+    assert wait_until(qapp, lambda: window.file is not None, timeout=10)         # the file opens on a worker thread
     assert shown and window.file is not None and window.file.path == synthetic["path"]
     # "Open a file…" goes on to the file dialog
     asked = []
@@ -432,7 +433,7 @@ def test_the_start_dialog_lists_the_recent_files(qapp, window, synthetic, tmp_pa
 # -- 5. the shared axis width -------------------------------------------------------------------------------
 
 def test_the_left_axes_share_a_width_that_fits_their_labels(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     pump(qapp, 0.2)
     widths = {p.axis_width for p in st.plots}
@@ -455,7 +456,7 @@ def test_the_left_axes_share_a_width_that_fits_their_labels(qapp, window, synthe
 # -- regressions found in review ---------------------------------------------------------------------
 
 def test_scroll_actions_move_the_view_half_a_screen(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     st.set_range(10.0, 20.0)
     window.act_scroll_right.trigger()
@@ -479,7 +480,7 @@ def test_a_saved_drag_mode_reaches_the_stack_at_start(qapp, synthetic):
 
 
 def test_a_drag_keeps_its_role_when_alt_is_pressed_midway(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     plot = st.plots[1]
     a, b, c = _px(plot, 10.0), _px(plot, 15.0), _px(plot, 20.0)
@@ -494,7 +495,7 @@ def test_a_drag_keeps_its_role_when_alt_is_pressed_midway(qapp, window, syntheti
 
 @needs_cv2
 def test_moving_the_cursor_during_interval_playback_drops_the_interval_stop(qapp, window, video_document):
-    window.open_file(video_document)
+    window.open_file_sync(video_document)
     st, v = window.stack, window.video
     v.set_rate(4.0)
     st.set_selection(5.0, 6.0)
@@ -506,7 +507,7 @@ def test_moving_the_cursor_during_interval_playback_drops_the_interval_stop(qapp
 
 
 def test_an_abandoned_drag_does_not_leave_a_stale_anchor(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     st = window.stack
     plot = st.plots[1]
     a, b = _px(plot, 10.0), _px(plot, 20.0)

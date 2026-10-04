@@ -220,7 +220,7 @@ def test_a_stale_job_returns_what_it_has(many):
 
 
 def test_the_strip_makes_block_labels_only_for_the_blocks_it_shows(qapp, window, many):
-    window.open_file(many)
+    window.open_file_sync(many)
     strip = window.stack.strip
     tl = window.stack.timeline
     n = len(tl.blocks)
@@ -238,7 +238,7 @@ def test_the_strip_makes_block_labels_only_for_the_blocks_it_shows(qapp, window,
     assert 7 in strip._shown and all(abs(i - 7) <= 1 for i in strip._shown)
     assert strip._labels[7].isVisible() and not any(strip._labels[i].isVisible() for i in strip._labels if i not in strip._shown)
     # a new file starts without the old labels
-    window.open_file(many)
+    window.open_file_sync(many)
     assert 7 not in strip._labels or 7 in strip._shown or not strip._labels[7].isVisible()
 
 

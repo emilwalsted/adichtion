@@ -22,7 +22,7 @@ def test_off_there_is_no_stall_timer_and_nothing_is_printed(qapp, window, synthe
     capsys.readouterr()
     assert window._stall is None
     assert not [t for t in window.findChildren(QTimer) if t.interval() == 5]
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     assert wait_until(qapp, lambda: all(p.level == "envelope" for p in window.stack.plots), timeout=20)
     pump(qapp, 0.1)
     out = capsys.readouterr()
@@ -41,7 +41,7 @@ def test_on_the_steps_are_timed_and_only_numbers_are_written(qapp, synthetic, tm
     w.show()
     try:
         assert isinstance(w._stall, StallMonitor)
-        w.open_file(synthetic["path"])
+        w.open_file_sync(synthetic["path"])
         assert wait_until(qapp, lambda: all(p.level == "envelope" for p in w.stack.plots), timeout=20)
         pump(qapp, 0.2)
         w.stack.set_range(10.0, 20.0)
@@ -74,7 +74,7 @@ def _opened(qapp, synthetic, **kw):
     w = MainWindow()
     w.resize(1400, 900)
     w.show()
-    w.open_file(synthetic["path"])
+    w.open_file_sync(synthetic["path"])
     assert wait_until(qapp, lambda: all(p.level == "envelope" for p in w.stack.plots), timeout=20)
     w.stack.set_range(10.0, 20.0)
     pump(qapp, 0.3)

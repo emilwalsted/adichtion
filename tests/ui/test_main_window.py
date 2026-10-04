@@ -12,7 +12,7 @@ from helpers import pump, wait_until
 
 
 def test_open_shows_every_channel_and_the_panels(qapp, window, synthetic):
-    assert window.open_file(synthetic["path"])
+    assert window.open_file_sync(synthetic["path"])
     assert [p.index for p in window.stack.plots] == [0, 1, 2, 3]
     assert window.stack.visible_channels == [0, 1, 2, 3]
     assert window.stack.view_range() == pytest.approx((0.0, 45.0))
@@ -32,7 +32,7 @@ def test_open_shows_every_channel_and_the_panels(qapp, window, synthetic):
 
 
 def test_cursor_and_selection_drive_the_data_panel(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     window.stack.set_cursor(42.5)
     pump(qapp, 0.05)
     assert window.readout.text().startswith("Block 2 · 2.500 s")
@@ -59,7 +59,7 @@ def test_cursor_and_selection_drive_the_data_panel(qapp, window, synthetic):
 
 
 def test_zoom_and_channel_selection(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     window.stack.set_cursor(20.0)
     window.stack.zoom_in()
     x0, x1 = window.stack.view_range()
@@ -90,7 +90,7 @@ def test_zoom_and_channel_selection(qapp, window, synthetic):
 
 
 def test_exports_write_the_selection(qapp, window, synthetic, tmp_path):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     window.stack.set_cursor(12.0)
     window.stack.set_selection(12.0, 13.0)
     sels = window.timeline.selections(12.0, 13.0)
@@ -111,7 +111,7 @@ def test_exports_write_the_selection(qapp, window, synthetic, tmp_path):
 
 def test_mac_settings_fill_the_definitions(qapp, window, synthetic, tmp_path):
     from test_macchart import settings_blob, write_res_file
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     path = tmp_path / "settings"
     write_res_file(path, [("Mcro", 30001, settings_blob())])
     window.load_mac_settings(str(path))
@@ -120,7 +120,7 @@ def test_mac_settings_fill_the_definitions(qapp, window, synthetic, tmp_path):
 
 
 def test_time_scroll_bar_follows_and_moves_the_view(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     pump(qapp, 0.2)
     bar = window.stack.hbar
     d = window.stack.timeline.duration_s
@@ -177,13 +177,13 @@ def test_open_failure_is_reported_not_raised(qapp, window, tmp_path, monkeypatch
     bad = tmp_path / "bad.adicht"
     bad.write_bytes(b"not a labchart file at all" * 100)
     monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
-    assert window.open_file(str(bad)) is False
+    assert window.open_file_sync(str(bad)) is False
     assert window.file is None and not window.act_export.isEnabled()
 
 
 def test_every_layout_variant_opens(qapp, window, documents):
     for name, doc in documents.items():
-        assert window.open_file(doc["path"]), name
+        assert window.open_file_sync(doc["path"]), name
         assert len(window.stack.plots) == 4
         pump(qapp, 0.05)
     window.close_file()
@@ -208,7 +208,7 @@ def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic, monkeypa
         tops = [w for w in qapp.topLevelWidgets() if w.isVisible()]
         seen["splash"] |= any(isinstance(w, QSplashScreen) for w in tops)
         wins = [w for w in tops if w.__class__.__name__ == "MainWindow"]
-        if not wins and time.monotonic() - t0 < 15:
+        if (not wins or wins[0].file is None) and time.monotonic() - t0 < 15:      # the file opens on a worker thread
             QTimer.singleShot(50, poll)
             return
         seen["n"] = len(wins)
@@ -229,7 +229,7 @@ def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic, monkeypa
 
 
 def test_cursor_keys_move_by_sample_and_second(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     window.stack.set_range(0.0, 2.0)
     window.stack.set_cursor(1.0)
     window.act_step_fwd.trigger()
@@ -244,7 +244,7 @@ def test_cursor_keys_move_by_sample_and_second(qapp, window, synthetic):
 
 
 def test_units_label_the_y_axis(qapp, window, synthetic):
-    window.open_file(synthetic["path"])
+    window.open_file_sync(synthetic["path"])
     pmo = window.stack.plots[1]
     left = pmo.item.getAxis("left")
     assert left.labelText == "cmH2O" and left.isVisible()

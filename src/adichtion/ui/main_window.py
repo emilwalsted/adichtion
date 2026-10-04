@@ -53,6 +53,10 @@ class MainWindow(QMainWindow):
         self._infer_job = 0
         self._export_job = 0
         self._export_dialog: Optional[QProgressDialog] = None
+        self._open_job = 0                          # the file open in flight (0: none); see open_file
+        self._open_path = ""
+        self._open_dialog: Optional[QProgressDialog] = None
+        self._closing = False
         self._export_request: Optional[ExportRequest] = None
         self.settings = QSettings("adichtion", os.environ.get("ADICHTION_SETTINGS_APP", "adichtion"))   # the tests use their own
         self.setWindowTitle(f"adichtion {__version__}")
@@ -110,6 +114,10 @@ class MainWindow(QMainWindow):
         self.infer_runner.progress.connect(self._on_progress)
         self.infer_runner.done.connect(self._on_done)
         self.infer_runner.start()
+        # opening a file (parsing, reading the data stream) runs on its own thread, so a big file never freezes the window
+        self.open_runner = JobRunner(self)
+        self.open_runner.done.connect(self._on_open_done)
+        self.open_runner.start()
         self._stall = None                           # the GUI-stall monitor exists only with ADICHTION_PERF (adichtion.perf)
         if perf.enabled():
             from .perfmon import StallMonitor
@@ -334,27 +342,85 @@ class MainWindow(QMainWindow):
             self.open_file(path)
 
     def open_file(self, path: str) -> bool:
+        """Start opening ``path`` on a worker thread and return at once (True: the open was started).
+
+        The file is installed on the GUI thread when it is ready (``_on_open_done``); until then the old file stays
+        open and a cancellable "Opening ..." dialog is shown once the open takes longer than a moment. A second call
+        while one is running replaces it (the newest request wins: the one still running is dropped when it
+        arrives). A file that cannot be read gives the same "Could not open the file" box as before. The menu, the
+        recent list, the command line and a macOS FileOpen all come through here; tests that need the result at
+        once use ``open_file_sync``."""
+        self._cancel_open()
+        self._open_path = path
+        self._open_job = self.open_runner.submit("open", partial(_open_job, path))
+        dlg = QProgressDialog(f"Opening {os.path.basename(path)}…", "Cancel", 0, 0, self)
+        dlg.setWindowTitle("Open")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(300)                 # a small file opens before the dialog would flash up
+        dlg.canceled.connect(self._on_open_canceled)
+        dlg.setValue(0)
+        self._open_dialog = dlg
+        self.statusBar().showMessage(f"Opening {os.path.basename(path)}…")
+        return True
+
+    def open_file_sync(self, path: str) -> bool:
+        """Open ``path`` on the GUI thread and return whether it worked (the tests, ``adichtion bench --pan``)."""
+        self._cancel_open()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            with perf.span("open", bytes=os.path.getsize(path) if perf.enabled() else 0):
-                f = AdichtFile(path)
+            f = _open_job(path)
         except Exception:                           # noqa: BLE001 - reported to the user
             QApplication.restoreOverrideCursor()
-            tb = traceback.format_exc()
-            box = QMessageBox(self)
-            box.setIcon(QMessageBox.Critical)
-            box.setWindowTitle("Could not open the file")
-            box.setText(f"{os.path.basename(path)} could not be read.\n\n{_short_error(tb)}")
-            box.setDetailedText(tb)
-            box.exec()
+            self._report_open_error(path, traceback.format_exc())
             return False
         try:
-            self._install_file(f)
+            self._finish_open(path, f)
         finally:
             QApplication.restoreOverrideCursor()
+        return True
+
+    def _cancel_open(self) -> None:
+        """Drop the open in flight, if any: its result is closed unused when it arrives."""
+        self._open_job = 0
+        self._close_open_dialog()
+
+    def _on_open_canceled(self) -> None:
+        self._cancel_open()
+        self.statusBar().showMessage("Open cancelled.")
+
+    def _close_open_dialog(self) -> None:
+        dlg, self._open_dialog = self._open_dialog, None
+        if dlg is not None:
+            dlg.canceled.disconnect()
+            dlg.reset()
+            dlg.deleteLater()
+
+    def _on_open_done(self, job_id: int, kind: str, result, error) -> None:
+        if job_id != self._open_job or self._closing:         # cancelled, replaced by a newer open, or the window is closing
+            if result is not None:
+                result.close()
+            return
+        self._open_job = 0
+        self._close_open_dialog()
+        if error:
+            self.statusBar().showMessage("Could not open the file." if self.file is None else
+                                         f"Could not open the file; {os.path.basename(self.file.path)} stays open.")
+            self._report_open_error(self._open_path, error)
+            return
+        self._finish_open(self._open_path, result)
+
+    def _finish_open(self, path: str, f: AdichtFile) -> None:
+        self._install_file(f)
         self._remember(path)
         self.statusBar().showMessage(f"Opened {os.path.basename(path)}: {len(f.records)} blocks, {f.n_channels} channels.")
-        return True
+
+    def _report_open_error(self, path: str, tb: str) -> None:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Critical)
+        box.setWindowTitle("Could not open the file")
+        box.setText(f"{os.path.basename(path)} could not be read.\n\n{_short_error(tb)}")
+        box.setDetailedText(tb)
+        box.exec()
 
     def _install_file(self, f: Optional[AdichtFile]) -> None:
         old = self.file
@@ -385,6 +451,7 @@ class MainWindow(QMainWindow):
         self.fileChanged.emit(f)
 
     def close_file(self) -> None:
+        self._cancel_open()
         self._install_file(None)
         self.statusBar().showMessage("File closed.")
 
@@ -404,6 +471,9 @@ class MainWindow(QMainWindow):
         self.info.set_definition(channel, text)
 
     def load_mac_settings(self, path: Optional[str] = None) -> None:
+        if self._open_job:                          # they would land on the file that is about to be replaced
+            self.statusBar().showMessage("Wait for the file to open first.")
+            return
         if self.file is None:
             QMessageBox.information(self, "Open a recording first",
                                     "Settings files fill in the calculated channels of a file that is already open. "
@@ -553,7 +623,7 @@ class MainWindow(QMainWindow):
     # -- export --------------------------------------------------------------------------
     def export_dialog(self, default_scope: Optional[str] = None) -> None:
         """The export dialog; ``default_scope`` ("selection" or "file") presets what to export."""
-        if self.file is None or self.timeline is None:
+        if self.file is None or self.timeline is None or self._open_job:         # a file is being opened: wait for it
             return
         if not isinstance(default_scope, str):              # a QAction's ``triggered(checked)`` lands here
             default_scope = None
@@ -647,6 +717,8 @@ class MainWindow(QMainWindow):
             self.bottom.setSizes([int(w * 0.42), int(w * 0.33), int(w * 0.25)])
 
     def closeEvent(self, ev) -> None:
+        self._closing = True
+        self._cancel_open()
         try:
             if self._stall is not None:
                 self._stall.stop()
@@ -657,6 +729,7 @@ class MainWindow(QMainWindow):
             self.stack.close()
             self.runner.stop()
             self.infer_runner.stop()
+            self.open_runner.stop()
             self.video.close()
             if self.file is not None:
                 self.file.close()
@@ -666,6 +739,12 @@ class MainWindow(QMainWindow):
 
 
 # -- worker jobs (run on the stack's job runner thread) ----------------------------------------
+
+def _open_job(path: str, stale=None, report=None) -> AdichtFile:
+    """Open a file (on the open runner's thread, or inline for ``open_file_sync``); ``AdichtFile`` touches no Qt."""
+    with perf.span("open", bytes=os.path.getsize(path) if perf.enabled() else 0):
+        return AdichtFile(path)
+
 
 def _stats_job(f, tl, t0, t1, stale, report):
     for c in range(f.n_channels):
