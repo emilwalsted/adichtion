@@ -104,8 +104,18 @@ def _application_class():
     from PySide6.QtCore import QEvent
     from PySide6.QtWidgets import QApplication
 
+    from .. import perf
+
+    time_events = perf.enabled() and perf.events_enabled()
+    if time_events:
+        from .perfmon import timed_notify
+
     class AdichtionApplication(QApplication):
         """A QApplication that keeps the document macOS asks it to open."""
+
+        if time_events:                                  # ADICHTION_PERF: the clock around every event (adichtion.ui.perfmon)
+            def notify(self, receiver, ev):
+                return timed_notify(super().notify, receiver, ev)
 
         def __init__(self, argv):
             super().__init__(argv)

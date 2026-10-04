@@ -2,6 +2,25 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-04 (2) — Panoreringstrinnet deles op i sine dele (P1b)
+
+Emils Mac-målinger viste ca. 80 ms GUI-blokering pr. panoreringstrin, men kun ca. 40 ms var tegning;
+resten var umålt. `ADICHTION_PERF=1` kan nu fordele et trin (liste i `src/adichtion/ui/CLAUDE.md`).
+
+- **Tidtagning pr. Qt-event-type** (`QApplication.notify`, kun med måling slået til) frem for kun
+  at gætte på kendte kandidater: den dækker også det, vi ikke har mistænkt (layout, timere, kø-signaler fra
+  arbejdstråden). Kun det yderste event tælles (en indlejret `sendEvent` er en del af det), og kun GUI-tråden.
+  Navnene er `ev.<type>.<modtagerklasse>` med typen fra en fast liste; begge er kode, ikke data.
+  `ADICHTION_PERF_EVENTS=0` slår det fra, hvis den egen overhead mistænkes for at forstyrre.
+- **`perf.quiet_span` og `perf.count`:** frekvente trin aggregeres (antal, sum, maks) og udskrives kun fra
+  `slow_ms`; tællere (gentegninger, områdesignaler, input) står i opsummeringen. Forhold mellem
+  tællerne viser signalkaskaden direkte (fx 4 områdesignaler pr. hjul-trin ved 4 plots).
+- **`bench --pan` kører det rigtige vindue** (ikke en model af det), med pauser på hændelsesløkken i stedet
+  for en tæt `processEvents`-løkke. Trinnene går gennem samme kode som musen (`pan_fraction`, `scaleBy`),
+  ikke syntetiske museevents. Tal fra sandkassens softwarerenderer er kun relative; de afgørende tal er Emils.
+- Intet i adfærden ændres: ingen afkodede værdier, ingen eksportbytes, ingen optimering endnu (den afhænger af
+  Emils tal, P4).
+
 ## 2026-10-04 — Indbygget tidsmåling: kun tal, og intet når den er slået fra
 
 Performance-reviewet kunne kun måle i en sandkasse med softwarerenderet Qt, så forslagene

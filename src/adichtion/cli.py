@@ -304,6 +304,8 @@ def cmd_bench(a: argparse.Namespace) -> None:
         sys.exit("error: --width must be at least 1")
     if a.export is not None and a.export <= 0:
         sys.exit("error: --export needs a positive number of seconds")
+    if a.pan is not None and a.pan < 1:
+        sys.exit("error: --pan needs at least one step")
     if a.output:
         try:
             open(a.output, "a", encoding="utf-8").close()
@@ -313,6 +315,14 @@ def cmd_bench(a: argparse.Namespace) -> None:
         report = run_bench(a.file, width=a.width, export_seconds=a.export)
     except Exception as exc:  # noqa: BLE001 - report and exit
         sys.exit(f"error: the file could not be measured ({type(exc).__name__})")
+    if a.pan is not None:
+        try:
+            from .ui.panbench import run_pan
+            report["pan"] = run_pan(a.file, steps=a.pan)
+        except ImportError:
+            sys.exit("error: --pan drives the viewer window and needs the UI extra (pip install 'adichtion[ui]')")
+        except Exception as exc:  # noqa: BLE001 - report and exit
+            sys.exit(f"error: the pan scenario could not be run ({type(exc).__name__})")
     if a.output:
         with open(a.output, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=2)
@@ -392,6 +402,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     s.add_argument("--width", type=int, default=1200, help="pixel buckets per curve (default 1200)")
     s.add_argument("--export", type=float, nargs="?", const=60.0, metavar="SECONDS",
                    help="also time the export of this many seconds from the middle of the longest record (default 60)")
+    s.add_argument("--pan", type=int, nargs="?", const=50, metavar="STEPS",
+                   help="also drive the viewer window through STEPS pan steps (default 50) and half as many zoom steps, "
+                        "and report what the GUI thread spent on them (needs the UI extra; QT_QPA_PLATFORM=offscreen for headless)")
     s.add_argument("--json", action="store_true", help="print the report as JSON instead of the table")
     s.add_argument("-o", "--output", help="also write the JSON report to this file")
     s.set_defaults(fn=cmd_bench)

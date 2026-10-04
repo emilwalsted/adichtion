@@ -8,6 +8,7 @@ stall of the run).  Created only when timing is on, so a normal run has no extra
 """
 from __future__ import annotations
 
+import threading
 import time
 
 from PySide6.QtCore import QObject, QTimer
@@ -42,3 +43,43 @@ class StallMonitor(QObject):
         self._last = now
         self.longest_ms = max(self.longest_ms, gap)
         perf.event("gui.gap", gap, quiet=gap < self._report)
+
+
+# -- what the GUI thread spends a stall on: every top-level Qt event, by type and receiver class ----------------------
+SLOW_EVENT_MS = 20.0
+#: the event types named in the timeline; any other type is lumped under ``Other`` so the set of names stays small.
+_EVENT_TYPES = frozenset({
+    "Paint", "UpdateRequest", "UpdateLater", "Timer", "MetaCall", "LayoutRequest", "Resize", "Move", "Show", "Hide",
+    "Wheel", "MouseMove", "MouseButtonPress", "MouseButtonRelease", "KeyPress", "KeyRelease",
+    "GraphicsSceneWheel", "GraphicsSceneMouseMove", "GraphicsSceneMousePress", "GraphicsSceneMouseRelease",
+    "StyleChange", "PolishRequest", "DeferredDelete", "Enter", "Leave", "HoverMove", "ToolTip", "SockAct",
+})
+_in_event = False
+
+
+def timed_notify(call, receiver, ev):
+    """``QApplication.notify`` with a clock around it (installed by the application class when ``ADICHTION_PERF`` is on).
+
+    Only the outermost event of the GUI thread is timed (an event sent from inside another handler is part of it), and
+    the name is ``ev.<Type>.<receiver class>``: both are code, never data.  This is what splits a GUI stall into its
+    parts: repaints of which widgets, queued results from the worker (``MetaCall``), timers, layout passes.
+    """
+    global _in_event
+    if _in_event or threading.current_thread() is not threading.main_thread():
+        return call(receiver, ev)
+    _in_event = True
+    t = time.perf_counter()
+    try:
+        return call(receiver, ev)
+    finally:
+        ms = (time.perf_counter() - t) * 1000.0
+        _in_event = False
+        try:
+            kind = ev.type().name
+        except Exception:                                # noqa: BLE001 - an unnamed event type is not worth an error
+            kind = "Other"
+        if kind in _EVENT_TYPES:
+            name = f"ev.{kind}.{type(receiver).__name__}"
+        else:
+            name = "ev.Other"
+        perf.event(name, ms, quiet=ms < SLOW_EVENT_MS)

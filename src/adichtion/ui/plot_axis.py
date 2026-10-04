@@ -9,6 +9,8 @@ import math
 import pyqtgraph as pg
 from PySide6.QtGui import QFontMetrics
 
+from .. import perf
+
 
 def next_nice(v: float) -> float:
     """The next value up pyqtgraph's 1 / 2 / 5 ladder (0.2 -> 0.5 -> 1 -> 2 -> 5 -> 10)."""
@@ -25,7 +27,24 @@ def next_nice(v: float) -> float:
     return 10.0 * dec
 
 
-class MinPitchAxis(pg.AxisItem):
+class TimedAxisMixin:
+    """``ADICHTION_PERF``: the tick computation and the layout of the labels, apart from the painting
+    (``axis.ticks`` is part of ``axis.draw_specs``, which is part of the repaint ``frame.paint``)."""
+
+    def tickValues(self, minVal, maxVal, size):
+        with perf.quiet_span("axis.ticks"):
+            return super().tickValues(minVal, maxVal, size)
+
+    def generateDrawSpecs(self, p):
+        with perf.quiet_span("axis.draw_specs"):
+            return super().generateDrawSpecs(p)
+
+
+class TimedAxis(TimedAxisMixin, pg.AxisItem):
+    """The plain axis (the bottom time axis) with the timing hooks."""
+
+
+class MinPitchAxis(TimedAxisMixin, pg.AxisItem):
     AIR = 3     # pixels between two labels on top of the text height
     TEXT_GAP = 6   # pixels of air between the tick labels and the axis edge / the rotated unit
 

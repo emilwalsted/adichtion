@@ -27,6 +27,7 @@ from typing import Any, Optional, TextIO
 
 ENV_VAR = "ADICHTION_PERF"
 ENV_FILE = "ADICHTION_PERF_FILE"
+ENV_EVENTS = "ADICHTION_PERF_EVENTS"
 
 _TRUE = ("1", "true", "yes", "on")
 _LEVELS = ("samples", "envelope", "coarse")        # the one non-numeric field allowed: a code-literal LOD level
@@ -38,6 +39,7 @@ _stream: Optional[TextIO] = None
 _file: Optional[TextIO] = None
 _t0 = time.perf_counter()
 _stats: dict[str, list[float]] = {}                # name -> [count, total_ms, max_ms]
+_counts: dict[str, int] = {}                       # name -> how many times (:func:`count`)
 
 
 def enabled() -> bool:
@@ -58,6 +60,7 @@ def configure(on: bool, path: Optional[str] = None, stream: Optional[TextIO] = N
         _enabled = bool(on)
         _stream = stream
         _stats.clear()
+        _counts.clear()
         _t0 = time.perf_counter()
         if on and path:
             try:
@@ -133,11 +136,28 @@ def event(name: str, ms: Optional[float] = None, quiet: bool = False, **fields) 
     _emit(name, ms, _clean(fields), quiet)
 
 
-class _Span:
-    __slots__ = ("name", "fields", "_t")
+def count(name: str, n: int = 1) -> int:
+    """Count one occurrence of ``name`` (no-op unless enabled; nothing is printed per call, the totals are in the
+    summary).  For things that matter by how often they happen, not by how long they take: repaints, range signals.
+    Returns the new total (0 when timing is off), so a caller can tell how many happened between two points."""
+    if not _enabled:
+        return 0
+    with _lock:
+        total = _counts[name] = _counts.get(name, 0) + int(n)
+    return total
 
-    def __init__(self, name: str, fields: dict[str, Any]):
-        self.name, self.fields = name, fields
+
+def counts() -> dict[str, int]:
+    """``{name: total}`` of every :func:`count` so far."""
+    with _lock:
+        return dict(sorted(_counts.items()))
+
+
+class _Span:
+    __slots__ = ("name", "fields", "_t", "_slow_ms")
+
+    def __init__(self, name: str, fields: dict[str, Any], slow_ms: Optional[float] = None):
+        self.name, self.fields, self._slow_ms = name, fields, slow_ms
 
     def set(self, **fields) -> None:
         self.fields.update(fields)
@@ -147,7 +167,9 @@ class _Span:
         return self
 
     def __exit__(self, *exc) -> None:
-        event(self.name, (time.perf_counter() - self._t) * 1000.0, **self.fields)
+        ms = (time.perf_counter() - self._t) * 1000.0
+        # slow_ms None: an ordinary span, printed every time; a number: a frequent one, only aggregated unless it took that long
+        event(self.name, ms, quiet=self._slow_ms is not None and ms < self._slow_ms, **self.fields)
 
 
 class _NullSpan:
@@ -173,6 +195,21 @@ def span(name: str, **fields):
     if not _enabled:
         return _NULL
     return _Span(name, dict(fields))
+
+
+def quiet_span(name: str, slow_ms: float = 10.0, **fields):
+    """Like :func:`span`, for steps that run many times per second (a pan or zoom step, one axis, one repaint): every
+    call is aggregated (count, total, maximum in the summary) but only those of ``slow_ms`` or more are printed."""
+    if not _enabled:
+        return _NULL
+    return _Span(name, dict(fields), slow_ms)
+
+
+def events_enabled(environ=None) -> bool:
+    """Whether the viewer also times every top-level Qt event of the GUI thread by type
+    (``ADICHTION_PERF_EVENTS=0`` switches it off; it is on whenever ``ADICHTION_PERF`` is)."""
+    env = os.environ if environ is None else environ
+    return env.get(ENV_EVENTS, "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def summary() -> dict[str, dict[str, float]]:
@@ -203,6 +240,11 @@ def _print_summary(out, rows, cache) -> None:
     print("perf summary (ms)          count      total       mean        max", file=out)
     for name, s in rows.items():
         print(f"  {name:<22} {s['count']:7d} {s['total_ms']:10.1f} {s['mean_ms']:10.2f} {s['max_ms']:10.2f}", file=out, flush=True)
+    tallies = counts()
+    if tallies:
+        print("perf counts", file=out)
+        for name, n in tallies.items():
+            print(f"  {name:<22} {n:7d}", file=out, flush=True)
 
 
 configure_from_env()
