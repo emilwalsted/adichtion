@@ -53,6 +53,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   placeholder (not downloaded) is reported as unreadable.
 
 ### Changed
+- Panning and zooming repaint each channel once per move instead of two to five times. Two causes:
+  pyqtgraph applied a view's new transform lazily inside the first repaint, which dirtied the plot
+  again and made it paint a second time; and the first picture of a view the decoded curve does
+  not cover yet (the block-index envelope) was drawn by the debounced pass 60 ms later, as a
+  separate repaint, so it is now drawn in the same turn as the move (while that pass stays under
+  12 ms; a file whose block index is slow to walk keeps the debounced pass). The pictures are
+  pixel-identical, light and dark; the decoded curve still sharpens the view when it arrives.
 - Viewing a whole long file is faster the second time and no longer pays for every short record.
   Each block that is decoded leaves a small min/max summary (32 buckets) behind, and a detail
   pass whose pixels are at least that wide (a 1/32 block) is drawn from the summaries instead of

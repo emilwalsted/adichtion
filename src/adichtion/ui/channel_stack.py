@@ -33,6 +33,7 @@ from .timeline import Timeline
 from .workers import JobRunner
 
 RENDER_DEBOUNCE_MS = 60
+COARSE_SYNC_BUDGET_MS = 12.0    # the coarse picture is drawn with the move itself only while a pass takes less than this
 AXIS_MIN_WIDTH = 44             # floor (px) of the shared left-axis width
 AXIS_STEP = 4                   # the shared width moves in steps, and only shrinks past AXIS_HYSTERESIS,
 AXIS_HYSTERESIS = 12            # so it does not shift the plots on every y-zoom
@@ -597,6 +598,7 @@ class ChannelStack(QWidget):
         self._auto_zoom = False
         self._drag_selects = True
         self._axis_fresh = True                 # the next measured axis width is taken as it is (no hysteresis)
+        self._coarse_ms = 0.0                   # smoothed duration of a coarse pass (decides whether one runs with the move)
         self._axis_width = theme.PLOT_AXIS_WIDTH
         self._drag_anchor: Optional[float] = None
         self._pal = theme.plot_palette()
@@ -692,6 +694,7 @@ class ChannelStack(QWidget):
     def _clear_plots(self) -> None:
         self._timer.stop()
         self._axis_timer.stop()
+        self._coarse_ms = 0.0
         if self._range_source is not None:
             self._range_source.vb.sigXRangeChanged.disconnect(self._on_x_range)
             self._range_source = None
@@ -880,7 +883,7 @@ class ChannelStack(QWidget):
                 self._sync_hbar(x0, x1)
             with perf.quiet_span("stack.range_changed"):         # the slots of every listener, e.g. the main window's
                 self.rangeChanged.emit(x0, x1)
-            if self.file is not None:
+            if self.file is not None and self._coarse_ms <= COARSE_SYNC_BUDGET_MS:
                 self._coarse_pass()             # in the same event-loop turn as the move: one repaint per plot, not two
             self._schedule_render()
 
@@ -1043,6 +1046,8 @@ class ChannelStack(QWidget):
         f, tl = self.file, self.timeline
         key = (x0, x1, width)
         pending = []
+        drawn = 0
+        started = time.perf_counter()
         with perf.span("render.coarse", buckets=width) as sp:
             for c in self._visible:
                 p = self.plots[c]
@@ -1054,7 +1059,11 @@ class ChannelStack(QWidget):
                 x, y, level = lod.curve_for_range(f, tl, c, x0, x1, width, coarse=True)
                 p.set_curve(x, y, level, None)
                 p.coarse_key = key
+                drawn += 1
             sp.set(channels=len(pending), span_s=float(x1 - x0))
+        if drawn:                               # a pass that drew nothing says nothing about the cost
+            took = (time.perf_counter() - started) * 1000.0
+            self._coarse_ms = took if not self._coarse_ms else 0.5 * (self._coarse_ms + took)   # one slow pass is no verdict
         return pending
 
     def _render_now(self) -> None:

@@ -73,12 +73,14 @@ def test_an_uncovered_view_gets_its_coarse_picture_with_the_move_and_only_once(q
         return real(f, tl, c, a, b, n, coarse=coarse, **kw)
 
     monkeypatch.setattr(channel_stack.lod, "curve_for_range", counting)
+    st._coarse_ms = 0.0                                            # (a cold first pass on a busy machine may have been slow)
     st.set_range(10.0, 10.5)                                       # far outside the decoded span's resolution
     assert sorted(calls) == sorted(st.visible_channels)            # drawn at once, before any event is processed
     key = st.plots[st.visible_channels[0]].coarse_key
     assert key is not None and key[:2] == pytest.approx(st.view_range())
     st._render_now()                                               # what the debounced timer does
     assert sorted(calls) == sorted(st.visible_channels)            # the same view is not drawn again
+    st._coarse_ms = 0.0
     st.set_range(11.0, 11.5)                                       # a new view is
     assert len(calls) == 2 * len(st.visible_channels)
     assert wait_until(qapp, lambda: all(st.plots[c].detail_covers(11.0, 11.5, 800) for c in st.visible_channels), timeout=20)
@@ -92,3 +94,26 @@ def test_refresh_draws_the_coarse_picture_again(qapp, window, synthetic):
     st.refresh()
     assert all(st.plots[c]._detail_cover is None and st.plots[c].coarse_key is None for c in st.visible_channels)
     assert wait_until(qapp, lambda: all(st.plots[c].detail_covers(10.0, 20.0, 800) for c in st.visible_channels), timeout=20)
+
+
+def test_a_slow_coarse_pass_is_left_to_the_debounced_timer(qapp, window, synthetic, monkeypatch):
+    """A file whose block index is expensive to walk (thousands of records) must not stall every wheel notch: once a
+    pass has taken longer than the budget, the picture waits for the debounced pass, as before."""
+    window.open_file(synthetic["path"])
+    st = window.stack
+    _settled(qapp, st, 10.0, 20.0)
+    calls = []
+    real = channel_stack.lod.curve_for_range
+
+    def counting(f, tl, c, a, b, n, coarse=False, **kw):
+        if coarse:
+            calls.append(c)
+        return real(f, tl, c, a, b, n, coarse=coarse, **kw)
+
+    monkeypatch.setattr(channel_stack.lod, "curve_for_range", counting)
+    st._coarse_ms = channel_stack.COARSE_SYNC_BUDGET_MS + 1.0
+    st.set_range(10.0, 10.5)
+    assert calls == []                                             # nothing on the GUI thread with the move
+    assert wait_until(qapp, lambda: len(calls) >= len(st.visible_channels), timeout=5)    # the debounced pass draws it
+    assert st._coarse_ms < channel_stack.COARSE_SYNC_BUDGET_MS + 1.0     # measured again, smoothed towards what it really costs
+    assert wait_until(qapp, lambda: all(st.plots[c].detail_covers(10.0, 10.5, 800) for c in st.visible_channels), timeout=20)
