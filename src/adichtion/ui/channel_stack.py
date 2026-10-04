@@ -97,6 +97,8 @@ class ChannelViewBox(pg.ViewBox):
     def updateViewRange(self, *args, **kwargs):
         with perf.quiet_span("vb.update_range"):
             super().updateViewRange(*args, **kwargs)
+            if self.width() > 0 and self.height() > 0:
+                self.updateMatrix()
 
     def wheelEvent(self, ev, axis=None):
         with _input_span("wheel"):
@@ -267,6 +269,7 @@ class ChannelPlot(QWidget):
         self.definition: Optional[str] = None
         self._detail_cover: Optional[tuple[float, float]] = None
         self._detail_density = 0.0
+        self.coarse_key: Optional[tuple[float, float, int]] = None   # (x0, x1, buckets) of the coarse picture on screen
         self._label_text = ""
         self._calc_text = ""
         self._curve_x = np.zeros(0)
@@ -418,6 +421,8 @@ class ChannelPlot(QWidget):
         self._curve_x, self._curve_y, self.level = x, y, level
         self._detail_cover = cover
         self._detail_density = density
+        if cover is not None:
+            self.coarse_key = None
         with perf.quiet_span("curve.set_data"):
             self.curve.setData(x, y, connect="finite", skipFiniteCheck=False)
 
@@ -432,6 +437,7 @@ class ChannelPlot(QWidget):
 
     def invalidate(self) -> None:
         self._detail_cover = None
+        self.coarse_key = None
 
     def visible_y_range(self) -> Optional[tuple[float, float]]:
         """Min/max of the drawn curve inside the current x range."""
@@ -874,6 +880,8 @@ class ChannelStack(QWidget):
                 self._sync_hbar(x0, x1)
             with perf.quiet_span("stack.range_changed"):         # the slots of every listener, e.g. the main window's
                 self.rangeChanged.emit(x0, x1)
+            if self.file is not None:
+                self._coarse_pass()             # in the same event-loop turn as the move: one repaint per plot, not two
             self._schedule_render()
 
     #: Most steps the time scroll bar is given (QScrollBar is int32; the scale keeps hours-long files inside it).
@@ -1024,6 +1032,31 @@ class ChannelStack(QWidget):
         with perf.quiet_span("stack.render"):               # the debounced pass: the coarse curves, the auto-zoom, the job submit
             self._render_now()
 
+    def _coarse_pass(self) -> list[int]:
+        """Draw the block-index envelope for every shown channel whose decoded curve does not cover the view, and
+        return those channels (their decoded curve is still to come).  A channel already showing the coarse picture of
+        this very view is left alone, so the picture is set once and the plot repaints once, not again when the
+        debounced pass finds the same view."""
+        x0, x1 = self.view_range()
+        m = self._master()
+        width = max(200, int(m.vb.width())) if m is not None else 800
+        f, tl = self.file, self.timeline
+        key = (x0, x1, width)
+        pending = []
+        with perf.span("render.coarse", buckets=width) as sp:
+            for c in self._visible:
+                p = self.plots[c]
+                if p.detail_covers(x0, x1, width):
+                    continue
+                pending.append(c)
+                if p.coarse_key == key:
+                    continue
+                x, y, level = lod.curve_for_range(f, tl, c, x0, x1, width, coarse=True)
+                p.set_curve(x, y, level, None)
+                p.coarse_key = key
+            sp.set(channels=len(pending), span_s=float(x1 - x0))
+        return pending
+
     def _render_now(self) -> None:
         if self.file is None or self.timeline is None or not self._visible:
             return
@@ -1031,16 +1064,7 @@ class ChannelStack(QWidget):
         m = self._master()
         width = max(200, int(m.vb.width())) if m is not None else 800
         f, tl = self.file, self.timeline
-        pending = []
-        with perf.span("render.coarse", buckets=width) as sp:
-            for c in self._visible:
-                p = self.plots[c]
-                if p.detail_covers(x0, x1, width):
-                    continue
-                x, y, level = lod.curve_for_range(f, tl, c, x0, x1, width, coarse=True)
-                p.set_curve(x, y, level, None)
-                pending.append(c)
-            sp.set(channels=len(pending), span_s=float(x1 - x0))
+        pending = self._coarse_pass()
         if self._auto_zoom:
             self.zoom_to_fit()                  # the move is over (the render is debounced): fit what is drawn now
         if not pending:
