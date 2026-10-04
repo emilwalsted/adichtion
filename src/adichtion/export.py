@@ -144,7 +144,7 @@ def table_rows(record: Record, selection: Selection, channels: Sequence[int]) ->
     start, stop = max(0, selection.start), min(selection.stop, record.ticks)
     if up:
         return max(0, stop - start)
-    return record.tick_to_sample(stop, channels[0]) - record.tick_to_sample(start, channels[0])
+    return max(0, record.tick_to_sample(stop, channels[0]) - record.tick_to_sample(start, channels[0]))
 
 
 def _comment_rows(record: Record, selection: Selection, row_of_tick) -> dict[int, list[str]]:

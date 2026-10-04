@@ -259,3 +259,10 @@ def test_a_failing_export_leaves_no_part_file_and_a_good_one_replaces_the_old(sy
 def test_a_target_that_is_not_a_regular_file_is_written_to_directly(synthetic):
     with AdichtFile(synthetic["path"]) as f:
         assert export_selections(f, whole_file(f), [0], "/dev/null", fmt="csv") == 45000
+
+
+def test_table_rows_is_never_negative(synthetic):
+    with AdichtFile(synthetic["path"]) as f:
+        rec = f.records[1]
+        assert ex.table_rows(rec, Selection(1, rec.ticks + 4, rec.ticks + 6), [0]) == 0
+        assert ex.table_rows(rec, Selection(1, -3, -1), [0]) == 0
