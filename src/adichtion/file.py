@@ -46,7 +46,7 @@ from .model import ChannelInfo, ChannelRecordInfo, ChartData, Comment, RecordInf
 from .qtmovie import MovieError, read_movie_timing
 from .video import movies_folder, read_videos, video_path
 
-__all__ = ["AdichtFile", "Record", "Selection"]
+__all__ = ["AdichtFile", "ChannelBlockTable", "Record", "Selection"]
 
 
 @dataclass(frozen=True)
@@ -225,6 +225,25 @@ def _subblocks_from_map(blocks: bytes, chart: ChartData) -> list[SubBlock]:
     return out
 
 
+@dataclass(frozen=True)
+class ChannelBlockTable:
+    """The block index of one channel over every record, as flat arrays (see
+    :meth:`AdichtFile.block_table`).  Block ``i`` of record ``r`` lives at ``first[r] + i``;
+    ``tick0``/``tick1`` are ticks within the record, ``mn``/``mx`` the stored min/max in the
+    units :meth:`Record.read` returns (a negative slope has swapped them), NaN where the
+    index holds none.  A record the channel has no data in has no blocks
+    (``first[r] == first[r + 1]``)."""
+
+    record: np.ndarray      # int64, record index of each block
+    tick0: np.ndarray       # float64, first tick of the block within its record
+    tick1: np.ndarray       # float64, end tick (exclusive)
+    mn: np.ndarray
+    mx: np.ndarray
+    first: np.ndarray       # int64, len n_records + 1
+    complete: bool          # no block lacks its min/max
+    generation: int         # the file's envelope generation it was built at
+
+
 class AdichtFile:
     """A LabChart ``.adicht`` file, or a LabChart for Mac document, opened for reading.
 
@@ -239,6 +258,8 @@ class AdichtFile:
         self.mac: Optional[MacDocument] = None
         self._container: Optional[AdichtContainer] = None
         self._envelopes: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+        self._envelope_gen = 0          # bumped whenever a filled min/max is remembered or forgotten
+        self._tables: dict[int, ChannelBlockTable] = {}
         if is_mac_document(self.path):
             self.kind = "mac"
             with open(self.path, "rb") as fh:
@@ -291,6 +312,8 @@ class AdichtFile:
         ``adichtion bench``); the counters of :meth:`cache_stats` restart too."""
         self._cache.clear()
         self._envelopes.clear()
+        self._tables.clear()
+        self._envelope_gen += 1
         with self._summaries_lock:
             self._summaries.clear()
         if reset_counters:
@@ -303,6 +326,7 @@ class AdichtFile:
     def close(self) -> None:
         self._cache.clear()
         self._envelopes.clear()
+        self._tables.clear()
         self._summaries.clear()
         if self._container is not None:
             self._container.close()
@@ -525,7 +549,63 @@ class AdichtFile:
             if len(x):
                 mins[b], maxs[b] = float(x.min()), float(x.max())
         self._envelopes[key] = (mins, maxs)
+        self._envelope_gen += 1
         return mins.copy(), maxs.copy()
+
+    def block_table(self, channel: int, fill: bool = False) -> ChannelBlockTable:
+        """The block index of ``channel`` over all records as one :class:`ChannelBlockTable`, built
+        once and kept (the same numbers :meth:`Record.block_envelope` returns record by record,
+        nothing decoded unless ``fill`` asks for the blocks whose min/max the index lacks, as
+        :meth:`block_minmax` does).  A table that still has such blocks is rebuilt when ``fill`` is
+        asked for, or when another call has filled some since."""
+        t = self._tables.get(channel)
+        if t is not None and (t.complete or (not fill and t.generation == self._envelope_gen)):
+            return t
+        gen = self._envelope_gen
+        n = len(self.records)
+        counts = np.zeros(n, dtype=np.int64)
+        ticks: list[int] = []
+        mins: list[float] = []
+        maxs: list[float] = []
+        unit_of = np.zeros(n, dtype=np.int64)
+        groups: dict[object, int] = {}
+        for r in range(n):
+            cr = self.channel_record(r, channel)
+            if cr is None or cr.dtype == "none" or not cr.blocks:
+                continue
+            bl = cr.blocks
+            counts[r] = len(bl)
+            ticks.extend([b.ticks for b in bl])
+            mins.extend([b.min for b in bl])
+            maxs.extend([b.max for b in bl])
+            unit_of[r] = groups.setdefault(id(cr.units), len(groups)) + 1      # 0 = no data
+        first = np.concatenate([[0], np.cumsum(counts)])
+        mn = np.array(mins, dtype=np.float64)
+        mx = np.array(maxs, dtype=np.float64)
+        record = np.repeat(np.arange(n, dtype=np.int64), counts)
+        bad = np.isnan(mn) | np.isnan(mx)
+        if bad.any():
+            for r in np.unique(record[bad]):
+                a, b = int(first[r]), int(first[r + 1])
+                mn[a:b], mx[a:b] = self.block_minmax(int(r), channel, fill)
+        complete = not (np.isnan(mn) | np.isnan(mx)).any()
+        tk = np.array(ticks, dtype=np.int64)
+        before = np.cumsum(tk) - tk
+        tick0 = (before - before[first[record]]).astype(np.float64) if len(tk) else np.zeros(0)
+        # stored -> units once per distinct units object, on all its blocks at once; min and max are
+        # then put in order (a negative slope swaps them) and a block missing either stays NaN in both
+        unit_of_block = np.repeat(unit_of, counts)
+        for g in np.unique(unit_of_block):
+            sel = unit_of_block == g
+            rec = self.records[int(record[sel][0])]
+            a, b = rec.convert(channel, mn[sel]), rec.convert(channel, mx[sel])
+            lo, hi = np.fmin(a, b), np.fmax(a, b)
+            gap = np.isnan(a) | np.isnan(b)
+            lo[gap] = hi[gap] = np.nan
+            mn[sel], mx[sel] = lo, hi
+        t = ChannelBlockTable(record, tick0, tick0 + tk, mn, mx, first, complete, gen)
+        self._tables[channel] = t
+        return t
 
 
 class Record:

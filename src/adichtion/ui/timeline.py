@@ -68,6 +68,11 @@ class Timeline:
             t += r.duration_s
         self.duration_s = t
         self._starts = np.array([b.start_s for b in self.blocks], dtype=np.float64)
+        # the same per block as arrays, for the vectorised curves of ``lod`` (index = record index)
+        self.starts = self._starts
+        self.stops = np.array([b.stop_s for b in self.blocks], dtype=np.float64)
+        self.rates = np.array([b.tick_rate_hz for b in self.blocks], dtype=np.float64)
+        self.block_ticks = np.array([b.ticks for b in self.blocks], dtype=np.int64)
         self.comments: list[CommentMark] = []
         for b, r in zip(self.blocks, f.records):
             for c in r.comments:
