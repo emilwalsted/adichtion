@@ -18,8 +18,12 @@ gitter) kostede kun 3 til 4,5 ms. Aksetegning og gitter er derfor ikke ændret; 
   (x0, x1, buckets) får den debouncede pass til ikke at tegne den samme kurve igen. Detaljepasset i arbejdstråden
   og dets job-indsendelse er uændret og stadig debounced.
 - **Forbehold og værn:** et synkront grovpas koster GUI-tråden tid pr. input. Filer med tusinder af optagelser
-  har et langsomt blokindeks (P3). `COARSE_SYNC_BUDGET_MS = 12` med et glidende gennemsnit (`_coarse_ms`) slår
-  derfor det synkrone pas fra, så snart et pas koster mere, og den debouncede vej (som før) tager over.
+  har et langsomt blokindeks (P3). `COARSE_SYNC_BUDGET_MS = 8` med et glidende gennemsnit (`_coarse_ms`) slår
+  derfor det synkrone pas fra, så snart et pas koster mere, og den debouncede vej (som før) tager over. Højst ét
+  synkront pas pr. billede (`COARSE_SYNC_MIN_GAP_S` 16 ms): reviewet målte 10 gange så mange grovpas i en burst af
+  kønlagte input uden den grænse. Det første pas efter åbning er ubeskyttet (accepteret; før kom det 60 ms senere).
+- **Forsinket detaljeresultat:** `_on_progress` kasserer et resultat, der ikke dækker det aktuelle view (viewet er
+  flyttet siden jobbet startede), så det ikke overskriver det friske grove billede.
 - **Målt (sandkasse, offscreen, syntetisk fil: 9 kanaler, 4 kHz, 68 MB, `bench --pan`):** `paint.plot` 1633 -> ca. 705
   på 75 input (2,4 -> 1,04 pr. plot), pan pr. trin 325 -> 163 til 187 ms. Skærmbilleder (lyst og mørkt tema,
   fem visninger) er pixel-identiske før og efter. Mac'en er ikke målt endnu.

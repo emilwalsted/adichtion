@@ -91,7 +91,8 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   view transform at once (pyqtgraph does it inside the first paint, which dirties the plot again: two paints per
   plot), and `ChannelStack._coarse_pass` draws the block-index envelope in the same turn as the move
   (`ChannelPlot.coarse_key` keeps the debounced pass from drawing it twice; it is skipped while a pass costs more
-  than `COARSE_SYNC_BUDGET_MS`). Anything new that changes a plot on a move belongs in that turn, not in a timer.
+  than `COARSE_SYNC_BUDGET_MS` and runs at most once per `COARSE_SYNC_MIN_GAP_S`; a detail result that no longer covers
+  the view is dropped in `_on_progress`). Anything new that changes a plot on a move belongs in that turn, not in a timer.
 - **Wide views use the block index, not a decode**: `lod.curve_for_range` takes the index
   envelope whenever a bucket spans a quarter block or more; a whole-file view of a 200 MB
   file then renders in under a second instead of ten.
