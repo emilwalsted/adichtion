@@ -25,7 +25,7 @@ openpyxl pr. celle. Dialogen havde en ubestemt statuslinje uden annullér.
   `inlineStr`). 600.000 x 5 celler: ca. 3,5 s (ca. 9 gange). Er openpyxls kappe ikke den forventede (en anden version),
   falder skriveren tilbage til den gamle celle-for-celle-vej (`fast=False`, også testorakel).
 - **Kendt forskel, bevidst:** en kommentar, der begynder med `=`, blev før lavet til en FORMEL af openpyxl; nu er den tekst
-  (en kommentar er aldrig en formel). Tegn, XML ikke kan bære, skrives som Excels `_xHHHH_` (openpyxl afviste dem med en fejl).
+  (en kommentar er aldrig en formel). Tegn, XML ikke kan bære, skrives som Excels `_xHHHH_` (openpyxl afviste dem med en fejl). En bogstavelig `_x0041_` i en kommentar skrives som `_x005F_x0041_`: Excel viser den rigtigt, men openpyxl/pandas læser den tilbage med escapen (den gamle vej ville have fået Excel til at vise »A«).
 - **Fremdrift og annullér:** `export_selections(..., progress=(done, total), stale=...)`; `ExportCancelled` rejses mellem
   blokke. En eksport skriver til `<mål>.part` og omdøber, når den er færdig: en annulleret eller fejlet eksport efterlader ingen
   halvskrevet fil og rører ikke en eksisterende fil med samme navn (før blev målet åbnet og afkortet med det samme).
