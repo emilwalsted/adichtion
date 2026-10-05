@@ -516,10 +516,14 @@ class AdichtFile:
     def _body(self, sb: SubBlock) -> memoryview:
         return memoryview(self._blocks)[sb.body_offset: sb.body_offset + sb.body_size]
 
-    def decode_block(self, record: int, block: int, channel: int) -> np.ndarray:
+    def decode_block(self, record: int, block: int, channel: int, cache: bool = True) -> np.ndarray:
         """Decoded samples of one block: int32 counts or float32 values (cached).
         Every block is self-contained, so this is O(1) blocks.  A block decoded for the
-        first time also leaves its min/max summary behind (:meth:`summary_store`)."""
+        first time also leaves its min/max summary behind (:meth:`summary_store`).
+
+        ``cache=False`` decodes a block that is not cached yet without keeping it: the summary is
+        left, the block cache (and what the user's view has in it) is not disturbed.  A background
+        warm-up of a file bigger than the cache would otherwise push out the blocks being looked at."""
         if self.mac is not None:
             mb = self.index.get(record, block, channel)
             if mb is None:
@@ -538,7 +542,8 @@ class AdichtFile:
         else:
             data = decode_subblock(self._body(sb), sb)
         self._remember_summary(record, block, channel, data)
-        self._cache.put(key, data)
+        if cache:
+            self._cache.put(key, data)
         return data
 
     def _remember_summary(self, record: int, block: int, channel: int, data: np.ndarray) -> None:
