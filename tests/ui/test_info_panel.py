@@ -191,7 +191,7 @@ def test_mark_interval_is_on_the_comment_and_block_rows_only(qapp, panel, synthe
     menu = panel._row_menu("comment", 1)
     assert [a.text() for a in menu.actions()] == ["Mark interval"]
     menu.actions()[0].trigger()
-    assert heard == [(pytest.approx(16.005), pytest.approx(39.994))]
+    assert heard == [(pytest.approx(16.005), pytest.approx(39.995))]
     # a block row reports the block's span
     menu = panel._row_menu("block", 1)
     menu.actions()[0].trigger()
@@ -201,10 +201,26 @@ def test_mark_interval_is_on_the_comment_and_block_rows_only(qapp, panel, synthe
     panel.comments.rowContextMenuRequested.connect(lambda r, pos: shown.append(r))
     view = panel.comments
     rect = view.visualRect(view.model().index(2, 3))
-    view._on_context_menu(QPoint(rect.center().x(), rect.center().y()))
+    from PySide6.QtGui import QContextMenuEvent
+    from PySide6.QtWidgets import QApplication, QMenu
+    pt = QPoint(rect.center().x(), rect.center().y())
+    QApplication.sendEvent(view.viewport(), QContextMenuEvent(QContextMenuEvent.Mouse, pt, view.viewport().mapToGlobal(pt)))
     assert shown == [2] and view.currentIndex().row() == 2
-    view._on_context_menu(QPoint(5, view.viewport().height() - 2))
+    # ... and it is a real menu with the one entry (the panel's own connection pops it up)
+    menus = [w for w in QApplication.topLevelWidgets() if isinstance(w, QMenu) and w.isVisible()]
+    assert [a.text() for m in menus for a in m.actions()] == ["Mark interval"]
+    for m in menus:
+        m.close()
+    below = QPoint(5, view.viewport().height() - 2)
+    QApplication.sendEvent(view.viewport(), QContextMenuEvent(QContextMenuEvent.Mouse, below, view.viewport().mapToGlobal(below)))
     assert shown == [2]
+    # the keyboard (Menu key / Shift+F10) opens it for the current row
+    view.selectRow(1)
+    QApplication.sendEvent(view, QContextMenuEvent(QContextMenuEvent.Keyboard, QPoint(0, 0)))
+    assert shown == [2, 1]
+    for w in QApplication.topLevelWidgets():
+        if isinstance(w, QMenu):
+            w.close()
     # Channels has no context menu at all
     assert panel.channels.contextMenuPolicy() != Qt.CustomContextMenu
     assert not panel.channels.actions()

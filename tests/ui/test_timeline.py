@@ -44,10 +44,14 @@ def test_comments_carry_file_times(synthetic):
 def test_a_comments_interval_runs_to_just_before_the_next_comment(synthetic):
     with AdichtFile(synthetic["path"]) as f:
         tl = Timeline(f)
-        # one tick (1 ms) short of the next comment; the last comment runs to the end of the file
-        assert tl.comment_interval(0) == (pytest.approx(0.01), pytest.approx(16.004))
-        assert tl.comment_interval(1) == (pytest.approx(16.005), pytest.approx(39.994))
-        assert tl.comment_interval(2) == (pytest.approx(39.995), pytest.approx(42.499))
+        # up to the next comment (an exclusive end, so its own tick is not taken); the last comment runs to the end
+        assert tl.comment_interval(0) == (pytest.approx(0.01), pytest.approx(16.005))
+        assert tl.comment_interval(1) == (pytest.approx(16.005), pytest.approx(39.995))
+        assert tl.comment_interval(2) == (pytest.approx(39.995), pytest.approx(42.5))
+        # in ticks: the last tick taken is the one just before the next comment, across the block boundary too
+        assert [(s.record, s.start, s.stop) for s in tl.selections(*tl.comment_interval(1))] == [(0, 16005, 39995)]
+        assert [(s.record, s.start, s.stop) for s in tl.selections(*tl.comment_interval(2))] == [
+            (0, 39995, 40000), (1, 0, 2500)]
         assert tl.comment_interval(3) == (pytest.approx(42.5), pytest.approx(tl.duration_s))
         # a block's interval is its own span
         assert tl.block_interval(0) == (0.0, pytest.approx(40.0))

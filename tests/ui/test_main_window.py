@@ -391,7 +391,7 @@ def test_mark_interval_selects_it_and_shows_all_of_it(qapp, window, synthetic):
     st.set_range(0.0, 5.0)
     window.info._mark_interval("comment", 1)           # comment 2 up to just before comment 3
     sel = st.selection
-    assert sel == (pytest.approx(16.005), pytest.approx(39.994))
+    assert sel == (pytest.approx(16.005), pytest.approx(39.995))
     assert st.cursor == pytest.approx(16.005)
     x0, x1 = st.view_range()
     assert x0 <= sel[0] and x1 >= sel[1]               # the whole interval is on screen
@@ -400,3 +400,6 @@ def test_mark_interval_selects_it_and_shows_all_of_it(qapp, window, synthetic):
     assert st.selection == (pytest.approx(40.0), pytest.approx(45.0))
     x0, x1 = st.view_range()
     assert x0 <= 40.0 and x1 >= 45.0
+    # a block's own interval is labelled with that block only, not with the one that starts where it ends
+    window.info._mark_interval("block", 0)
+    assert "Block 1" in window.data.where.text() and "Blocks" not in window.data.where.text()

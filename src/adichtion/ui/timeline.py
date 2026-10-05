@@ -125,15 +125,16 @@ class Timeline:
 
     def comment_interval(self, i: int) -> tuple[float, float]:
         """The interval that belongs to comment ``i`` (an index into ``comments``): from the comment to
-        just before the next comment later in the file (one tick of the block that comment is in),
-        or to the end of the file when it is the last one.  Comments at the same time as this one are
+        the next comment later in the file, or to the end of the file when it is the last one.  The end is
+        the next comment's own time: ``selections`` treats an end as exclusive, so the last tick taken is the one
+        just before that comment, whatever the tick rates of the blocks involved.  Comments at the same time as this one are
         not "next"; they share its interval."""
         t0 = self.comments[i].file_time_s
         later = [m for m in self.comments if m.file_time_s > t0]
         if not later:
             return t0, self.duration_s
         nxt = min(later, key=lambda m: m.file_time_s)
-        return t0, max(t0, nxt.file_time_s - 1.0 / nxt.block.tick_rate_hz)
+        return t0, nxt.file_time_s
 
     def describe(self, t: float) -> str:
         """``Block 3 · 12.345 s · 13:45:12.345`` for a file time."""

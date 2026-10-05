@@ -5,6 +5,7 @@ import os
 import threading
 from typing import Callable, Optional, Sequence
 
+from PySide6.QtGui import QContextMenuEvent
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel, QMenu, QTableView, QTableWidget, QTableWidgetItem,
                                QTabWidget, QVBoxLayout, QWidget)
@@ -95,8 +96,6 @@ class _RowsView(QTableView):
     def __init__(self, model: _RowsModel, parent=None):
         super().__init__(parent)
         self.setModel(model)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._on_context_menu)
         self.verticalHeader().setVisible(False)
         # fixed row height: the default would ask the delegate about every row to size it
         self.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
@@ -116,11 +115,19 @@ class _RowsView(QTableView):
     def rowCount(self) -> int:
         return self.model().rowCount()
 
-    def _on_context_menu(self, pos: QPoint) -> None:
-        idx = self.indexAt(pos)
-        if idx.isValid():
-            self.selectRow(idx.row())
-            self.rowContextMenuRequested.emit(idx.row(), self.viewport().mapToGlobal(pos))
+    def contextMenuEvent(self, e) -> None:
+        """A right click (the row under the mouse) or the Menu key / Shift+F10 (the current row)."""
+        if e.reason() == QContextMenuEvent.Keyboard:
+            idx = self.currentIndex()
+            pos = self.visualRect(idx).center() if idx.isValid() else QPoint()
+        else:
+            pos = e.pos()
+            idx = self.indexAt(pos)
+        if not idx.isValid():
+            return
+        self.selectRow(idx.row())
+        self.rowContextMenuRequested.emit(idx.row(), self.viewport().mapToGlobal(pos))
+        e.accept()
 
 
 _VIDEO_COLUMN = 4                               # the Video column of the Blocks table
