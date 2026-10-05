@@ -114,6 +114,9 @@ class _RowsView(QTableView):
         return self.model().rowCount()
 
 
+_VIDEO_COLUMN = 4                               # the Video column of the Blocks table
+
+
 class InfoPanel(QWidget):
     blockActivated = Signal(int)                # record index (a click)
     blockFitRequested = Signal(int)             # record index (a double-click)
@@ -143,9 +146,9 @@ class InfoPanel(QWidget):
         self.blocks = _RowsView(self._blocks_model)
         self.channels = _table(["Ch", "Title", "Type", "Rate (Hz)", "Units", "Range", "Definition"])
         self.comments = _RowsView(self._comments_model)
-        self.tabs.addTab(self.blocks, "Blocks")
-        self.tabs.addTab(self.channels, "Channels")
         self.tabs.addTab(self.comments, "Comments")
+        self.tabs.addTab(self.channels, "Channels")
+        self.tabs.addTab(self.blocks, "Blocks")
         lay.addWidget(self.tabs, 1)
         self.blocks.cellClicked.connect(lambda r, _c: self.blockActivated.emit(r))
         self.blocks.cellDoubleClicked.connect(lambda r, _c: self.blockFitRequested.emit(r))
@@ -211,6 +214,7 @@ class InfoPanel(QWidget):
         self._count_videos(f, n_video)
         # blocks and comments: the models make a cell's text when the view shows it
         self._blocks_model.set_rows(f.records)
+        self.blocks.setColumnHidden(_VIDEO_COLUMN, n_video == 0)   # no clip attached: no Video column
         # channels
         rec0 = f.records[0] if f.records else None
         self.channels.setRowCount(f.n_channels)
@@ -230,9 +234,9 @@ class InfoPanel(QWidget):
         # comments
         self._comment_times = [m.file_time_s for m in timeline.comments]
         self._comments_model.set_rows(timeline.comments)
-        self.tabs.setTabText(2, f"Comments ({len(timeline.comments)})")
-        self.tabs.setTabText(0, f"Blocks ({len(f.records)})")
+        self.tabs.setTabText(0, f"Comments ({len(timeline.comments)})")
         self.tabs.setTabText(1, f"Channels ({f.n_channels})")
+        self.tabs.setTabText(2, f"Blocks ({len(f.records)})")
 
     def _count_videos(self, f: AdichtFile, n_video: int) -> None:
         """How many of the clips exist next to the document. One file-system lookup per clip, which on a

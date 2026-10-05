@@ -20,11 +20,9 @@ WIDTH, HEIGHT = 780, 460
 
 _GREEN_TEXT = "#3F6B34"   # the grid's green, dark enough to read: the tagline
 _MUTED = "#7A6E58"        # faded ink on paper: sub-tagline, credit
-_LINK = "#5C4A1E"         # the repository line
 
 _TAGLINE = "Read and export .adicht files without LabChart"
 _SUBTAGLINE = "every channel, block, comment and video · export as text, CSV or Excel"
-_REPOSITORY = "github.com/emilwalsted/adichtion"
 
 # logo-tile placement (logical px); the tile is self-contained
 LOGO_X, LOGO_Y, LOGO_S = 48, 96, 128
@@ -131,8 +129,6 @@ def build_splash_svg(width: int = WIDTH, height: int = HEIGHT, version: str | No
   <line x1="42" y1="{footer_y - 16}" x2="{w - 42}" y2="{footer_y - 16}"
         stroke="{INK}" stroke-opacity="0.18" stroke-width="1"/>
   <text x="42" y="{footer_y + 4}" font-family="{_FONT}" font-size="13" fill="{_MUTED}">{credit}</text>
-  <text x="{w - 42}" y="{footer_y + 4}" font-family="{_FONT}" font-size="13"
-        fill="{_LINK}" text-anchor="end">{_REPOSITORY}</text>
   <rect x="1" y="1" width="{w - 2}" height="{h - 2}" rx="15" fill="none" stroke="{PAPER_EDGE}" stroke-width="2"/>
 </svg>'''
 
