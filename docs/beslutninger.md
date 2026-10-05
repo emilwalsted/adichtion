@@ -2,6 +2,18 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-05 (7) — Kommandolinjen kan skrive videoklip
+
+Ønske: kommandolinje-interface til adichtion, "som med RespMech, så vidt muligt".
+
+- **Hulanalysen viste, at kommandolinjen allerede dækker næsten alt, viseren kan** (info, comments, videos, export med tid eller
+  kommentarer, check, verify, infer, macsettings, bench). Det eneste hul var videoklippet, der kun kunne skrives fra eksportdialogen.
+- **`export --video original|h264`** bruger `adichtion.videoclip` uændret (samme tilstande, samme filnavneregel: dataens navn med klippets
+  endelse, samme mappe) og samme rækkefølge som dialogen: klippet skrives under midlertidigt navn, dataeksporten køres, og først derefter
+  omdøbes klippet; fejler dataeksporten, fjernes klippet. Bevidst fravalgt: et selvstændigt `clip`-underkommando (ville duplikere
+  udvalgs-flagene) og automatisk klip uden flag (ffmpeg er ikke en hård afhængighed af CLI-installationen).
+- **Ikke gjort:** nye læsekommandoer (fx kurver/statistik til terminalen), fordi ingen funktion i viseren mangler en CLI-vej ud over klippet.
+
 ## 2026-10-05 (6) — 1.0.0 klargjort (ikke tagget)
 
 Ønske: gør alt klar til release af adichtion 1.0.0.

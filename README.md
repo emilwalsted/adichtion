@@ -160,6 +160,7 @@ adichtion export FILE -o out.txt --record 2 --channels 1,2 --between "start" "st
 adichtion export FILE -o out.csv --format csv --start 355.2 --stop 385.9 --decimal ,   # ';'-separated, decimal comma
 adichtion export FILE -o out.mat --record 2 --channels 1,2,3        # MATLAB, channels as rows of data_block1
 adichtion export FILE -o all.xlsx --all-records      # every block; format from the extension
+adichtion export FILE -o part.csv --start 10 --stop 20 --video h264   # also part.mp4, the video of the interval (original: no re-encoding)
 adichtion check FILE                      decode every block and compare with the min/max LabChart stored
 adichtion infer FILE --record 14          recover the definitions of the calculated channels from the data
 adichtion macsettings MACFILE             channel settings of a LabChart 7 for Mac document or settings file
