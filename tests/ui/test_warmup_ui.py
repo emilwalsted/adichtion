@@ -219,3 +219,44 @@ def test_the_warm_up_does_not_make_the_gui_thread_stall(qapp, window, big, monke
     assert w.progress()[0] < w.progress()[1]                     # and was not done yet: the whole run was measured under load
     # no worse than a little above the idle window's own worst gap (generous: the sandbox's timing is noisy)
     assert during <= max(4 * baseline, baseline + 50.0), (baseline, during)
+
+
+def test_a_late_progress_report_of_the_file_before_is_ignored(qapp, window, doc, synthetic):
+    window.open_file_sync(doc)
+    old_job = window.stack._warm_job
+    window.open_file_sync(synthetic["path"])
+    window.stack._on_warm_progress(old_job, "warm", (37, 100))
+    assert window.warm_label.text() == ""
+    window.stack._on_warm_progress(window.stack._warm_job, "warm", (37, 100))
+    assert window.warm_label.text() == "Indexing 37 %"
+
+
+def test_a_render_result_of_the_file_before_is_dropped(qapp, window, doc, synthetic):
+    window.open_file_sync(doc)
+    window.stack.set_range(100.0, 110.0)
+    assert wait_until(qapp, lambda: window.stack._render_job != 0, timeout=10)
+    job = window.stack._render_job
+    window.open_file_sync(synthetic["path"])
+    assert window.stack._render_job != job
+    c = np.zeros(3)
+    window.stack._on_progress(job, "render", (0, 0.0, 1e9, c, c, "samples", 3, True))
+    assert window.stack.warmer._requests == {}                    # nothing was drawn or prefetched from it
+
+
+def test_a_pass_answered_by_the_index_does_not_prefetch_even_while_the_sweep_decodes(qapp, window, doc):
+    window.act_warmup.setChecked(False)
+    window.open_file_sync(doc)
+    w = window.stack.warmer
+    w.prefetch_idle_s = 0.0
+    assert wait_until(qapp, lambda: all(p.level in ("envelope", "coarse") for p in window.stack.plots), timeout=20)
+    pump(qapp, 0.3)
+    assert w._requests == {} and not w._queue and w.decoded == 0                   # the whole-file view needed no decoded samples
+
+
+def test_the_sweep_starts_where_the_user_is_looking_even_when_the_index_answers(qapp, window, doc):
+    window.open_file_sync(doc)
+    window.act_warmup.setChecked(False)
+    window.stack.set_range(900.0, 1100.0)                         # 200 one-second records: still the index's business
+    assert wait_until(qapp, lambda: window.stack.warmer._view is not None, timeout=10)
+    centre, shown = window.stack.warmer._view
+    assert centre == pytest.approx(1000.0, abs=1.0) and shown == window.stack.visible_channels

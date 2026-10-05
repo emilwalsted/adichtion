@@ -320,3 +320,14 @@ def test_prefetch_is_capped_per_side(f, monkeypatch):
     w.request_prefetch(0, (0.0, 0.0), (0.0, 14 * BLOCK_TICKS / RATE))
     n, _ = run_for(w, seconds=0.4)
     assert n == 2
+
+
+def test_thread_block_requests_count_only_the_calling_thread(f):
+    f.decode_block(0, 1, 0)
+    mine = f.thread_block_requests()
+    t = threading.Thread(target=lambda: [f.decode_block(0, b, 1, cache=False) for b in range(4)])
+    t.start()
+    t.join()
+    assert f.thread_block_requests() == mine                       # another thread's decodes (and the shared stats) do not count
+    f.decode_block(0, 2, 0)
+    assert f.thread_block_requests() == mine + 1

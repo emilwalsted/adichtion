@@ -80,6 +80,7 @@ def run_pan(path: str, steps: int = DEFAULT_STEPS, pause_ms: int = DEFAULT_PAUSE
         from .main_window import MainWindow
 
         w = MainWindow()
+        w.stack.set_warmup(False)                           # the scenario measures the pan, not whatever the user's setting adds
         w.resize(width, height)
         w.show()
         _pump(app, 0.2)

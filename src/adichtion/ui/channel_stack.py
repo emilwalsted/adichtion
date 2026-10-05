@@ -642,6 +642,7 @@ class ChannelStack(QWidget):
         # every render behind it) and only while the user is quiet (`activity`)
         self.activity = Activity()
         self.warmer: Optional[Warmer] = None
+        self._warm_job = 0
         self._warm_enabled = True
         self.warm_runner = JobRunner(self)
         self.warm_runner.progress.connect(self._on_warm_progress)
@@ -692,6 +693,7 @@ class ChannelStack(QWidget):
     # -- file ------------------------------------------------------------------------
     def set_file(self, f: Optional[AdichtFile]) -> None:
         self._stop_warmer()                     # before the caller closes the old file: no block is being decoded from it
+        self._render_job = 0                    # a render result of the old file still in the queue is dropped, not drawn on this one
         self._clear_plots()
         self.file = f
         self.timeline = Timeline(f) if f is not None else None
@@ -737,12 +739,13 @@ class ChannelStack(QWidget):
     def _start_warmer(self) -> None:
         self.warmer = Warmer(self.file, self.timeline, self.activity, warm=self._warm_enabled)
         self.activity.touch()                   # opening is activity: the sweep starts once the first pictures are done
-        self.warm_runner.submit("warm", self.warmer.run)
+        self._warm_job = self.warm_runner.submit("warm", self.warmer.run)
 
     def _stop_warmer(self) -> None:
         if self.warmer is not None:
             self.warmer.cancel()
             self.warmer = None
+            self._warm_job = 0
             self.warmProgress.emit(0, 0)
 
     @property
@@ -758,8 +761,8 @@ class ChannelStack(QWidget):
             self.warmProgress.emit(0, 0)
 
     def _on_warm_progress(self, job_id: int, kind: str, payload) -> None:
-        if kind != "warm" or self.warmer is None or not self._warm_enabled:
-            return
+        if kind != "warm" or job_id != self._warm_job or self.warmer is None or not self._warm_enabled:
+            return                              # a late report of the file before (its job id is not the current one)
         done, total = payload
         self.warmProgress.emit(0, 0) if done >= total else self.warmProgress.emit(int(done), int(total))
 
@@ -771,7 +774,6 @@ class ChannelStack(QWidget):
             return
         reach = (x1 - x0) * PREFETCH_SPAN
         w.request_prefetch(channel, (max(0.0, a - reach), a), (b, min(tl.duration_s, b + reach)))
-        w.set_view(0.5 * (x0 + x1), list(self._visible))
 
     def _clear_plots(self) -> None:
         self._timer.stop()
@@ -1171,6 +1173,8 @@ class ChannelStack(QWidget):
         margin = (x1 - x0) * RENDER_MARGIN
         a, b = max(0.0, x0 - margin), min(tl.duration_s, x1 + margin)
         n = int(width * (b - a) / max(x1 - x0, 1e-9))
+        if self.warmer is not None:
+            self.warmer.set_view(0.5 * (x0 + x1), list(self._visible))     # the sweep starts where the user is looking
         self._render_job = self.runner.submit("render", partial(_render_job, f, tl, list(pending), a, b, n))
 
     def _on_progress(self, job_id: int, kind: str, payload) -> None:
@@ -1252,9 +1256,10 @@ def _render_job(f: AdichtFile, tl: Timeline, channels: list[int], a: float, b: f
         with perf.span("render.detail", channel=c, buckets=int(n), span_s=float(b - a)) as sp:
             # the counters are the file's, so the delta also holds anything the GUI thread decoded meanwhile
             h0, m0 = f.cache_stats()
+            r0 = f.thread_block_requests()
             x, y, level = lod.curve_for_range(f, tl, c, a, b, n, coarse=False, stale=stale)
             h1, m1 = f.cache_stats()
-            used = (h1 - h0) + (m1 - m0) > 0        # the curve needed decoded samples (not the block index or the summaries)
+            used = f.thread_block_requests() > r0   # this pass asked for decoded blocks (not the block index or the summaries)
             if perf.enabled():
                 sp.set(decoded_blocks=m1 - m0, cache_hits=h1 - h0, level=level, points=len(x))
         if stale():

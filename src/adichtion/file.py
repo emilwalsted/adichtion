@@ -301,6 +301,7 @@ class AdichtFile:
             self.kind = "adicht"
             self._open_adicht(zero_copy)
         self._cache = _BlockCache(cache_bytes, cache_blocks)
+        self._tls = threading.local()   # per thread: how many blocks it has asked for (see :meth:`thread_block_requests`)
         self._summaries: dict[tuple[int, int], _ChannelSummaries] = {}
         self._summaries_lock = threading.Lock()
         self._range_override: dict[int, float] = {}
@@ -339,6 +340,12 @@ class AdichtFile:
         """``(hits, misses)`` of the decoded-block cache since the file was opened (or the
         counters last reset by :meth:`clear_cache`); a miss is one block decoded."""
         return self._cache.hits, self._cache.misses
+
+    def thread_block_requests(self) -> int:
+        """How many blocks the CALLING thread has asked :meth:`decode_block` for so far; the difference over a
+        stretch of work says whether that work needed decoded samples, whatever other threads decoded meanwhile
+        (:meth:`cache_stats` is the file's, shared by every thread)."""
+        return getattr(self._tls, "n", 0)
 
     def clear_cache(self, reset_counters: bool = True) -> None:
         """Forget every decoded block, block summary and filled min/max envelope (a cold start, for
@@ -524,6 +531,7 @@ class AdichtFile:
         ``cache=False`` decodes a block that is not cached yet without keeping it: the summary is
         left, the block cache (and what the user's view has in it) is not disturbed.  A background
         warm-up of a file bigger than the cache would otherwise push out the blocks being looked at."""
+        self._tls.n = getattr(self._tls, "n", 0) + 1
         if self.mac is not None:
             mb = self.index.get(record, block, channel)
             if mb is None:
