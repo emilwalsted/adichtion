@@ -16,7 +16,7 @@ Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 - **sdist:** udelukker `.claude/`, `.github/` og alle `CLAUDE.md`; beholder tests, docs, logo-kilder og installer-ikoner, fordi
   testene læser dem. Fravalgt: en minimal sdist uden tests (så kan pakkens egne tests ikke køres fra den).
 - **Ikke gjort (kun Emil):** registrering af pending publisher på pypi.org/test.pypi.org, oprettelse af GitHub-environments, selve
-  tagget. README'ens relative links og logo vises brudt på PyPI, så længe repoet er privat.
+  tagget. README'ens relative links og logo vises brudt på PyPI, også når repoet bliver offentligt, indtil README får absolutte URL'er. Buildjobbet afviser et tag uden for main.
 
 ## 2026-10-05 (4) — Videoklip ved interval-eksport
 

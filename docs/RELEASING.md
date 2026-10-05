@@ -170,7 +170,7 @@ wheel is installed in an empty venv where `adichtion --version` runs and the bar
 2. The same on test.pypi.org with environment `testpypi` (for the dry run).
 3. GitHub ▸ Settings ▸ Environments: create `pypi` and `testpypi` (a required reviewer on `pypi` turns the
    publish into a second go/no-go, as for RespMech).
-4. Dry run: Actions ▸ *Publish to PyPI* ▸ Run workflow (publishes the current `main` version to TestPyPI;
+4. Dry run: Actions ▸ *Publish to PyPI* ▸ Run workflow (publishes the version of the ref it is started on to TestPyPI;
    `skip-existing` makes a repeat harmless). Check `pip install -i https://test.pypi.org/simple/ adichtion`.
 
 A PyPI version is immutable: a broken release is fixed with a patch version and a new tag, never by re-pushing the
@@ -180,7 +180,14 @@ distribution" on 2026-10-05; that does not prove nobody else has registered it).
 What goes in the package: the wheel holds `src/adichtion` only (no `CLAUDE.md` files). The sdist also holds the tests,
 the docs, the logo sources and the installer icons (the tests read them), but not `.claude/`, `.github/` or any
 `CLAUDE.md`. The PyPI page is the README: its relative links and the logo image do not resolve on PyPI while the
-repository is private (they work as soon as it is public, or the README is given absolute URLs).
+repository is private, and PyPI never resolves relative links or images, so they stay broken even once the repository
+is public, until the README is given absolute URLs (github.com/.../blob/main/..., raw.githubusercontent.com/...).
+
+Things to know before the first tag: bump first (section 1), or the *Build* job fails by design (built version must
+equal the tag, and `CHANGELOG.md` needs the `## [X.Y.Z]` entry). The build also refuses a tag whose commit is not on
+`main`. *Build installers* (`release.yml`) runs in parallel and does not wait for the PyPI gate, so one tag can give a
+GitHub release without a PyPI release or the reverse; check both runs. The gate tests Python 3.12 on Ubuntu only: check
+the *Tests* workflow (3.10, three OSes) on the release commit. The dry run publishes whatever ref it is started on.
 
 ## Not done yet / known limits
 
