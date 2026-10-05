@@ -139,7 +139,8 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   only the kind of clip (original copy or H.264) is remembered. The job cuts the clip FIRST (0 to 80 % of the bar),
   keeps it as `<name>.part<ext>`, writes the data, then `PendingClip.commit()`s; a cancel or a failed data export calls
   `discard()`, so neither file is left. A clip that cannot be made (`ExportRequest.video_error`) does not stop the data
-  export; `_finish_export` warns. ffmpeg runs as a subprocess (never on the GUI thread), found by `videoclip.find_ffmpeg`.
+  export; `_finish_export` warns. ffmpeg runs as a subprocess (never on the GUI thread), found by `videoclip.find_ffmpeg`
+  (which starts a program once to check it: the dialog calls it only when a video is first on offer, never otherwise).
 - **The export dialog remembers** its choices in `QSettings` group `export`; tests point
   `QSettings` at a temp dir (`tests/ui/conftest.py`), never the user's real settings.
 - **One `GraphicsObject` per plot for many lines** (`MarkersItem`, `CursorItem`): they paint

@@ -29,6 +29,13 @@ Commit the three together (`Release X.Y.Z`).
 - The *Tests* workflow green on the release commit (three OSes, Python 3.10 and 3.12).
 - With real recordings at hand: `ADICHTION_SAMPLES=… pytest tests/test_integration_samples.py`
   and `adichtion check FILE` on any new kind of file.
+- **The video clip, in each installer you built** (first release with `imageio-ffmpeg`, `docs/beslutninger.md`
+  2026-10-05 (4)): install it, open a recording with video, export an interval with *Also export the video clip* in
+  both kinds (original and H.264), and check that `adichtion.videoclip.find_ffmpeg()` points INSIDE the app (on a
+  developer machine imageio-ffmpeg quietly falls back to an `ffmpeg` on the PATH, which hides a packaging fault).
+  Also: the bundled ffmpeg binary is signed and notarised in the macOS dmg, keeps its executable bit in the `.deb`,
+  starts from the MSI install, and the installers' size growth (about 80 MB per platform) is acceptable.
+  The ffmpeg build is GPL (libx264): the release notes link to the source of the ffmpeg that imageio-ffmpeg bundles.
 
 ## 3. Build the installers
 

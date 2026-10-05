@@ -55,9 +55,9 @@ def test_the_video_choice_appears_only_when_the_interval_has_video(qapp, window,
 def test_ticking_the_box_puts_the_clip_beside_the_data_file(qapp, window, video_document, tmp_path, monkeypatch):
     dlg = make_dialog(window, video_document)
     dlg.cb_video.setChecked(True)
-    assert "Video clip: the data file's name.mp4" in dlg.note.text()
+    assert "Video clip: named like the data file, with .mp4" in dlg.note.text()
     dlg.rb_vid_original.setChecked(True)
-    assert "the data file's name.wmv" in dlg.note.text() and "key frame" in dlg.note.text()
+    assert "with .wmv" in dlg.note.text() and "key frame" in dlg.note.text()
     target = str(tmp_path / "interval.txt")
     monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (target, "")))
     dlg._accept()
@@ -153,5 +153,33 @@ def test_without_ffmpeg_the_box_explains_itself(qapp, window, video_document, mo
     monkeypatch.setattr(videoclip, "find_ffmpeg", lambda: None)
     dlg = make_dialog(window, video_document)
     assert not dlg.video_box.isHidden() and not dlg.cb_video.isEnabled()
-    assert "needs ffmpeg" in dlg.cb_video.text() and dlg.video_mode() is None
+    assert "ffmpeg program was not found" in dlg.cb_video.text() and dlg.video_mode() is None
+    dlg.deleteLater()
+
+
+def test_a_clip_that_cannot_take_its_name_is_a_warning_and_the_data_stays(qapp, window, video_document, tmp_path, monkeypatch):
+    dlg = make_dialog(window, video_document)
+    dlg.cb_video.setChecked(True)
+    target = str(tmp_path / "interval.txt")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (target, "")))
+    dlg._accept()
+    req = dlg.request
+    dlg.deleteLater()
+    os.makedirs(req.video_path)                            # a folder appears where the clip should go
+    shown = []
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: shown.append(self.informativeText()) or 0)
+    window.run_export(req)
+    assert wait_until(qapp, lambda: window._export_cancel is None and shown, timeout=60)
+    assert os.path.isfile(target) and os.path.isdir(req.video_path) and "could not be saved" in shown[0]
+    assert not any(n.endswith(".part.mp4") for n in os.listdir(tmp_path))
+
+
+def test_a_data_name_that_is_the_original_videos_is_refused(qapp, window, video_document, monkeypatch):
+    dlg = make_dialog(window, video_document)
+    dlg.cb_video.setChecked(True)
+    dlg.rb_vid_original.setChecked(True)
+    source = os.path.join(movies_folder(video_document), "Record1.txt")       # its clip would be Record1.wmv
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (source, "")))
+    dlg._accept()
+    assert dlg.request is None and "original video file" in dlg.note.text()
     dlg.deleteLater()

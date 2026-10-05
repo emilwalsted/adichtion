@@ -27,6 +27,14 @@ datafilens navn og i samme mappe (ikke i en undermappe som LabChart).
 - **Spørgsmålet er en boks i eksportdialogen**, kun synlig når intervallets blokke har en videofil, og **den er fravalgt hver
   gang** (et klip er stort og må ikke skrives af vane); *slags* klip huskes som de andre valg. Findes klippet i forvejen,
   spørges der, før det erstattes.
+- **Rettet efter selvreview:** `-map 0` med `-c copy` fejlede på LabChart for Mac-film (synkroniseringssporet
+  ses som en datastrøm): nu `-map 0:v -map 0:a?`. Concat-demuxerens `inpoint` er absolut, `-ss` relativ til filens start:
+  filens `start` (probe) lægges til. Et stykke efter videoens slutning gav en tom mp4 meldt som succes: stykkerne klippes nu
+  mod filens varighed (`fit_segments`), tomme afvises, og et klip uden frames er en fejl. Klippet kan aldrig erstatte selve
+  kildevideoen (afvises i dialogen og i `write_clip`), en mappe på klippets navn afvises, og en `commit`-fejl (fx afspiller
+  har filen åben på Windows) er en advarsel om klippet, ikke en eksportfejl. Dokumentsti gøres absolut (concat læser stier
+  relativt til listefilen). **Kendt grænse, ikke rettet:** Annuller tjekkes, når ffmpeg skriver en fremdriftslinje, så den
+  kan reagere sent, hvis ffmpeg venter på et hængende netværksdrev eller en cloud-placeholder; probe har en 60 s grænse.
 - **Rækkefølge og annullering:** klippet skæres først (0 til 80 % af statuslinjen) under et midlertidigt navn
   (`<navn>.part<endelse>`), derefter skrives datafilen, og først derefter omdøbes klippet; annullering eller en fejl i
   dataeksporten efterlader ingen af filerne. Kan klippet ikke laves (ingen ffmpeg, afvist af ffmpeg), skrives datafilen alligevel,

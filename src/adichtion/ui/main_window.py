@@ -874,12 +874,17 @@ def _export_job(f, req, export_selections, cancel, stale, report):
             return None
         except videoclip.VideoExportError as exc:
             req.video_error = str(exc)
+            lo, span = 0, 1000                                  # no clip: the data export has the whole bar
     try:
         rows = export_selections(f, req.selections, req.channels, req.path, fmt=req.fmt, decimal=req.decimal,
                                  header=req.header, units=req.units, comments=req.comments, stale=stop,
                                  progress=lambda done, total: report((lo + span * done // max(total, 1), 1000)))
         if pending is not None:
-            pending.commit()
+            try:
+                pending.commit()
+            except OSError as exc:                              # the data file is written; only the clip's name is not free
+                pending.discard()
+                req.video_error = f"The clip could not be saved as {os.path.basename(req.video_path)} ({exc.strerror or exc})."
         return rows
     except ExportCancelled:
         if pending is not None:

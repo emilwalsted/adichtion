@@ -199,7 +199,7 @@ def test_a_failing_ffmpeg_gives_a_message_and_no_part_file(doc, tmp_path):
     segs, _ = videoclip.video_segments(doc, [Selection(0, 0, 1000)])
     bad = [videoclip.Segment(0, str(tmp_path / "not-a-video.wmv"), 0.0, 1.0)]
     (tmp_path / "not-a-video.wmv").write_bytes(b"nothing")
-    with pytest.raises(videoclip.VideoExportError, match="ffmpeg could not write the clip"):
+    with pytest.raises(videoclip.VideoExportError, match="no duration|could not write"):
         videoclip.write_clip(bad, "h264", tmp_path / "out" / "x.mp4")
     assert segs and not (tmp_path / "out").exists()
 
@@ -211,6 +211,46 @@ def test_no_ffmpeg_is_explained(doc, tmp_path, monkeypatch):
         videoclip.write_clip(segs, "h264", tmp_path / "x.mp4")
     with pytest.raises(videoclip.VideoExportError, match="could not be started"):
         videoclip.write_clip(segs, "h264", tmp_path / "x.mp4", ffmpeg=str(tmp_path / "missing-ffmpeg"))
+
+
+def test_a_clip_may_not_replace_its_own_source(doc, tmp_path):
+    segs, _ = videoclip.video_segments(doc, [Selection(0, 0, 1000)])
+    with pytest.raises(videoclip.VideoExportError, match="original video file"):
+        videoclip.write_clip(segs, "original", segs[0].path)
+    assert os.path.getsize(segs[0].path) > 1000
+
+
+def test_an_interval_past_the_end_of_the_video_is_not_a_success(doc, tmp_path):
+    past = [videoclip.Segment(0, doc.records[0].video_file, 20.0, 2.0)]          # the file is 8 s long
+    for mode in videoclip.MODES:
+        with pytest.raises(videoclip.VideoExportError, match="nothing in this interval"):
+            videoclip.write_clip(past, mode, tmp_path / ("p" + videoclip.clip_extension(mode, past)))
+    assert os.listdir(tmp_path) == []
+    over = [videoclip.Segment(0, doc.records[0].video_file, 7.0, 5.0)]           # runs 4 s past the end
+    out = videoclip.write_clip(over, "h264", tmp_path / "o.mp4").commit()
+    _first, n, _fps = read_clip(out)
+    assert abs(n - FPS) <= 2
+
+
+def test_a_relative_document_path_still_joins_blocks(two_blocks, tmp_path, monkeypatch):
+    monkeypatch.chdir(os.path.dirname(two_blocks))
+    with AdichtFile(os.path.basename(two_blocks)) as f:
+        segs, _ = videoclip.video_segments(f, [Selection(0, 0, 1000), Selection(1, 0, 1000)])
+    assert all(os.path.isabs(s.path) for s in segs)
+    out = videoclip.write_clip(segs, "original", tmp_path / "rel.wmv").commit()
+    assert read_clip(out)[1] >= 2 * FPS - 3
+
+
+def test_a_container_that_starts_after_zero_is_cut_in_the_right_place(tmp_path):
+    """Matroska with a start time: `-ss` is relative to it, a concat `inpoint` is absolute (found by review)."""
+    src = str(tmp_path / "s.mkv")
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25",
+                    "-t", "8", "-c:v", "mpeg4", "-g", "25", "-output_ts_offset", "3", src], check=True)
+    start, length = videoclip.probe_times(FFMPEG, src)
+    assert start == pytest.approx(3.0, abs=0.05) and length == pytest.approx(11.0, abs=0.2)
+    segs = [videoclip.Segment(0, src, 2.0, 2.0), videoclip.Segment(1, src, 5.0, 1.0)]
+    out = videoclip.write_clip(segs, "original", tmp_path / "j.mkv").commit()
+    assert read_clip(out)[1] >= 3 * FPS - 3
 
 
 def test_pieces_in_different_containers_cannot_be_copied_together(tmp_path):
@@ -225,3 +265,18 @@ def test_nothing_to_cut_is_an_error(tmp_path):
         videoclip.write_clip([], "h264", tmp_path / "x.mp4")
     with pytest.raises(ValueError):
         videoclip.write_clip([videoclip.Segment(0, "a.wmv", 0.0, 1.0)], "nonsense", tmp_path / "x.mp4")
+
+
+def test_a_mac_style_movie_with_a_data_track_is_copied(tmp_path):
+    """LabChart for Mac movies carry a 'Synchronisation track' ffmpeg sees as a data stream; `-map 0` made the
+    copy fail with it (found by review), the video and audio streams alone do not."""
+    from adichtion import synth
+    src = str(tmp_path / "m.mov")
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25",
+                    "-t", "6", "-c:v", "mpeg4", "-g", "25", src], check=True)
+    synth.add_labchart_sync_track(src, [i * 40000 for i in range(150)])
+    segs = [videoclip.Segment(0, src, 1.0, 2.0)]
+    one = videoclip.write_clip(segs, "original", tmp_path / "one.mov").commit()
+    two = videoclip.write_clip(segs + [videoclip.Segment(1, src, 3.0, 1.0)], "original", tmp_path / "two.mov").commit()
+    assert read_clip(one)[1] >= 2 * FPS - 2 and read_clip(two)[1] >= 3 * FPS - 3
+

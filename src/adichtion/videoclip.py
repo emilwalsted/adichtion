@@ -87,6 +87,7 @@ def video_segments(f: AdichtFile, selections: Sequence[Selection]) -> tuple[list
     for sel in selections:
         rec = f.records[sel.record]
         path, clip = rec.video_file, rec.video
+        path = os.path.abspath(path) if path is not None else None      # a concat list reads stems relative to itself
         if path is None or clip is None:
             missing.append(sel.record + 1)
             continue
@@ -144,11 +145,19 @@ _SIZE = re.compile(r"Video:.*?[ ,](\d{2,5})x(\d{2,5})")
 _RATE = re.compile(r"([\d.]+) fps")
 
 
+def _probe_text(ffmpeg: str, path: str) -> str:
+    """What ``ffmpeg -i`` prints about a file (it exits non-zero for want of an output, which is fine)."""
+    try:
+        p = subprocess.run([ffmpeg, "-hide_banner", "-i", path], capture_output=True, text=True,
+                           errors="replace", timeout=60, **_hidden_window())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise VideoExportError(f"ffmpeg could not be started ({getattr(exc, 'strerror', None) or exc}).") from exc
+    return p.stderr
+
+
 def probe_video(ffmpeg: str, path: str) -> tuple[int, int, float]:
     """``(width, height, fps)`` of a file's first video stream, read from what ``ffmpeg -i`` prints."""
-    p = subprocess.run([ffmpeg, "-hide_banner", "-i", path], capture_output=True, text=True,
-                       errors="replace", **_hidden_window())
-    text = p.stderr
+    text = _probe_text(ffmpeg, path)
     m = _SIZE.search(text)
     if m is None:
         raise VideoExportError(f"{os.path.basename(path)} has no video stream ffmpeg can read.")
@@ -156,10 +165,36 @@ def probe_video(ffmpeg: str, path: str) -> tuple[int, int, float]:
     return int(m.group(1)), int(m.group(2)), float(r.group(1)) if r else 25.0
 
 
+_TIMES = re.compile(r"Duration: (\d+):(\d+):([\d.]+)(?:, start: (-?[\d.]+))?")
+
+
+def probe_times(ffmpeg: str, path: str) -> tuple[float, float]:
+    """``(start_s, duration_s)`` of a file as the container states them (start is the first timestamp: a stream
+    copy's ``-ss`` is relative to it, a concat list's ``inpoint`` is absolute)."""
+    m = _TIMES.search(_probe_text(ffmpeg, path))
+    if m is None:
+        raise VideoExportError(f"{os.path.basename(path)} has no duration ffmpeg can read.")
+    return float(m.group(4) or 0.0), int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+
+
+def fit_segments(ffmpeg: str, segments: Sequence[Segment]) -> tuple[list[Segment], list[float]]:
+    """The pieces cut to what each file really holds (an interval can run past the end of the video), pieces
+    with nothing left dropped, and each kept file's start time."""
+    kept, starts = [], []
+    for s in segments:
+        start, length = probe_times(ffmpeg, s.path)
+        dur = min(s.duration_s, length - s.start_s)
+        if dur > 0.02:
+            kept.append(Segment(s.record, s.path, s.start_s, dur))
+            starts.append(start)
+    return kept, starts
+
+
 def build_command(ffmpeg: str, segments: Sequence[Segment], mode: str, out: str, workdir: str,
-                  size: Optional[tuple[int, int, float]] = None) -> list[str]:
+                  size: Optional[tuple[int, int, float]] = None,
+                  file_starts: Optional[Sequence[float]] = None) -> list[str]:
     """The ffmpeg command line for ``segments`` (non-empty) written to ``out``.  ``workdir`` holds the list file a
-    stream-copied join needs; ``size`` is ``(width, height, fps)`` of the first piece (needed to join re-encoded pieces)."""
+    stream-copied join needs; ``file_starts`` the start time of each piece's file (default 0); ``size`` is ``(width, height, fps)`` of the first piece (needed to join re-encoded pieces)."""
     base = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
     if mode == "original":
         if len({os.path.splitext(s.path)[1].lower() for s in segments}) > 1:
@@ -167,14 +202,15 @@ def build_command(ffmpeg: str, segments: Sequence[Segment], mode: str, out: str,
                                    "without re-encoding: choose H.264, or export one block at a time.")
         if len(segments) == 1:
             s = segments[0]
-            return base + ["-ss", f"{s.start_s:.6f}", "-i", s.path, "-t", f"{s.duration_s:.6f}", "-map", "0",
+            return base + ["-ss", f"{s.start_s:.6f}", "-i", s.path, "-t", f"{s.duration_s:.6f}", "-map", "0:v", "-map", "0:a?",
                            "-c", "copy", "-avoid_negative_ts", "make_zero", out]
         listing = os.path.join(workdir, "pieces.txt")
         with open(listing, "w", encoding="utf-8") as fh:
-            for s in segments:
-                fh.write("file '" + s.path.replace("'", "'\\''") + "'\n")
-                fh.write(f"inpoint {s.start_s:.6f}\noutpoint {s.start_s + s.duration_s:.6f}\n")
-        return base + ["-f", "concat", "-safe", "0", "-i", listing, "-map", "0", "-c", "copy",
+            for i, s in enumerate(segments):
+                t0 = s.start_s + (file_starts[i] if file_starts else 0.0)
+                fh.write("file '" + os.path.abspath(s.path).replace("'", "'\\''") + "'\n")
+                fh.write(f"inpoint {t0:.6f}\noutpoint {t0 + s.duration_s:.6f}\n")
+        return base + ["-f", "concat", "-safe", "0", "-i", listing, "-map", "0:v", "-map", "0:a?", "-c", "copy",
                        "-avoid_negative_ts", "make_zero", out]
     if mode != "h264":
         raise ValueError(f"unknown video mode {mode!r}")
@@ -237,15 +273,21 @@ def write_clip(segments: Sequence[Segment], mode: str, path: str | os.PathLike, 
         raise ValueError(f"unknown video mode {mode!r}")
     exe = ffmpeg or find_ffmpeg()
     if exe is None:
-        raise VideoExportError("The video clip needs the ffmpeg program, which was not found. Install the "
-                               "imageio-ffmpeg package (pip install imageio-ffmpeg), or put ffmpeg on the PATH.")
+        raise VideoExportError("The video clip needs the ffmpeg program, which was not found. The imageio-ffmpeg "
+                               "package brings one (pip install imageio-ffmpeg); an ffmpeg on the PATH works too.")
     final = os.path.realpath(os.fspath(path))
+    if any(os.path.realpath(s.path) == final for s in segments):
+        raise VideoExportError("The clip would replace the original video file: choose another file name.")
     part = part_name(final)
+    segments, starts = fit_segments(exe, segments)
+    if not segments:
+        raise VideoExportError("The video has nothing in this interval (it ends before it starts).")
     total = sum(s.duration_s for s in segments)
     tail: deque[str] = deque(maxlen=12)
+    seen = [0.0]
     with tempfile.TemporaryDirectory(prefix="adichtion-clip-") as work:
         size = probe_video(exe, segments[0].path) if mode == "h264" and len(segments) > 1 else None
-        cmd = build_command(exe, segments, mode, part, work, size)
+        cmd = build_command(exe, segments, mode, part, work, size, starts)
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
                                     **_hidden_window())
@@ -266,7 +308,10 @@ def write_clip(segments: Sequence[Segment], mode: str, path: str | os.PathLike, 
                     raise VideoExportCancelled()
                 key, _, value = line.strip().partition("=")
                 if progress is not None and key == "out_time_us" and value.isdigit() and total > 0:
+                    seen[0] = max(seen[0], int(value) / 1e6)
                     progress(min(1.0, int(value) / 1e6 / total))
+                elif key == "out_time_us" and value.isdigit():
+                    seen[0] = max(seen[0], int(value) / 1e6)
             code = proc.wait()
             reader.join(5)
         except BaseException:
@@ -276,6 +321,10 @@ def write_clip(segments: Sequence[Segment], mode: str, path: str | os.PathLike, 
             with contextlib.suppress(OSError):
                 os.remove(part)
             raise
+    if code == 0 and os.path.exists(part) and seen[0] <= 0.0:
+        with contextlib.suppress(OSError):
+            os.remove(part)
+        raise VideoExportError("ffmpeg wrote no video for this interval.")
     if code != 0 or not os.path.exists(part):
         with contextlib.suppress(OSError):
             os.remove(part)

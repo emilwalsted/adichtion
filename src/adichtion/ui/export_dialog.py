@@ -152,7 +152,8 @@ class ExportDialog(QDialog):
             vl.addWidget(rb)
         lay.addWidget(self.video_box)
         self._video_cache: dict[tuple, bool] = {}
-        self._ffmpeg_ok = videoclip.find_ffmpeg() is not None
+        self._segment_cache: dict[tuple, tuple] = {}
+        self._ffmpeg_ok: Optional[bool] = None            # looked up when a video is first on offer (it starts a program)
 
         self.note = QLabel("")
         self.note.setWordWrap(True)
@@ -298,12 +299,14 @@ class ExportDialog(QDialog):
         """Show the Video group when the interval has video; without ffmpeg it is there but cannot be ticked."""
         have = self.video_available()
         self.video_box.setVisible(have)
-        ok = self._ffmpeg_ok
+        if have and self._ffmpeg_ok is None:
+            self._ffmpeg_ok = videoclip.find_ffmpeg() is not None
+        ok = bool(self._ffmpeg_ok)
         self.cb_video.setEnabled(have and ok)
         if have and not ok:
-            self.cb_video.setText("Also export the video clip (needs ffmpeg: pip install imageio-ffmpeg)")
+            self.cb_video.setText("Also export the video clip (the ffmpeg program was not found)")
         else:
-            self.cb_video.setText("Also export the video clip for this interval")
+            self.cb_video.setText("Also export the video clip")
         for rb in (self.rb_vid_original, self.rb_vid_h264):
             rb.setEnabled(have and ok and self.cb_video.isChecked())
 
@@ -345,9 +348,15 @@ class ExportDialog(QDialog):
         mode = self.video_mode()
         if mode is None:
             return ""
-        segs, missing = videoclip.video_segments(self.file, self.selections())
-        detail = videoclip.segment_note(mode, segs, missing)
-        name = f"the data file's name{videoclip.clip_extension(mode, segs)}"
+        sels = self.selections()
+        key = tuple((s.record, s.start, s.stop) for s in sels)
+        if key not in self._segment_cache:
+            self._segment_cache = {key: videoclip.video_segments(self.file, sels)}       # one entry: the latest choice
+        segs, missing = self._segment_cache[key]
+        detail = videoclip.segment_note(mode, segs, missing[:8])
+        if len(missing) > 8:
+            detail += f" and {len(missing) - 8} more blocks without video"
+        name = f"named like the data file, with {videoclip.clip_extension(mode, segs)}"
         return f"Video clip: {name}, in the same folder" + (f"; {detail}" if detail else "")
 
     def _accept(self) -> None:
@@ -374,6 +383,12 @@ class ExportDialog(QDialog):
                 self.note.setText("There is no video file for this interval: untick the video clip, or choose another interval.")
                 return
             video_path = os.path.splitext(path)[0] + videoclip.clip_extension(video_mode, segments)
+            if any(os.path.realpath(s.path) == os.path.realpath(video_path) for s in segments):
+                self.note.setText("That name is the original video file's: choose another file name for the data.")
+                return
+            if os.path.isdir(video_path):
+                self.note.setText("There is a folder with the clip's name: choose another file name for the data.")
+                return
             if os.path.exists(video_path) and QMessageBox.question(
                     self, "Replace the video clip?", f"{os.path.basename(video_path)} already exists. Replace it?",
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:

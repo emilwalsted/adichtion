@@ -196,5 +196,6 @@ export next to them must match it sample for sample).
 
 ## Licence
 
-GPL-3.0-or-later, like RespMech. ADInstruments, LabChart and PowerLab are
+GPL-3.0-or-later, like RespMech. The video clip export uses an ffmpeg program (FFmpeg, GPL build with libx264,
+bundled by the `imageio-ffmpeg` package; source: https://ffmpeg.org/). ADInstruments, LabChart and PowerLab are
 trademarks of ADInstruments; this project is not affiliated with them.
