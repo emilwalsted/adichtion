@@ -23,6 +23,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   runs up to the next comment (to the end of the file for the last one); for a block it is the whole
   block. The Channels table has no such menu.
 
+### Changed
+- **adichtion can be installed from PyPI** (`pip install adichtion` for the library and the command line,
+  `pip install "adichtion[ui]"` for the app). Without the `ui` extra, the bare `adichtion` command now says how to
+  install the viewer instead of ending in a `ModuleNotFoundError` traceback.
+
 ### Fixed
 - CSV with a decimal comma (`--decimal ,`, the dialog's "comma, e.g. Danish Excel") now separates the fields with
   `;`. Before it used a comma for both, and no program could read the file.

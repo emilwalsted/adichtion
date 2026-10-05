@@ -2,6 +2,22 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-05 (5) — PyPI-udgivelse klargjort
+
+Ønske: gør adichtion tilgængelig via PyPI som RespMech.
+
+- **Samme mønster som RespMech:** `publish-pypi.yml` på `v*`-tagget (samme tag som installers), Trusted Publishing (ingen token),
+  environments `pypi`/`testpypi`, manuelt kørsel = TestPyPI-tørløb, `pypa/gh-action-pypi-publish@v1.14.2` (v1.14.0 afviser
+  Metadata-Version 2.5, som hatchling udsender; RespMech lærte det på 2.4.0). Testgate på Ubuntu (ikke macOS som RespMech):
+  adichtions suite er hurtig og kører grøn på Linux.
+- **Ekstra værn i buildjobbet:** bygget version = tag, `CHANGELOG.md` har `## [X.Y.Z]`, og hjulet installeres i en tom venv, hvor
+  `adichtion --version` kører og den bare `adichtion` giver en ren besked og exit 1 (ingen PySide6). Det sidste er en rettelse:
+  før gav `pip install adichtion` + `adichtion` et `ModuleNotFoundError`-traceback.
+- **sdist:** udelukker `.claude/`, `.github/` og alle `CLAUDE.md`; beholder tests, docs, logo-kilder og installer-ikoner, fordi
+  testene læser dem. Fravalgt: en minimal sdist uden tests (så kan pakkens egne tests ikke køres fra den).
+- **Ikke gjort (kun Emil):** registrering af pending publisher på pypi.org/test.pypi.org, oprettelse af GitHub-environments, selve
+  tagget. README'ens relative links og logo vises brudt på PyPI, så længe repoet er privat.
+
 ## 2026-10-05 (4) — Videoklip ved interval-eksport
 
 Ønske: eksportér et videoklip svarende til det eksporterede interval, som originalformat eller en moderne codec, med

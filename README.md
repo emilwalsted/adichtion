@@ -50,6 +50,13 @@ they are not registered for double-click: open them with *File > Open* (the
 file dialog's second filter shows all files) or name them on the command line.
 See [`docs/RELEASING.md`](docs/RELEASING.md) for how the installers are built.
 
+**From PyPI** (the library and the command line; the `ui` extra adds the app):
+
+```
+pip install adichtion            # the library and the command line (numpy only)
+pip install "adichtion[ui]"      # plus the viewer: then `adichtion` alone starts the app
+```
+
 **From source** (the library, the command line and, with `ui`, the app):
 
 ```

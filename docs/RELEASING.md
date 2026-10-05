@@ -154,8 +154,37 @@ bare "a": a blurry "a" while the app ran, although Finder showed the right icon.
 source on macOS the app sets `logo.dock_icon()` (the full logo only). Check on a Mac after
 an icon change: the pinned icon, the running Dock tile and Cmd-Tab all show the logo.
 
+## 6. PyPI
+
+`.github/workflows/publish-pypi.yml` (same shape as RespMech's) publishes the wheel and the sdist to PyPI when a
+`v*` tag is pushed, in the same push that starts *Build installers*. There is no token: PyPI Trusted Publishing
+(OIDC). The jobs: *Test gate* (`pytest -q` on Ubuntu, Python 3.12, Qt libraries installed), *Build* (`python -m
+build`, built version must equal the tag, `CHANGELOG.md` must hold a `## [X.Y.Z]` entry, `twine check`, and the
+wheel is installed in an empty venv where `adichtion --version` runs and the bare `adichtion` gives the plain
+"install adichtion[ui]" message), then *Publish to PyPI* (environment `pypi`).
+
+**One-time setup by Emil, before the first tag**:
+
+1. pypi.org ▸ Account ▸ Publishing ▸ *Add a pending publisher*: project `adichtion`, owner `emilwalsted`,
+   repository `adichtion`, workflow `publish-pypi.yml`, environment `pypi`.
+2. The same on test.pypi.org with environment `testpypi` (for the dry run).
+3. GitHub ▸ Settings ▸ Environments: create `pypi` and `testpypi` (a required reviewer on `pypi` turns the
+   publish into a second go/no-go, as for RespMech).
+4. Dry run: Actions ▸ *Publish to PyPI* ▸ Run workflow (publishes the current `main` version to TestPyPI;
+   `skip-existing` makes a repeat harmless). Check `pip install -i https://test.pypi.org/simple/ adichtion`.
+
+A PyPI version is immutable: a broken release is fixed with a patch version and a new tag, never by re-pushing the
+tag. Check that the name is free right before the first publish (`pip index versions adichtion` said "no matching
+distribution" on 2026-10-05; that does not prove nobody else has registered it).
+
+What goes in the package: the wheel holds `src/adichtion` only (no `CLAUDE.md` files). The sdist also holds the tests,
+the docs, the logo sources and the installer icons (the tests read them), but not `.claude/`, `.github/` or any
+`CLAUDE.md`. The PyPI page is the README: its relative links and the logo image do not resolve on PyPI while the
+repository is private (they work as soon as it is public, or the README is given absolute URLs).
+
 ## Not done yet / known limits
 
 - The dmg is built for the runner's architecture (Apple Silicon on `macos-latest`); there is
   no Intel build, as for RespMech.
-- No PyPI release yet; `pip install` is from the repository.
+- PyPI publishing is set up (section 6) but needs the one-time trusted-publisher registration on PyPI before the
+  first tag; until then `pip install` is from the repository.
