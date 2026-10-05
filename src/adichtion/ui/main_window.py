@@ -101,6 +101,14 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_toolbar()
         self.statusBar().showMessage("Ready.")
+        # the background indexing's progress: a permanent part of the status bar, always shown (empty when idle) and
+        # wide enough for its longest text, so that it appearing never lays the status bar out again (measured: 90 ms)
+        self.warm_label = QLabel("")
+        self.warm_label.setProperty("status", "muted")
+        self.warm_label.setMinimumWidth(self.warm_label.fontMetrics().horizontalAdvance("Indexing 100 %") + 16)
+        self.warm_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.statusBar().addPermanentWidget(self.warm_label)
+        self.stack.warmProgress.connect(self._on_warm_progress)
 
         self.stack.cursorChanged.connect(self._on_cursor)
         self.stack.selectionChanged.connect(self._on_selection)
@@ -145,6 +153,9 @@ class MainWindow(QMainWindow):
         self.act_drag_selects.setChecked(drag_selects)
         self.stack.set_drag_selects(drag_selects)          # setChecked(False) on an unchecked action emits nothing
         self.act_auto_zoom.setChecked(self.settings.value("view/autoZoom", False, type=bool))
+        warmup = self.settings.value("view/warmup", True, type=bool)
+        self.act_warmup.setChecked(warmup)
+        self.stack.set_warmup(warmup)
         self._update_actions()
 
     # -- actions, menus, toolbar ---------------------------------------------------------
@@ -185,6 +196,10 @@ class MainWindow(QMainWindow):
         self.act_drag_selects = act("Drag selects an interval", self.set_drag_selects, None,
                                     "On: a left drag over a channel selects an interval and Alt+drag pans. "
                                     "Off: a left drag pans and Alt+drag selects.", checkable=True)
+        self.act_warmup = act("Index in the background", self.set_warmup, None,
+                              "While you are not touching the window, read the rest of the file in the background so that "
+                              "zooming out and viewing the whole file are quick. Uses a little processor time; the "
+                              "progress is shown in the status bar.", checkable=True)
         self.act_scroll_left = act("Scroll left", lambda: self.stack.scroll_view(-0.5), "Alt+Left",
                                    "Move the view half a screen earlier")
         self.act_scroll_right = act("Scroll right", lambda: self.stack.scroll_view(0.5), "Alt+Right",
@@ -228,7 +243,7 @@ class MainWindow(QMainWindow):
         for a in (self.act_zoom_in, self.act_zoom_out, self.act_zoom_reset, self.act_zoom_fit, self.act_auto_zoom):
             v.addAction(a)
         v.addSeparator()
-        for a in (self.act_scroll_left, self.act_scroll_right, self.act_drag_selects):
+        for a in (self.act_scroll_left, self.act_scroll_right, self.act_drag_selects, self.act_warmup):
             v.addAction(a)
         v.addSeparator()
         for a in (self.act_channels, self.act_all_channels, self.act_equalize):
@@ -294,6 +309,18 @@ class MainWindow(QMainWindow):
     def set_drag_selects(self, on: bool) -> None:
         self.stack.set_drag_selects(on)
         self.settings.setValue("view/dragSelects", bool(on))
+
+    def set_warmup(self, on: bool) -> None:
+        """Background indexing of the file while the window is idle (the choice survives a restart)."""
+        self.stack.set_warmup(on)
+        self.settings.setValue("view/warmup", bool(on))
+
+    def _on_warm_progress(self, done: int, total: int) -> None:
+        """"Indexing 38 %" in the status bar while the background warm-up runs; nothing when it is off or done."""
+        if total <= 0 or done >= total:
+            self.warm_label.setText("")
+            return
+        self.warm_label.setText(f"Indexing {100 * done // total} %")
 
     # -- files --------------------------------------------------------------------------
     def recent_files(self) -> list[str]:

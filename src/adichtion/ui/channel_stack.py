@@ -30,6 +30,7 @@ from ..file import AdichtFile
 from . import lod, theme
 from .plot_axis import MinPitchAxis, TimedAxis
 from .timeline import Timeline
+from .warmup import PREFETCH_SPAN, Activity, Warmer
 from .workers import JobRunner
 
 RENDER_DEBOUNCE_MS = 60
@@ -612,6 +613,7 @@ class ChannelStack(QWidget):
     rangeChanged = Signal(float, float)         # visible file-time range
     contextRequested = Signal(object)           # global QPoint of a right click on a plot
     autoZoomChanged = Signal(bool)              # the "fit y after every move" toggle
+    warmProgress = Signal(int, int)             # (blocks indexed, blocks in all) while the background warm-up runs; (0, 0) when it is off or done
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -636,6 +638,14 @@ class ChannelStack(QWidget):
         self.runner.progress.connect(self._on_progress)
         self.runner.done.connect(self._on_done)
         self.runner.start()
+        # prefetch and warm-up decode in the background on a runner of their own (a long job on `runner` would delay
+        # every render behind it) and only while the user is quiet (`activity`)
+        self.activity = Activity()
+        self.warmer: Optional[Warmer] = None
+        self._warm_enabled = True
+        self.warm_runner = JobRunner(self)
+        self.warm_runner.progress.connect(self._on_warm_progress)
+        self.warm_runner.start()
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -681,6 +691,7 @@ class ChannelStack(QWidget):
 
     # -- file ------------------------------------------------------------------------
     def set_file(self, f: Optional[AdichtFile]) -> None:
+        self._stop_warmer()                     # before the caller closes the old file: no block is being decoded from it
         self._clear_plots()
         self.file = f
         self.timeline = Timeline(f) if f is not None else None
@@ -720,6 +731,47 @@ class ChannelStack(QWidget):
         self.set_visible_channels([c for c in range(f.n_channels) if f.has_data(c)], equalize=True)
         self.zoom_reset()
         self._sync_hbar(*self.view_range())     # a file whose reset fires no range change (1 s long) still resets the bar
+        self._start_warmer()
+
+    # -- background decoding -----------------------------------------------------------------
+    def _start_warmer(self) -> None:
+        self.warmer = Warmer(self.file, self.timeline, self.activity, warm=self._warm_enabled)
+        self.activity.touch()                   # opening is activity: the sweep starts once the first pictures are done
+        self.warm_runner.submit("warm", self.warmer.run)
+
+    def _stop_warmer(self) -> None:
+        if self.warmer is not None:
+            self.warmer.cancel()
+            self.warmer = None
+            self.warmProgress.emit(0, 0)
+
+    @property
+    def warmup_enabled(self) -> bool:
+        return self._warm_enabled
+
+    def set_warmup(self, on: bool) -> None:
+        """Switch the idle warm-up (the sweep over the whole file) on or off; the prefetch next to the view stays."""
+        self._warm_enabled = bool(on)
+        if self.warmer is not None:
+            self.warmer.set_warm(on)
+        if not on:
+            self.warmProgress.emit(0, 0)
+
+    def _on_warm_progress(self, job_id: int, kind: str, payload) -> None:
+        if kind != "warm" or self.warmer is None or not self._warm_enabled:
+            return
+        done, total = payload
+        self.warmProgress.emit(0, 0) if done >= total else self.warmProgress.emit(int(done), int(total))
+
+    def _request_prefetch(self, channel: int, a: float, b: float, x0: float, x1: float) -> None:
+        """A detail pass just decoded ``[a, b]`` for ``channel``: the blocks half a screen width beyond each side
+        are wanted next (a pan, a zoom out), and the sweep should start where the user is looking."""
+        w, tl = self.warmer, self.timeline
+        if w is None or tl is None:
+            return
+        reach = (x1 - x0) * PREFETCH_SPAN
+        w.request_prefetch(channel, (max(0.0, a - reach), a), (b, min(tl.duration_s, b + reach)))
+        w.set_view(0.5 * (x0 + x1), list(self._visible))
 
     def _clear_plots(self) -> None:
         self._timer.stop()
@@ -736,6 +788,8 @@ class ChannelStack(QWidget):
         self._y_unset = set()
 
     def close(self) -> None:
+        self._stop_warmer()
+        self.warm_runner.stop()
         self.runner.stop()
 
     # -- channels shown --------------------------------------------------------------
@@ -963,6 +1017,7 @@ class ChannelStack(QWidget):
         return self._selection
 
     def _on_clicked(self, x: float, modifiers) -> None:
+        self.activity.touch()
         if self.timeline is None:
             return
         x = min(max(0.0, x), self.timeline.duration_s)
@@ -974,6 +1029,7 @@ class ChannelStack(QWidget):
     def _on_select_drag(self, x0: float, x1: float, finished: bool) -> None:
         """A left drag over a plot: the cursor goes where it began, the interval follows the mouse.
         A drag under a few pixels is a click (the cursor alone)."""
+        self.activity.touch()
         if self.timeline is None:
             return
         d = self.timeline.duration_s
@@ -1004,6 +1060,7 @@ class ChannelStack(QWidget):
         interval playback uses).  With ``follow`` the view pages along so the cursor stays on
         screen, as playback needs; with ``center`` the view scrolls so the cursor is in the middle
         (a comment or a block picked from a list)."""
+        self.activity.touch()
         had_selection = self._selection is not None and not keep_selection
         self._cursor = t
         if not keep_selection:
@@ -1059,6 +1116,7 @@ class ChannelStack(QWidget):
 
     # -- rendering -------------------------------------------------------------------------
     def _schedule_render(self) -> None:
+        self.activity.touch()
         if self.file is not None:
             self._timer.start()
 
@@ -1119,7 +1177,8 @@ class ChannelStack(QWidget):
         if kind != "render" or job_id != self._render_job:
             perf.count("render.result_stale")
             return
-        c, a, b, x, y, level, n = payload
+        c, a, b, x, y, level, n, *rest = payload     # the last item (the curve needed decoded samples) is optional
+        self.activity.touch()                   # a picture is being drawn: the background waits for it to be done
         x0, x1 = self.view_range()
         if a > x0 + 1e-9 or b < x1 - 1e-9:        # the view moved on since the job began: its curve would replace
             perf.count("render.result_stale")     # the fresh coarse picture with one that misses the view's edge
@@ -1130,6 +1189,8 @@ class ChannelStack(QWidget):
                 if (self._auto_zoom and c in self._visible) or c in self._y_unset:
                     self._y_unset.discard(c)
                     self.plots[c].auto_y()          # the decoded curve replaces the coarse one: fit to that
+            if rest and rest[0]:                    # it needed decoded samples: the blocks next to them are worth having ready
+                self._request_prefetch(c, a, b, x0, x1)
 
     def _on_done(self, job_id: int, kind: str, result, error) -> None:
         if error and kind == "render":
@@ -1190,12 +1251,13 @@ def _render_job(f: AdichtFile, tl: Timeline, channels: list[int], a: float, b: f
             return None
         with perf.span("render.detail", channel=c, buckets=int(n), span_s=float(b - a)) as sp:
             # the counters are the file's, so the delta also holds anything the GUI thread decoded meanwhile
-            h0, m0 = f.cache_stats() if perf.enabled() else (0, 0)
+            h0, m0 = f.cache_stats()
             x, y, level = lod.curve_for_range(f, tl, c, a, b, n, coarse=False, stale=stale)
+            h1, m1 = f.cache_stats()
+            used = (h1 - h0) + (m1 - m0) > 0        # the curve needed decoded samples (not the block index or the summaries)
             if perf.enabled():
-                h1, m1 = f.cache_stats()
                 sp.set(decoded_blocks=m1 - m0, cache_hits=h1 - h0, level=level, points=len(x))
         if stale():
             return None
-        report((c, a, b, x, y, level, n))
+        report((c, a, b, x, y, level, n, used))
     return len(channels)
