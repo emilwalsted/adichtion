@@ -179,6 +179,8 @@ def test_a_curve_that_arrives_mid_move_waits_for_the_next_move(qapp, window, lon
     st = _open(qapp, window, long_doc, 100.0, 120.0)
     c = st.visible_channels[0]
     p = st.plots[c]
+    st.runner.submit = lambda *a, **k: 0            # only the curves this test hands in
+    st._render_job = 0
     st._master().vb.pan_fraction(0.01)              # the view is moving (the debounce is running)
     assert st._timer.isActive()
     cover = p._detail_cover
@@ -256,13 +258,14 @@ def test_a_flick_too_fast_for_the_decoding_waits_for_the_last_move(qapp, window,
     st = _open(qapp, window, long_doc, 100.0, 120.0)
     assert st._job_s > 0.0                          # the pass that decoded the view was timed on its thread
     vb = st._master().vb
+    st._last_move = 0.0
     vb.pan_fraction(0.1)
     assert st._pan_speed == 0.0                     # a single move after a rest has no speed yet
-    time.sleep(0.02)
+    st._last_move = time.perf_counter() - 0.02      # (the gap between the moves is set, not slept: no machine's pace)
     vb.pan_fraction(0.1)
-    time.sleep(0.02)
+    st._last_move = time.perf_counter() - 0.02
     vb.pan_fraction(0.1)                            # 106 to 126 s: a second past the decoded curve
-    assert 1.0 < st._pan_speed < 20.0               # some views per second
+    assert 0.3 < st._pan_speed < 5.1                # a tenth of the view per 20 ms or more, smoothed: views per second
     job = st._render_job
     st._pan_speed, st._job_s = 3.0, 0.5             # three views a second, half a second per pass: gone before it comes
     st._render_now(settled=False)
@@ -302,8 +305,12 @@ def test_slow_frames_are_not_mistaken_for_a_stop(qapp, window, long_doc, monkeyp
     assert seen[-1] is True
     monkeypatch.undo()
     vb = st._master().vb
+    st._last_move = 0.0
     vb.pan_fraction(0.01)
     assert st._move_gap == 0.0                                             # the first move of a run has no pace yet
-    time.sleep(0.03)
+    st._last_move = time.perf_counter() - 0.03
     vb.pan_fraction(0.01)
-    assert 0.02 < st._move_gap < 0.2
+    assert 0.03 <= st._move_gap < 0.3
+    st._last_move = time.perf_counter() - 1.0                              # a pause: the next move starts a new run
+    vb.pan_fraction(0.01)
+    assert st._move_gap == 0.0
