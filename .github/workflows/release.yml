@@ -234,6 +234,8 @@ jobs:
             echo '- **Linux:** `sudo apt install ./adichtion_*_amd64.deb`; the app is then `adichtion` and in the applications menu.'
             echo
             echo "Each bundles its own Python and libraries; nothing else to install. The command line (\`adichtion info …\`) is the same binary."
+            echo
+            echo "The video clip export uses an ffmpeg program (FFmpeg, GPL build with libx264) that the installers bundle through the \`imageio-ffmpeg\` package. Source: <https://ffmpeg.org/>."
           } > notes.md
           if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "adichtion $GITHUB_REF_NAME" \
