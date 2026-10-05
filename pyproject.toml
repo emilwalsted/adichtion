@@ -14,7 +14,7 @@ authors = [{ name = "Emil Ingerslev Walsted", email = "emilwalsted@gmail.com" }]
 maintainers = [{ name = "Emil Ingerslev Walsted", email = "emilwalsted@gmail.com" }]
 keywords = ["labchart", "adicht", "adinstruments", "powerlab", "physiology", "file-format", "reverse-engineering"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
@@ -76,7 +76,7 @@ pythonpath = ["src", "tests"]
 [tool.briefcase]
 project_name = "adichtion"
 bundle = "dk.emilwalsted"                     # -> dk.emilwalsted.adichtion
-version = "0.3.0"
+version = "1.0.0"
 url = "https://github.com/emilwalsted/adichtion"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]

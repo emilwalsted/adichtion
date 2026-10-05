@@ -21,7 +21,7 @@ from .file import AdichtFile, Record, Selection
 from .model import (BlockInfo, ChannelBlock, ChannelInfo, ChannelRecordInfo, ChannelSetup, ChartData, Comment,
                     RecordInfo, UnitsConversion, VideoClip)
 
-__version__ = "0.3.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "AdichtFile", "Record", "Selection", "AdichtContainer", "AdichtFormatError",

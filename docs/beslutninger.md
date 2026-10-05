@@ -2,6 +2,21 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-05 (6) — 1.0.0 klargjort (ikke tagget)
+
+Ønske: gør alt klar til release af adichtion 1.0.0.
+
+- **Versionen er 1.0.0 de tre steder** (`__init__.py`, `[tool.briefcase]`, `CHANGELOG.md`; `tests/test_main.py` holder dem lige).
+  Changelog-posten er den hidtidige `[Unreleased]` samlet under ÉN `### Added`/`### Changed`/`### Fixed` (den havde fået
+  dublerede overskrifter efter mange tilføjelser; ingen punkter er ændret eller fjernet), dateret 2026-10-05: ret datoen, hvis
+  tagget sættes en anden dag. En tom `## [Unreleased]` står øverst igen.
+- **PyPI-klassifikatoren er `Production/Stable`** (var `Alpha`), fordi 1.0.0 er den første stabile version. Skal den være `Beta`,
+  er det en enlinjesrettelse i `pyproject.toml`.
+- **Release-noterne** (`release.yml`, `publish-release`) har fået en linje om ffmpeg (GPL-bygget med libx264, medfølger via
+  `imageio-ffmpeg`, kilde ffmpeg.org), som `docs/RELEASING.md` afsnit 2 kræver.
+- **Ikke gjort (kun Emil):** tagget `v1.0.0`, PyPI-publisher og GitHub-environments (se (5)), de manuelle installer-tjek i
+  `docs/RELEASING.md` afsnit 2 og Certum-signering af MSI'en.
+
 ## 2026-10-05 (5) — PyPI-udgivelse klargjort
 
 Ønske: gør adichtion tilgængelig via PyPI som RespMech.

@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] – 2026-10-05
+
+First stable release: the library, the command line and the desktop app, as installers for Windows, macOS and
+Ubuntu and as a package on PyPI.
+
 ### Added
 - **Export the video clip with an interval.** When the blocks you export have a video file, the export dialog has a
   *Video* box: tick it to also write the matching clip, either in the file's original format (copied, nothing
@@ -23,55 +28,6 @@ versions follow [Semantic Versioning](https://semver.org/).
   runs up to the next comment (to the end of the file for the last one); for a block it is the whole
   block. The Channels table has no such menu.
 
-### Changed
-- **adichtion can be installed from PyPI** (`pip install adichtion` for the library and the command line,
-  `pip install "adichtion[ui]"` for the app). Without the `ui` extra, the bare `adichtion` command now says how to
-  install the viewer instead of ending in a `ModuleNotFoundError` traceback.
-
-### Fixed
-- CSV with a decimal comma (`--decimal ,`, the dialog's "comma, e.g. Danish Excel") now separates the fields with
-  `;`. Before it used a comma for both, and no program could read the file.
-- A comment or channel title with a line break, a tab or the file's own separator no longer breaks a row of a
-  text, CSV or tab-separated export (each becomes a space; a comma in a CSV comment is still a semicolon).
-- The Excel export is a plain table again: the sheet's first row is the column titles. The block, start, selection
-  start and interval used to sit in a row above them, which made the first row of data a text row to Excel
-  readers such as pandas and RespMech; they are now in cells to the right of the table.
-
-### Changed
-- **The Video menu shows only when the open file has a video.** Without one (or with no file open) the menu is hidden instead of greyed out.
-- The splash screen no longer names the GitHub repository.
-- The file panel opens on Comments, then Channels, then Blocks. The Blocks table's Video column is shown only
-  when the file has video clips attached.
-- Scrolling and zooming keep the real curves on screen. Before, a view that reached past what had been decoded
-  was redrawn as the coarse block outline (one step per storage block, 4 s at 4 kHz) until you stopped moving,
-  which showed even on a slow scroll. Now the decoded curve stays, only the strip it does not reach is drawn the
-  quick way (from the min/max summaries when the file is indexed, so it looks close to the real thing), and the
-  decoding keeps up while you move instead of waiting for you to stop. Measured in a real window on a real
-  recording with nine channels: 225 of 250 slow scroll steps showed only the coarse outline before, none now,
-  with the time per step unchanged or slightly lower. With auto zoom on, the y-axes are fitted when the move is
-  over, as before.
-- Export is faster and can be stopped: text and CSV are formatted a block of rows at a time (the files are
-  byte for byte what they were; 600,000 rows x 4 channels, CSV about 1.8 s to about 0.8 s measured in a test
-  environment), and Excel sheets are written as a stream (600,000 x 5 cells about 32 s to about 4 s). The
-  export dialog shows progress and has a Cancel button. A file is written under a temporary name and renamed
-  when it is complete, so a cancelled or failed export leaves no half-written file and keeps an existing one.
-  A comment that begins with `=` is now written to Excel as text, never as a formula.
-- The file panel opens a file with thousands of comments or blocks at once: the Comments and Blocks tables
-  are lists that make a row's text only when it is shown (5000 comments: 311 ms to 2 ms in the panel; the
-  whole open of a 20-block file with 5000 comments 455 ms to 150 ms, measured offscreen). Looks, columns,
-  clicks and tab titles are as before, and a comment's text is now also its tooltip. The "(n found)" count
-  of video clips next to the summary is looked up on a thread, so a movies folder on a network drive no
-  longer holds the window up (one lookup per block before).
-- A `.adicht` file of 64 MB or more is no longer copied into memory when it is opened: its sample stream
-  is read straight from the file's memory mapping (362 MB: opening 0.45 s to 0.1 s, peak memory 726 MB to
-  381 MB). Smaller files, files with a fragmented cluster chain and Mac documents are copied as before.
-  `ADICHTION_ZERO_COPY=0` turns it off, `=1` forces it. A file shortened after it was opened gives an
-  error instead of a crash.
-- Opening a file no longer freezes the window: it is read on a worker thread, a cancellable
-  "Opening ..." dialog appears when it takes more than a moment, and a second open replaces
-  the one still running. A file that cannot be read gives the same error box as before.
-
-### Added
 - Background indexing and prefetch: while you are not touching the window, the viewer reads the rest of the
   file in the background (the visible channels first, starting where you are looking) and keeps a small
   min/max summary of every block, so a first look at a tenth of a long file, or going back to one, waits
@@ -131,6 +87,43 @@ versions follow [Semantic Versioning](https://semver.org/).
   placeholder (not downloaded) is reported as unreadable.
 
 ### Changed
+- **adichtion can be installed from PyPI** (`pip install adichtion` for the library and the command line,
+  `pip install "adichtion[ui]"` for the app). Without the `ui` extra, the bare `adichtion` command now says how to
+  install the viewer instead of ending in a `ModuleNotFoundError` traceback.
+
+- **The Video menu shows only when the open file has a video.** Without one (or with no file open) the menu is hidden instead of greyed out.
+- The splash screen no longer names the GitHub repository.
+- The file panel opens on Comments, then Channels, then Blocks. The Blocks table's Video column is shown only
+  when the file has video clips attached.
+- Scrolling and zooming keep the real curves on screen. Before, a view that reached past what had been decoded
+  was redrawn as the coarse block outline (one step per storage block, 4 s at 4 kHz) until you stopped moving,
+  which showed even on a slow scroll. Now the decoded curve stays, only the strip it does not reach is drawn the
+  quick way (from the min/max summaries when the file is indexed, so it looks close to the real thing), and the
+  decoding keeps up while you move instead of waiting for you to stop. Measured in a real window on a real
+  recording with nine channels: 225 of 250 slow scroll steps showed only the coarse outline before, none now,
+  with the time per step unchanged or slightly lower. With auto zoom on, the y-axes are fitted when the move is
+  over, as before.
+- Export is faster and can be stopped: text and CSV are formatted a block of rows at a time (the files are
+  byte for byte what they were; 600,000 rows x 4 channels, CSV about 1.8 s to about 0.8 s measured in a test
+  environment), and Excel sheets are written as a stream (600,000 x 5 cells about 32 s to about 4 s). The
+  export dialog shows progress and has a Cancel button. A file is written under a temporary name and renamed
+  when it is complete, so a cancelled or failed export leaves no half-written file and keeps an existing one.
+  A comment that begins with `=` is now written to Excel as text, never as a formula.
+- The file panel opens a file with thousands of comments or blocks at once: the Comments and Blocks tables
+  are lists that make a row's text only when it is shown (5000 comments: 311 ms to 2 ms in the panel; the
+  whole open of a 20-block file with 5000 comments 455 ms to 150 ms, measured offscreen). Looks, columns,
+  clicks and tab titles are as before, and a comment's text is now also its tooltip. The "(n found)" count
+  of video clips next to the summary is looked up on a thread, so a movies folder on a network drive no
+  longer holds the window up (one lookup per block before).
+- A `.adicht` file of 64 MB or more is no longer copied into memory when it is opened: its sample stream
+  is read straight from the file's memory mapping (362 MB: opening 0.45 s to 0.1 s, peak memory 726 MB to
+  381 MB). Smaller files, files with a fragmented cluster chain and Mac documents are copied as before.
+  `ADICHTION_ZERO_COPY=0` turns it off, `=1` forces it. A file shortened after it was opened gives an
+  error instead of a crash.
+- Opening a file no longer freezes the window: it is read on a worker thread, a cancellable
+  "Opening ..." dialog appears when it takes more than a moment, and a second open replaces
+  the one still running. A file that cannot be read gives the same error box as before.
+
 - Opening and viewing a file with thousands of short blocks is much faster. The quick curve pass and the
   y range now read one table of the block index per channel (built once, in `AdichtFile.block_table`)
   instead of asking every block in turn: whole-file view of a 3000-block file 511 -> 1.4 ms per channel in
@@ -172,6 +165,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   were up-sampled from which rate. A channel that is not stored is refused by name.
 
 ### Fixed
+- CSV with a decimal comma (`--decimal ,`, the dialog's "comma, e.g. Danish Excel") now separates the fields with
+  `;`. Before it used a comma for both, and no program could read the file.
+- A comment or channel title with a line break, a tab or the file's own separator no longer breaks a row of a
+  text, CSV or tab-separated export (each becomes a space; a comma in a CSV comment is still a semicolon).
+- The Excel export is a plain table again: the sheet's first row is the column titles. The block, start, selection
+  start and interval used to sit in a row above them, which made the first row of data a text row to Excel
+  readers such as pandas and RespMech; they are now in cells to the right of the table.
+
 - OpenCV is kept below 4.13: its FFmpeg 8 returns interlaced DV frames (the LabChart for Mac
   movies) black.
 - macOS: the running app's Dock and app-switcher icon was a blurry bare "a" instead of
