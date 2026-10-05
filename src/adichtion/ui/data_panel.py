@@ -1,6 +1,8 @@
 """The data panel: the values under the cursor, or the statistics of the selected interval."""
 from __future__ import annotations
 
+import math
+
 from typing import Optional
 
 from PySide6.QtCore import Qt
@@ -89,7 +91,8 @@ class DataPanel(QWidget):
         if self.file is None or self.timeline is None:
             return
         self._mode = "interval"
-        a, b = self.timeline.locate(t0), self.timeline.locate(t1)
+        # the end is exclusive: an interval that ends exactly where block 2 starts is still only block 1
+        a, b = self.timeline.locate(t0), self.timeline.locate(math.nextafter(t1, -math.inf) if t1 > t0 else t1)
         blocks = f"Block {a.block.number}" if a.block is b.block else f"Blocks {a.block.number}–{b.block.number}"
         self.where.setText(f"Selection: {t0:.3f} s → {t1:.3f} s  ({t1 - t0:.3f} s, {blocks})")
         self._set_headers(["Channel", "Min", "Max", "Mean", "Units"])

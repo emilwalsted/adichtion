@@ -35,7 +35,7 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   returning True means "started", not "opened". The newest request wins; a cancelled, replaced or late (window
   closing) result is closed unused; `close_file` cancels a pending open; Export and Mac settings wait while one runs.
   Tests and `bench --pan` use `open_file_sync` (the old synchronous path).
-- `info_panel.py` — the file panel. Blocks and Comments are `_RowsView`s over a `_RowsModel` (a cell's text is made when
+- `info_panel.py` — the file panel. **Right click on a Blocks or Comments row = "Mark interval"** (`_row_menu`, `markIntervalRequested(t0, t1)` → `MainWindow.mark_interval`: zoom to the interval with 2 % air, cursor at the start, then the selection; `set_cursor` clears a selection, so the order matters). The interval rules live in `Timeline.block_interval`/`comment_interval` (a comment runs to the next later comment (exclusive end), to the end of the file for the last; row index = index into `timeline.comments`/`blocks`, so never sort or filter these views); Channels has no menu. Blocks and Comments are `_RowsView`s over a `_RowsModel` (a cell's text is made when
   it is shown; never one item per cell: 5000 comments cost 300 ms that way), Channels stays a small `QTableWidget`.
   `_RowsView` keeps `cellClicked`/`cellDoubleClicked`/`rowCount()`. The "(n found)" video count is looked up on a
   thread (`_video_counted`, token-guarded); never call `Record.video_file` for every record on the GUI thread
