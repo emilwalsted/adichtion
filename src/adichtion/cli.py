@@ -28,6 +28,7 @@ from .chartdata import tagged_strings
 from .container import AdichtContainer
 from .export import FORMATS, export_selections, read_labchart_text, upsampling_notice, whole_file
 from .file import AdichtFile, Selection
+from . import videoclip
 
 
 def _open(path: str) -> AdichtFile:
@@ -213,17 +214,47 @@ def cmd_export(a: argparse.Namespace) -> None:
                 sel = rec.selection(start, stop)
             selections = [sel]
             what = f"{sel.start / rec.tick_rate_hz:.3f}-{sel.stop / rec.tick_rate_hz:.3f} s of record {a.record}"
+        pending = None
+        clip_note = ""
+        if a.video:
+            segments, missing = videoclip.video_segments(f, selections)
+            if not segments:
+                sys.exit("error: there is no video file for this interval (use the 'videos' command to see the file's clips)")
+            video_path = os.path.splitext(a.output)[0] + videoclip.clip_extension(a.video, segments)
+            if os.path.realpath(video_path) == os.path.realpath(a.output):
+                sys.exit("error: the data file and the clip would get the same name: choose another output extension")
+            try:
+                pending = videoclip.write_clip(segments, a.video, video_path)
+            except (videoclip.VideoExportError, ValueError) as exc:
+                sys.exit(f"error: {exc}")
+            clip_note = videoclip.segment_note(a.video, segments, missing)
         try:
             n = export_selections(f, selections, channels, a.output, fmt=fmt, header=not a.no_header,
                                   decimal=a.decimal, units=not a.raw, comments=not a.no_comments)
             note = upsampling_notice(f, selections, channels)
         except (ValueError, RuntimeError) as exc:
+            if pending is not None:
+                pending.discard()
             sys.exit(f"error: {exc}")
+        except BaseException:
+            if pending is not None:
+                pending.discard()
+            raise
+        if pending is not None:
+            try:
+                pending.commit()
+            except OSError as exc:                       # the data file is written; only the clip's name is not free
+                pending.discard()
+                sys.exit(f"error: the clip could not be saved as {os.path.basename(video_path)} ({exc.strerror or exc})")
         if a.no_header and fmt in ("csv", "tsv", "xlsx"):
             print("note: without the header line RespMech takes the first row of data as column titles")
         if len(selections) > 1 and fmt in ("csv", "tsv"):
             print("note: several blocks give a leading 'block' column, which shifts the column numbers (RespMech: export one block)")
         print(f"wrote {n} rows x {len(channels)} channels ({what}) to {a.output}")
+        if pending is not None:
+            print(f"wrote the video clip to {video_path}")
+            if clip_note:
+                print(f"note: {clip_note}")
         if note:
             print(f"note: {note}")
 
@@ -387,6 +418,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     s.add_argument("--no-header", action="store_true"); s.add_argument("--no-comments", action="store_true")
     s.add_argument("--raw", action="store_true", help="write stored values (ADC counts) instead of converted units")
     s.add_argument("--range-volts", action="append", metavar="CH=VOLTS", help="override the input range of a channel, e.g. 7=10 (rarely needed)")
+    s.add_argument("--video", choices=videoclip.MODES,
+                   help="also cut the video of the interval into a clip named like the output file: 'original' keeps the file's own "
+                        "container without re-encoding (may start at the previous key frame), 'h264' re-encodes to MP4 (needs ffmpeg)")
     s.set_defaults(fn=cmd_export)
 
     s = sub.add_parser("verify", help="compare decoded samples with a LabChart text export of the same record")

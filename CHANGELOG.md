@@ -5,6 +5,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`adichtion export --video original|h264`** writes the video clip of the exported interval beside the data file, as the
+  export dialog's *Video* box does (`original` copies without re-encoding and may start at the previous key frame; `h264`
+  re-encodes to MP4; several blocks give one clip). It needs ffmpeg (the `imageio-ffmpeg` package, an `ffmpeg` on the PATH,
+  or `ADICHTION_FFMPEG`). Nothing is left behind when the clip or the data export fails.
+
 ## [1.0.0] – 2026-10-05
 
 First stable release: the library, the command line and the desktop app, as installers for Windows, macOS and
