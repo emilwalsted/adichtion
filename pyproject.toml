@@ -43,7 +43,9 @@ dev = ["pytest>=7.0", "openpyxl>=3.1"]
 adichtion = "adichtion.__main__:main"
 
 [project.urls]
+Homepage = "https://github.com/emilwalsted/adichtion"
 Repository = "https://github.com/emilwalsted/adichtion"
+Changelog = "https://github.com/emilwalsted/adichtion/blob/main/CHANGELOG.md"
 Issues = "https://github.com/emilwalsted/adichtion/issues"
 
 [tool.hatch.version]
@@ -52,6 +54,11 @@ path = "src/adichtion/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/adichtion"]
 exclude = ["**/CLAUDE.md"]
+
+# The sdist keeps the tests (and what they read: the logo SVGs, the installer icons) so that
+# `pytest` runs from it, but not the agent notes or the CI workflows.
+[tool.hatch.build.targets.sdist]
+exclude = ["**/CLAUDE.md", "/.claude", "/.github"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -73,3 +73,20 @@ def test_the_bundle_requires_what_the_ui_extra_requires():
     assert set(app["requires"]) == extra
     assert "opencv-python-headless>=4.8,<4.13" in extra
     assert "imageio-ffmpeg>=0.5" in extra            # the video clip of an exported interval needs ffmpeg
+
+
+def test_the_app_without_the_ui_extra_says_how_to_install_it(monkeypatch, capsys):
+    # `pip install adichtion` has no PySide6: the bare command must explain, not raise ModuleNotFoundError.
+    import builtins
+    import adichtion.__main__ as m
+    real_import = builtins.__import__
+
+    def no_pyside(name, *args, **kwargs):
+        if name == "PySide6" or name.startswith("PySide6."):
+            raise ImportError("No module named 'PySide6'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_pyside)
+    assert m.main(["adichtion"]) == 1
+    err = capsys.readouterr().err
+    assert 'pip install "adichtion[ui]"' in err and "adichtion --help" in err

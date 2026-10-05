@@ -1,0 +1,150 @@
+name: Publish to PyPI
+
+# Publishes the adichtion Python package to PyPI via Trusted Publishing (OIDC): no API token is
+# stored anywhere in this repo or in GitHub secrets. PyPI mints a short-lived credential only for a
+# run whose identity (owner / repo / workflow file / GitHub environment) matches a trusted
+# publisher configured once on PyPI. Same shape as RespMech's publish-pypi.yml.
+#
+# It fires on the same `v*` tag as the installer release (release.yml), so one
+# `git tag vX.Y.Z && git push origin vX.Y.Z` cuts BOTH the GitHub release with the installers AND
+# the PyPI package. A manual run (Actions > Publish to PyPI > Run workflow) publishes to TestPyPI
+# instead: a dry run that never touches real PyPI.
+#
+# One-time maintainer setup (no secrets involved), docs/RELEASING.md section 6:
+#   PyPI > Your account > Publishing > "Add a pending publisher":
+#       PyPI Project Name:  adichtion
+#       Owner:              emilwalsted
+#       Repository name:    adichtion
+#       Workflow name:      publish-pypi.yml
+#       Environment name:   pypi
+#   (For the dry run, repeat on test.pypi.org with Environment name: testpypi.)
+#   And create the two GitHub environments `pypi` and `testpypi` (Settings > Environments).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}          # manual: TestPyPI dry run
+
+permissions: {}
+
+concurrency:
+  group: publish-pypi-${{ github.ref }}
+  cancel-in-progress: false      # never cancel an in-flight publish
+
+jobs:
+  # 1. Test gate. tests.yml does not run on tag pushes, so this is the release-time gate.
+  test:
+    name: Test gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYQTGRAPH_QT_LIB: PySide6
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Qt runtime libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libegl1 libgl1 libopengl0 libxkbcommon0 libdbus-1-3 libfontconfig1 libglib2.0-0
+      - run: python -m pip install -e ".[ui,dev]"
+      - run: python -m pytest -q
+
+  # 2. Build and verify the distributions.
+  build:
+    name: Build sdist + wheel
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: A release tag must point at a commit on main
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::tag $GITHUB_REF_NAME is not on main"; exit 1; }
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+      - name: Built version must match the tag, and CHANGELOG.md must have its entry
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          WHL=$(ls dist/adichtion-*.whl)
+          VER=$(basename "$WHL" | sed -E 's/^adichtion-([^-]+)-.*/\1/')
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "built=$VER  tag=$TAG"
+          if [ "$VER" != "$TAG" ]; then
+            echo "::error::built version $VER != tag $TAG: bump src/adichtion/__init__.py (and [tool.briefcase] version) to match the tag."
+            exit 1
+          fi
+          grep -q "^## \[$TAG\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## [$TAG]' entry"; exit 1; }
+      - name: twine check
+        run: twine check dist/*
+      - name: The wheel installs on its own and the command line runs
+        run: |
+          python -m venv /tmp/wheeltest
+          /tmp/wheeltest/bin/pip install dist/*.whl
+          /tmp/wheeltest/bin/adichtion --version
+          # no PySide6 in this venv: the bare command must give a plain message and exit 1
+          if /tmp/wheeltest/bin/adichtion 2>/tmp/noui.txt; then echo "::error::expected exit 1 without the ui extra"; exit 1; fi
+          grep -q 'adichtion\[ui\]' /tmp/noui.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 5
+
+  # 3a. Publish to PyPI (real releases: v* tag only).
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: pypi
+    permissions:
+      id-token: write            # OIDC: the only credential
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI (Trusted Publishing)
+        # Pinned to a release tag, not a SHA: a Docker-based action whose image is named by the tag.
+        # v1.14.2 carries a twine new enough for Metadata-Version 2.5 (what hatchling emits);
+        # RespMech's v2.4.0 was rejected by v1.14.0 after every other gate had passed.
+        uses: pypa/gh-action-pypi-publish@v1.14.2
+
+  # 3b. Publish to TestPyPI (manual dry run: workflow_dispatch only).
+  publish-testpypi:
+    name: Publish to TestPyPI (dry run)
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to TestPyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true

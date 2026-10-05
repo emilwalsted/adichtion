@@ -27,6 +27,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         from .cli import main as cli_main
         cli_main(argv[1:])
         return 0
+    try:
+        import PySide6  # noqa: F401 - only to tell a missing viewer from a broken one
+    except ImportError:
+        # `pip install adichtion` brings the library and the command line only; the viewer is the `ui` extra.
+        print("The adichtion app needs the viewer packages, which this installation does not have.\n"
+              'Install them with:  pip install "adichtion[ui]"\n'
+              "The command line works without them: adichtion --help", file=sys.stderr)
+        return 1
     from .ui.app import main as app_main
     return app_main(argv)
 

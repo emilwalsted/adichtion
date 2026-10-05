@@ -42,7 +42,8 @@ Run workflow*) only produces artifacts and needs no permission.
 
 ## What is not there yet
 
-- No PyPI publishing and no website hook (unlike RespMech); the release is the GitHub release.
+- PyPI: `.github/workflows/publish-pypi.yml` publishes on the same `v*` tag (Trusted Publishing; one-time setup by Emil,
+  `docs/RELEASING.md` section 6). No website hook (unlike RespMech).
 - No Intel-Mac build (the dmg is built on `macos-latest`, Apple Silicon), as for RespMech.
 - No `release-request` flow for environments that cannot push tags: ask Emil to tag from the
   Mac instead.
