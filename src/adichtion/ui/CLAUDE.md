@@ -40,6 +40,14 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   `_RowsView` keeps `cellClicked`/`cellDoubleClicked`/`rowCount()`. The "(n found)" video count is looked up on a
   thread (`_video_counted`, token-guarded); never call `Record.video_file` for every record on the GUI thread
   (a file-system lookup each: use `video_candidate` for the path alone).
+- `warmup.py` (Qt-free) — background decoding while the user looks: `Warmer` (one per open file; `run(stale, report)` is
+  the job of the stack's own `warm_runner`, a second `JobRunner` so it never queues in front of a render), `Activity`
+  (when the user last did something) and `channel_blocks` (a channel's storage blocks with their file times). Two jobs:
+  **prefetch** (after a detail pass that used decoded samples, `ChannelStack._request_prefetch` asks for the blocks half a
+  screen to each side, nearest first, cached) and **warm-up** (a sweep over the whole file, visible channels first and
+  nearest the view first, decoded with `decode_block(cache=False)` so only the summaries stay and the block cache is not
+  pushed out). Both wait until `Activity` has been quiet (`IDLE_S` 0.4 s, prefetch `PREFETCH_IDLE_S` 0.12 s), sleep after each
+  block (`DUTY` 0.3 of one core, never under `MIN_PAUSE_S`), stop at `stale()` and report `(done, total)` for the status bar.
 - `perfmon.py` — `StallMonitor`, the 5 ms `QTimer` that measures the GUI thread's stalls; created by
   `MainWindow` only when `ADICHTION_PERF` is set (`adichtion.perf`, which also times `open`, `install.*`,
   `render.coarse`, `render.detail` and the plots' repaints).
@@ -62,6 +70,15 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   and `FrameGrabber` (OpenCV, latest request wins).
 
 ## Rules
+
+- **Background decoding is polite (P9).** Anything that decodes on its own initiative (prefetch, warm-up) runs on
+  `ChannelStack.warm_runner`, never on `runner` (a long job there delays every render behind it), calls
+  waits for `ChannelStack.activity` through `Warmer`, and never fills the block cache with blocks nobody asked for
+  (`decode_block(cache=False)`). `Warmer.cancel()` is called before the file is closed (`set_file`, `close`): it returns
+  only when no block is being decoded, which is what makes closing safe. The activity is touched by a move, a click, the cursor, a render and a drawn curve (not by a y-zoom,
+  a resize or hovering); anything new that reacts to the user should `touch()` it, or the background will not know to wait. The status bar
+  label (`MainWindow.warm_label`) is always shown and has a fixed minimum width: showing it the first time laid the
+  status bar out again and cost 70 to 110 ms in the offscreen run.
 
 - **Only the workers decode long ranges.** The GUI thread may decode a block or two
   (the value under the cursor); anything proportional to the visible span goes through

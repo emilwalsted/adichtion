@@ -28,6 +28,18 @@ versions follow [Semantic Versioning](https://semver.org/).
   the one still running. A file that cannot be read gives the same error box as before.
 
 ### Added
+- Background indexing and prefetch: while you are not touching the window, the viewer reads the rest of the
+  file in the background (the visible channels first, starting where you are looking) and keeps a small
+  min/max summary of every block, so a first look at a tenth of a long file, or going back to one, waits
+  less for the decoder (a synthetic 76 MB, four-channel, 100-minute test file: about 600 ms to about 140 to
+  230 ms once indexed, measured offscreen in one test environment; not yet measured on real recordings). After a
+  view that needed decoded samples, the blocks half a screen width to each side are decoded ahead and cached, so
+  a pan or a zoom out lands on a warm cache. Both pause when you move, click, place the cursor or a new picture
+  is drawn (the block being decoded finishes first), pace their decoding to about a third of one processor
+  core, and never touch a file that is being closed. The indexing keeps only the summaries (about 1.7 KB per
+  block of memory; the block cache is left alone). "Indexing 38 %" shows in the status bar; View, Index in the
+  background switches the indexing off (the choice is remembered; the prefetch next to the view stays). The
+  decoded values and exports are unchanged.
 - Built-in timing for finding what is slow on a real recording: start the app with
   `ADICHTION_PERF=1` and it writes a timeline to stderr (opening the file, each stage of
   installing it, every coarse pass, every detail pass in the worker thread with the blocks

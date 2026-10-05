@@ -205,9 +205,12 @@ class _ChannelSummaries:
         self.maxs = np.zeros((nb, SUMMARY_BUCKETS), dtype=np.float64)
         self._lock = threading.Lock()
 
-    def put(self, block: int, data: np.ndarray) -> None:
+    def put(self, block: int, data: np.ndarray) -> bool:
+        """Remember the summary of ``block``; True when it is new (False: another thread got there first)."""
         n = len(data)
         with self._lock:                   # two threads decoding the same block write the same numbers
+            if self.have[block]:
+                return False
             if n:
                 k = min(SUMMARY_BUCKETS, n)
                 edges = (np.arange(k, dtype=np.int64) * n) // k
@@ -216,7 +219,8 @@ class _ChannelSummaries:
                 self.maxs[block, :k] = np.fmax.reduceat(data, edges)
                 self.count[block] = k
                 self.n[block] = n
-        self.have[block] = True            # last: a reader that sees it also sees the numbers
+            self.have[block] = True        # last: a reader that sees it also sees the numbers
+        return True
 
 
 def _subblocks_from_map(blocks: bytes | memoryview, chart: ChartData) -> list[SubBlock]:
@@ -301,8 +305,10 @@ class AdichtFile:
             self.kind = "adicht"
             self._open_adicht(zero_copy)
         self._cache = _BlockCache(cache_bytes, cache_blocks)
+        self._tls = threading.local()   # per thread: how many blocks it has asked for (see :meth:`thread_block_requests`)
         self._summaries: dict[tuple[int, int], _ChannelSummaries] = {}
         self._summaries_lock = threading.Lock()
+        self._n_summarised = 0          # blocks that have a summary, all channels and records (kept in step with the stores)
         self._range_override: dict[int, float] = {}
         self.records: list[Record] = [Record(self, r) for r in self.chart.records]
 
@@ -340,6 +346,16 @@ class AdichtFile:
         counters last reset by :meth:`clear_cache`); a miss is one block decoded."""
         return self._cache.hits, self._cache.misses
 
+    def summarised_blocks(self) -> int:
+        """How many blocks have a min/max summary so far (O(1); a background warm-up reports its progress from it)."""
+        return self._n_summarised
+
+    def thread_block_requests(self) -> int:
+        """How many blocks the CALLING thread has asked :meth:`decode_block` for so far; the difference over a
+        stretch of work says whether that work needed decoded samples, whatever other threads decoded meanwhile
+        (:meth:`cache_stats` is the file's, shared by every thread)."""
+        return getattr(self._tls, "n", 0)
+
     def clear_cache(self, reset_counters: bool = True) -> None:
         """Forget every decoded block, block summary and filled min/max envelope (a cold start, for
         ``adichtion bench``); the counters of :meth:`cache_stats` restart too."""
@@ -349,6 +365,7 @@ class AdichtFile:
         self._envelope_gen += 1
         with self._summaries_lock:
             self._summaries.clear()
+            self._n_summarised = 0
         if reset_counters:
             self._cache.hits = self._cache.misses = 0
 
@@ -516,10 +533,15 @@ class AdichtFile:
     def _body(self, sb: SubBlock) -> memoryview:
         return memoryview(self._blocks)[sb.body_offset: sb.body_offset + sb.body_size]
 
-    def decode_block(self, record: int, block: int, channel: int) -> np.ndarray:
+    def decode_block(self, record: int, block: int, channel: int, cache: bool = True) -> np.ndarray:
         """Decoded samples of one block: int32 counts or float32 values (cached).
         Every block is self-contained, so this is O(1) blocks.  A block decoded for the
-        first time also leaves its min/max summary behind (:meth:`summary_store`)."""
+        first time also leaves its min/max summary behind (:meth:`summary_store`).
+
+        ``cache=False`` decodes a block that is not cached yet without keeping it: the summary is
+        left, the block cache (and what the user's view has in it) is not disturbed.  A background
+        warm-up of a file bigger than the cache would otherwise push out the blocks being looked at."""
+        self._tls.n = getattr(self._tls, "n", 0) + 1
         if self.mac is not None:
             mb = self.index.get(record, block, channel)
             if mb is None:
@@ -538,13 +560,15 @@ class AdichtFile:
         else:
             data = decode_subblock(self._body(sb), sb)
         self._remember_summary(record, block, channel, data)
-        self._cache.put(key, data)
+        if cache:
+            self._cache.put(key, data)
         return data
 
     def _remember_summary(self, record: int, block: int, channel: int, data: np.ndarray) -> None:
         store = self.summary_store(record, channel, create=True)
-        if store is not None and not store.have[block]:
-            store.put(block, data)
+        if store is not None and not store.have[block] and store.put(block, data):
+            with self._summaries_lock:
+                self._n_summarised += 1
 
     def summary_store(self, record: int, channel: int, create: bool = False) -> Optional[_ChannelSummaries]:
         """The min/max summaries of the blocks of ``channel`` in ``record`` that have been decoded

@@ -153,5 +153,5 @@ def test_a_detail_result_for_an_older_view_is_dropped(qapp, window, synthetic):
     c = st.visible_channels[0]
     key = st.plots[c].coarse_key
     assert key is not None
-    st._on_progress(st._render_job, "render", (c, 0.0, 20.0, np.zeros(3), np.zeros(3), "envelope", 3))
+    st._on_progress(st._render_job, "render", (c, 0.0, 20.0, np.zeros(3), np.zeros(3), "envelope", 3, False))
     assert st.plots[c].coarse_key == key                           # the coarse picture of the current view stays
