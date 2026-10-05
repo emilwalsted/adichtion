@@ -2,7 +2,7 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
-## 2026-10-06 (1) — Kommandolinjen kan skrive videoklip
+## 2026-10-05 (7) — Kommandolinjen kan skrive videoklip
 
 Ønske: kommandolinje-interface til adichtion, "som med RespMech, så vidt muligt".
 

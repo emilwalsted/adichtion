@@ -221,7 +221,7 @@ def cmd_export(a: argparse.Namespace) -> None:
             if not segments:
                 sys.exit("error: there is no video file for this interval (use the 'videos' command to see the file's clips)")
             video_path = os.path.splitext(a.output)[0] + videoclip.clip_extension(a.video, segments)
-            if os.path.realpath(video_path) == os.path.realpath(a.output):
+            if os.path.normcase(os.path.realpath(video_path)) == os.path.normcase(os.path.realpath(a.output)):
                 sys.exit("error: the data file and the clip would get the same name: choose another output extension")
             try:
                 pending = videoclip.write_clip(segments, a.video, video_path)
@@ -420,7 +420,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     s.add_argument("--range-volts", action="append", metavar="CH=VOLTS", help="override the input range of a channel, e.g. 7=10 (rarely needed)")
     s.add_argument("--video", choices=videoclip.MODES,
                    help="also cut the video of the interval into a clip named like the output file: 'original' keeps the file's own "
-                        "container without re-encoding (may start at the previous key frame), 'h264' re-encodes to MP4 (needs ffmpeg)")
+                        "container without re-encoding (may start at the previous key frame), 'h264' re-encodes to MP4 (needs ffmpeg). An existing clip of that name is replaced")
     s.set_defaults(fn=cmd_export)
 
     s = sub.add_parser("verify", help="compare decoded samples with a LabChart text export of the same record")
