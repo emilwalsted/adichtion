@@ -446,8 +446,9 @@ class MainWindow(QMainWindow):
     def _report_open_error(self, path: str, tb: str) -> None:
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Critical)
-        box.setWindowTitle("Could not open the file")
-        box.setText(f"{os.path.basename(path)} could not be read.\n\n{_short_error(tb)}")
+        box.setWindowTitle("Could not open the file")    # macOS shows no title on a message box, hence the text too
+        box.setText("Could not open the file")
+        box.setInformativeText(f"{os.path.basename(path)} could not be read.\n\n{_short_error(tb)}")
         box.setDetailedText(tb)
         box.exec()
 

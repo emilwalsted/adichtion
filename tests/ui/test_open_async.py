@@ -86,7 +86,7 @@ def test_a_file_that_cannot_be_read_gives_the_error_box(qapp, window, tmp_path, 
     bad = tmp_path / "bad.adicht"
     bad.write_bytes(b"not a labchart file at all" * 100)
     shown = []
-    monkeypatch.setattr(QMessageBox, "exec", lambda self: shown.append((self.windowTitle(), self.text())) or 0)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: shown.append((self.text(), self.informativeText())) or 0)
     assert window.open_file(str(bad)) is True                 # started; the failure comes with the result
     assert wait_until(qapp, lambda: bool(shown), timeout=10)
     assert shown[0][0] == "Could not open the file" and "bad.adicht could not be read" in shown[0][1]

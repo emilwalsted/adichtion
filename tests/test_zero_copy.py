@@ -174,6 +174,7 @@ def test_mac_documents_are_read_into_memory_whatever_is_asked(mac):
         assert len(f.decode_block(0, 0, 0)) > 0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows refuses to shorten a file while it is memory-mapped, so the case cannot arise there")
 def test_a_file_cut_short_after_opening_is_an_error_not_a_crash(synthetic, tmp_path):
     import shutil
     path = tmp_path / "cut.adicht"
