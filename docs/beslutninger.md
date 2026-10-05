@@ -2,6 +2,54 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-05 (1) — Forhåndsafkodning og baggrundsopvarmning (P9)
+
+Efter P2 (blokresuméer og hukommelsesstyret cache) bruger viseren ledig tid til at blive hurtigere, mens brugeren kigger:
+dels afkodes blokkene lige uden for det afkodede område, dels gennemløbes hele filen i lav prioritet, så resuméerne findes.
+Ingen afkodede værdier, ingen eksportbytes og intet i API'ets returværdier er ændret (`decode_block` har fået den valgfri
+parameter `cache=True`).
+
+- **Valgt: ét `Warmer`-objekt pr. åben fil (Qt-frit, `ui/warmup.py`) på en EGEN `JobRunner` (`ChannelStack.warm_runner`).**
+  `JobRunner` er én tråd med en FIFO; et langt opvarmningsjob på `runner` ville have stillet hvert render-job bag sig.
+  Forhåndsafkodning og opvarmning deler jobbet og en aktivitetsvagt, så de aldrig kører samtidig med hinanden eller med brugeren.
+  Fravalgt: to separate jobs (ville skulle koordinere om CPU og tråd) og en `QTimer` på GUI-tråden (ville selv skabe hakkene).
+- **Opvarmningen afkoder med `decode_block(cache=False)`:** kun resuméet bliver tilbage. En fil større end blokcachen
+  (`CACHE_MAX_BYTES`) ville ellers have skubbet de blokke ud, brugeren kigger på. Forhåndsafkodningen bruger cachen (det er
+  meningen, at den skal være varm).
+- **Hvornår:** efter at `Activity` (berøres af hvert træk, klik, markørflyt, render og tegnet kurve) har været stille
+  `IDLE_S` = 0,4 s (forhåndsafkodning: 0,12 s). Efter hver blok en pause, så højst `DUTY` = 0,3 af én kerne bruges, og aldrig
+  mindre end 2 ms, så GIL'en altid afleveres (GUI-tegningen og arbejdstrådens Python deler den; reviewets afsnit 3.4).
+  Målt i sandkassen på fil C (4 kanaler, 2 kHz, 100 min, 600 optagelser, 76 MB): opvarmningen tog 15,6 s i vægtid og ca. 5 s
+  CPU for 4800 blokke. Længste hul i en 5 ms-`QTimer` på GUI-tråden var 6,6 til 7,7 ms under opvarmning mod 6,5 til 6,9 ms uden
+  (jf. `tests/ui/test_warmup_ui.py`, hvor grænsen er løs, fordi sandkassens tid er støjfyldt).
+- **Forhåndsafkodning udløses kun, når detaljepasset faktisk brugte afkodede samples** (`_render_job` sender nu et sidste led i
+  nyttelasten: cache-hits+misses under passet var over nul). Niveauet (`samples`/`envelope`) duer ikke som kriterium: et
+  `envelope` kan være afkodet og reduceret, og et blok-indeks-svar kan hedde `envelope` uden at have afkodet noget. Rækkevidden er
+  `PREFETCH_SPAN` = en halv skærmbredde til hver side (ud over `RENDER_MARGIN`), højst `PREFETCH_MAX_BLOCKS` = 32 blokke pr. side
+  og kanal, de nærmeste først, siderne vekslende; et nyt krav for en kanal erstatter resten af det gamle.
+- **Opvarmningens rækkefølge** er synlige kanaler først (i visningens rækkefølge), derefter de øvrige; inden for en kanal de blokke,
+  der ligger nærmest midten af den seneste visning først (`set_view`, kaldt fra hvert detaljepas). Blokke, der allerede har et
+  resumé (visningen eller forhåndsafkodningen nåede dem), springes over uden at blive afkodet. Fremdriften er
+  `(blokke med resumé, blokke med data)`, aflæst direkte fra resuméerne: den går aldrig baglæns og er rigtig, uanset hvem der
+  afkodede.
+- **Indstilling:** View, *Index in the background* (`view/warmup` i `QSettings`, standard til) slår kun OPVARMNINGEN fra;
+  forhåndsafkodningen ved siden af visningen er begrænset (højst 64 blokke pr. kanal pr. detaljepas) og bliver. Statuslinjen
+  viser "Indexing N %" i en permanent etiket, der altid er synlig med fast minimumsbredde (første visning af en ny etiket lagde
+  statuslinjen ud igen: 70 til 110 ms i offscreen-kørslen).
+- **Lukning:** `Warmer.cancel()` venter på den blok, der afkodes, og kaldes FØR `MainWindow` lukker den gamle fil (`set_file`
+  og `close`). En fil, der bliver ved med at fejle ved afkodning (5 fejl), efterlades i fred.
+- **Målt effekt (sandkasse, offscreen Qt, syntetisk fil C, ikke rigtige filer):** et første blik på en tiendedel af filen og
+  tilbagevenden til en tiendedel: ca. 600 ms til ca. 140 til 230 ms, når filen er indekseret. "Tilbage til hele filen" er uændret
+  (ca. 100 ms), fordi hele filen allerede besvares af blok-indekset; zoom til 20 s uændret (2 til 3 blokke afkodes, 94 til 177 ms
+  i begge tilfælde, bimodal støj). Forventningen i opgavens overslag (hurtigere "tilbage til hele filen") holdt altså ikke for
+  fil C: gevinsten ligger i mellemzoom, ikke i fuld-fil-visningen.
+- **Ikke gjort:** at udfylde manglende min/max i blokindekset for LabChart for Mac-dokumenter (`block_minmax(fill=True)`) som en del
+  af opvarmningen; en pause under tegning ud over `Activity` (en tegning, der ikke følger af en bruger- eller render-hændelse, ses
+  ikke); prioritering mellem flere åbne filer (der er kun én).
+- **Ikke verificeret her:** den oplevede glathed, CPU-/blæserstøj og hukommelse på en rigtig maskine med rigtige filer, jf. P1.
+  Emil kører en rigtig fil, kigger efter hak under opvarmningen ("Indexing N %" i statuslinjen), prøver menupunktet og gentager
+  målingen (`adichtion bench FIL --pan` og scripts i performance-reviewet).
+
 ## 2026-10-04 (9) — Hurtigere tekst-/CSV-/Excel-eksport med fremdrift og annullér (P8)
 
 Målt i sandkassen (600.000 rækker, fire kanaler, syntetisk fil, softwarerenderet Qt): CSV 1,76 s, tekst 1,45 s, Excel
