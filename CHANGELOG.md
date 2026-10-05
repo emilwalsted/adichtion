@@ -33,6 +33,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   readers such as pandas and RespMech; they are now in cells to the right of the table.
 
 ### Changed
+- **The Video menu shows only when the open file has a video.** Without one (or with no file open) the menu is hidden instead of greyed out.
 - The splash screen no longer names the GitHub repository.
 - The file panel opens on Comments, then Channels, then Blocks. The Blocks table's Video column is shown only
   when the file has video clips attached.

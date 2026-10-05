@@ -161,3 +161,14 @@ def test_view_pages_along_with_the_playing_cursor(qapp, window, video_document):
     window.video.pause()
     x0, x1 = window.stack.view_range()
     assert x0 < window.stack.cursor < x1 and x0 > 0.5 and (x1 - x0) == pytest.approx(2.0, abs=0.01)
+
+
+def test_video_menu_shows_only_for_a_file_with_video(qapp, window, video_document, documents):
+    menu = next(a for a in window.menuBar().actions() if a.text() == "&Video")
+    assert not menu.isVisible()                                # nothing open yet
+    window.open_file_sync(documents["v26"]["path"])            # a document without a video module
+    assert not window.video.has_videos and not menu.isVisible()
+    window.open_file_sync(video_document)
+    assert window.video.has_videos and menu.isVisible()
+    window.close_file()
+    assert not menu.isVisible()

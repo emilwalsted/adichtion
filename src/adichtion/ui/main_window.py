@@ -255,6 +255,7 @@ class MainWindow(QMainWindow):
         for a in (self.act_step_back, self.act_step_fwd, self.act_sec_back, self.act_sec_fwd):
             c.addAction(a)
         vid = mb.addMenu("&Video")
+        self.menu_video = vid                  # shown only while the open file has a video (_update_actions)
         for a in (self.act_play, self.act_video_start, self.act_video_end, self.act_slower, self.act_faster):
             vid.addAction(a)
         h = mb.addMenu("&Help")
@@ -295,6 +296,7 @@ class MainWindow(QMainWindow):
         self.act_zoom_fit.setEnabled(has and not self.act_auto_zoom.isChecked())
         for a in (self.act_play, self.act_video_start, self.act_video_end, self.act_slower, self.act_faster):
             a.setEnabled(has and self.video.has_videos)
+        self.menu_video.menuAction().setVisible(has and self.video.has_videos)
 
     # -- view choices ------------------------------------------------------------------
     def set_auto_zoom(self, on: bool) -> None:
