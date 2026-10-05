@@ -200,3 +200,5 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   an application-wide style, palette or sheet anywhere else.
 - Tests grab the widgets offscreen (`widget.grab().save(...)`) when a look needs checking;
   the platform plugin prints "does not support propagateSizeHints", which is noise.
+
+- **The Video menu is hidden, not just disabled, when the open file has no video** (`MainWindow.menu_video`, set in `_update_actions` from `VideoPanel.has_videos`, the same test as the Video box).
