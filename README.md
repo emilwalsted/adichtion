@@ -167,7 +167,10 @@ table with the block, start and interval to the right of it) or a MATLAB level-5
 file (one `data_block<N>` matrix per block, the channels as rows).
 **RespMech reads the CSV, tab-separated, Excel and MATLAB exports as they are**
 (for MATLAB choose the `windows` variant; time is column 1 of a table, and channel
-1 is column 1 of a MATLAB file). The LabChart-style text is not a table, and
+1 is column 1 of a MATLAB file). For RespMech export one block at a time: with several
+blocks a CSV or tab table gets a leading `block` column that shifts the column numbers,
+and RespMech reads only the first Excel sheet and `data_block1`. Keep the header on
+(`--no-header` makes RespMech take the first row of data as column titles). The LabChart-style text is not a table, and
 RespMech does not read it: use `tsv` for a `.txt` file RespMech can open.
 
 ## Tests

@@ -219,6 +219,10 @@ def cmd_export(a: argparse.Namespace) -> None:
             note = upsampling_notice(f, selections, channels)
         except (ValueError, RuntimeError) as exc:
             sys.exit(f"error: {exc}")
+        if a.no_header and fmt in ("csv", "tsv", "xlsx"):
+            print("note: without the header line RespMech takes the first row of data as column titles")
+        if len(selections) > 1 and fmt in ("csv", "tsv"):
+            print("note: several blocks give a leading 'block' column, which shifts the column numbers (RespMech: export one block)")
         print(f"wrote {n} rows x {len(channels)} channels ({what}) to {a.output}")
         if note:
             print(f"note: {note}")

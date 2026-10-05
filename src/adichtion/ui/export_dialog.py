@@ -143,6 +143,7 @@ class ExportDialog(QDialog):
         for w in (self.format, self.rb_file, self.rb_block, self.rb_sel, self.rb_shown, self.rb_all, self.rb_pick):
             (w.currentIndexChanged if isinstance(w, QComboBox) else w.toggled).connect(lambda *_a: self._update_note())
         self.format.currentIndexChanged.connect(lambda *_a: self._sync_options())
+        self.cb_header.toggled.connect(lambda *_a: self._update_note())
         self._sync_options()
         self._update_note()
         self.resize(520, 640)
@@ -271,6 +272,8 @@ class ExportDialog(QDialog):
                 text += f". A block of {biggest:,} rows does not fit an Excel sheet ({XLSX_MAX_ROWS - 1:,} rows): choose text or CSV, or a shorter selection."
         elif n_sel > 1:
             text += ", " + ("the header repeated at every block" if self.fmt() == "txt" else "with a block column first (RespMech reads the first block only: export one block at a time for it)")
+        if not self.cb_header.isChecked() and self.cb_header.isEnabled() and self.fmt() in ("csv", "tsv", "xlsx"):
+            text += ". Without the header line RespMech takes the first row of data as column titles."
         note = self.upsampling_note()
         if note:
             text += ".\n" + note
