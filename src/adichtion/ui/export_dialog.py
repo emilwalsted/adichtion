@@ -1,7 +1,10 @@
 """The export dialog: format, scope, channels and options, then the file name.
 
 The choices are remembered between exports (``QSettings`` group ``export``: format, scope,
-channel choice, decimal separator, the three options and the folder last exported to).  The scope
+channel choice, decimal separator, the three options, the folder last exported to and the kind of video
+clip).  The "Also export the video clip" box is asked afresh every time (it starts unticked: a clip is
+large, and should never be written out of habit) and appears only when the exported blocks have a video
+file; the clip is named like the data file, in the same folder (:mod:`adichtion.videoclip`).  The scope
 starts as the selection when there is one; the context menu on a plot without one passes
 ``default_scope="file"`` (the whole recording); otherwise the remembered scope applies.
 """
@@ -13,9 +16,10 @@ from typing import Optional
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-                               QGroupBox, QHBoxLayout, QLabel, QPushButton, QRadioButton, QScrollArea, QVBoxLayout,
-                               QWidget)
+                               QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QRadioButton, QScrollArea,
+                               QVBoxLayout, QWidget)
 
+from .. import videoclip
 from ..export import XLSX_MAX_ROWS, table_rows, upsampling_notice
 from ..file import AdichtFile, Selection
 from .timeline import Timeline
@@ -39,6 +43,11 @@ class ExportRequest:
     units: bool = True
     scope_label: str = ""
     extra: dict = field(default_factory=dict)
+    video_mode: Optional[str] = None          # None: no clip; else one of videoclip.MODES
+    video_path: str = ""                      # where the clip goes (beside ``path``, same name)
+    video_segments: list = field(default_factory=list)
+    video_missing: list = field(default_factory=list)       # 1-based blocks of the interval without video
+    video_error: str = ""                     # set by the export job when the clip could not be made
 
 
 class ExportDialog(QDialog):
@@ -128,6 +137,24 @@ class ExportDialog(QDialog):
             ol.addRow(cb)
         lay.addWidget(opts)
 
+        self.video_box = QGroupBox("Video")
+        vl = QVBoxLayout(self.video_box)
+        self.cb_video = QCheckBox("Also export the video clip for this interval")
+        self.rb_vid_original = QRadioButton("Original format (copied as it is, nothing re-encoded)")
+        self.rb_vid_h264 = QRadioButton("H.264 in an MP4 file (plays on every platform)")
+        self.rb_vid_h264.setChecked(True)
+        self.vid_group = QButtonGroup(self)
+        for rb in (self.rb_vid_original, self.rb_vid_h264):
+            self.vid_group.addButton(rb)
+        vl.addWidget(self.cb_video)
+        for rb in (self.rb_vid_original, self.rb_vid_h264):
+            rb.setContentsMargins(24, 0, 0, 0)
+            vl.addWidget(rb)
+        lay.addWidget(self.video_box)
+        self._video_cache: dict[tuple, bool] = {}
+        self._segment_cache: dict[tuple, tuple] = {}
+        self._ffmpeg_ok: Optional[bool] = None            # looked up when a video is first on offer (it starts a program)
+
         self.note = QLabel("")
         self.note.setWordWrap(True)
         self.note.setProperty("status", "muted")
@@ -144,6 +171,8 @@ class ExportDialog(QDialog):
             (w.currentIndexChanged if isinstance(w, QComboBox) else w.toggled).connect(lambda *_a: self._update_note())
         self.format.currentIndexChanged.connect(lambda *_a: self._sync_options())
         self.cb_header.toggled.connect(lambda *_a: self._update_note())
+        for w in (self.cb_video, self.rb_vid_original, self.rb_vid_h264):
+            w.toggled.connect(lambda *_a: self._update_note())
         self._sync_options()
         self._update_note()
         self.resize(520, 640)
@@ -196,6 +225,7 @@ class ExportDialog(QDialog):
         self.cb_header.setChecked(self._get_bool("header", True))
         self.cb_comments.setChecked(self._get_bool("comments", True))
         self.cb_units.setChecked(self._get_bool("units", True))
+        (self.rb_vid_original if str(self._get("video_mode", "") or "") == "original" else self.rb_vid_h264).setChecked(True)
 
     def _remember(self, path: str) -> None:
         if self._settings is None:
@@ -210,6 +240,7 @@ class ExportDialog(QDialog):
         st.setValue(f"{g}/header", self.cb_header.isChecked())
         st.setValue(f"{g}/comments", self.cb_comments.isChecked())
         st.setValue(f"{g}/units", self.cb_units.isChecked())
+        st.setValue(f"{g}/video_mode", self.video_mode() or str(self._get("video_mode", "") or ""))
         st.setValue(f"{g}/folder", os.path.dirname(path))
 
     # -- what the choices amount to -------------------------------------------------
@@ -250,6 +281,35 @@ class ExportDialog(QDialog):
         chans = self.channels()
         return upsampling_notice(self.file, self.selections(), chans) if chans else None
 
+    def video_available(self) -> bool:
+        """Does the interval to export have a video file?  Looked up once per set of blocks."""
+        sels = self.selections()
+        key = tuple(sorted({sel.record for sel in sels}))
+        if key not in self._video_cache:
+            self._video_cache[key] = videoclip.has_video(self.file, sels)
+        return self._video_cache[key]
+
+    def video_mode(self) -> Optional[str]:
+        """``"original"``, ``"h264"`` or ``None`` (no clip asked for, or none to be had)."""
+        if not (self.cb_video.isChecked() and self.cb_video.isEnabled()):
+            return None
+        return "original" if self.rb_vid_original.isChecked() else "h264"
+
+    def _sync_video(self) -> None:
+        """Show the Video group when the interval has video; without ffmpeg it is there but cannot be ticked."""
+        have = self.video_available()
+        self.video_box.setVisible(have)
+        if have and self._ffmpeg_ok is None:
+            self._ffmpeg_ok = videoclip.find_ffmpeg() is not None
+        ok = bool(self._ffmpeg_ok)
+        self.cb_video.setEnabled(have and ok)
+        if have and not ok:
+            self.cb_video.setText("Also export the video clip (the ffmpeg program was not found)")
+        else:
+            self.cb_video.setText("Also export the video clip")
+        for rb in (self.rb_vid_original, self.rb_vid_h264):
+            rb.setEnabled(have and ok and self.cb_video.isChecked())
+
     def _sync_options(self) -> None:
         """A MATLAB file has no decimal separator, header lines or comment column; Excel no decimal
         separator (Excel applies its own); only LabChart-style text has the header lines of its own kind."""
@@ -257,8 +317,10 @@ class ExportDialog(QDialog):
         self.decimal.setEnabled(fmt in ("txt", "csv", "tsv"))
         self.cb_header.setEnabled(fmt != "mat")
         self.cb_comments.setEnabled(fmt != "mat")
+        self._sync_video()
 
     def _update_note(self) -> None:
+        self._sync_video()
         per_table = self._table_rows()
         rows = sum(per_table)
         n_sel = len(per_table)
@@ -277,7 +339,25 @@ class ExportDialog(QDialog):
         note = self.upsampling_note()
         if note:
             text += ".\n" + note
+        vnote = self._video_note()
+        if vnote:
+            text += ".\n" + vnote
         self.note.setText(text)
+
+    def _video_note(self) -> str:
+        mode = self.video_mode()
+        if mode is None:
+            return ""
+        sels = self.selections()
+        key = tuple((s.record, s.start, s.stop) for s in sels)
+        if key not in self._segment_cache:
+            self._segment_cache = {key: videoclip.video_segments(self.file, sels)}       # one entry: the latest choice
+        segs, missing = self._segment_cache[key]
+        detail = videoclip.segment_note(mode, segs, missing[:8])
+        if len(missing) > 8:
+            detail += f" and {len(missing) - 8} more blocks without video"
+        name = f"named like the data file, with {videoclip.clip_extension(mode, segs)}"
+        return f"Video clip: {name}, in the same folder" + (f"; {detail}" if detail else "")
 
     def _accept(self) -> None:
         chans = self.channels()
@@ -295,9 +375,29 @@ class ExportDialog(QDialog):
             return
         if not path.lower().endswith("." + ext):
             path += "." + ext
+        video_mode = self.video_mode()
+        segments, missing, video_path = [], [], ""
+        if video_mode is not None:
+            segments, missing = videoclip.video_segments(self.file, self.selections())
+            if not segments:
+                self.note.setText("There is no video file for this interval: untick the video clip, or choose another interval.")
+                return
+            video_path = os.path.splitext(path)[0] + videoclip.clip_extension(video_mode, segments)
+            if any(os.path.realpath(s.path) == os.path.realpath(video_path) for s in segments):
+                self.note.setText("That name is the original video file's: choose another file name for the data.")
+                return
+            if os.path.isdir(video_path):
+                self.note.setText("There is a folder with the clip's name: choose another file name for the data.")
+                return
+            if os.path.exists(video_path) and QMessageBox.question(
+                    self, "Replace the video clip?", f"{os.path.basename(video_path)} already exists. Replace it?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
         self.request = ExportRequest(path=path, fmt=fmt, selections=self.selections(), channels=chans,
                                      decimal="," if self.decimal.currentIndex() == 1 else ".",
                                      header=self.cb_header.isChecked(), comments=self.cb_comments.isChecked(),
-                                     units=self.cb_units.isChecked(), scope_label=self.scope_label())
+                                     units=self.cb_units.isChecked(), scope_label=self.scope_label(),
+                                     video_mode=video_mode, video_path=video_path, video_segments=segments,
+                                     video_missing=missing)
         self._remember(path)
         self.accept()

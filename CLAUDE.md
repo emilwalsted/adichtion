@@ -40,7 +40,9 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    LabChart's up-sampling, `AdichtFile.block_table` (one flat table of the block index per channel, for the
    viewer's vectorised curves), video clips (and the timing of LabChart for Mac
    movies).
-5. `export.py`, `cli.py` — text/CSV export and the command line.
+5. `export.py`, `cli.py` — text/CSV export and the command line. `videoclip.py` cuts the video of an exported
+   interval into a clip with an ffmpeg program (stream copy or H.264; docs/beslutninger.md 2026-10-05 (4)); it is Qt-free
+   and `export_dialog`/`main_window` call it.
 6. `infer.py` (numerical recovery of calculated-channel definitions, on top of
    layer 4) and `macchart.py` (LabChart 7 for Mac documents/settings files,
    standalone). Both are analysis helpers the UI may call; neither changes

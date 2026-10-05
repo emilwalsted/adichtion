@@ -72,3 +72,4 @@ def test_the_bundle_requires_what_the_ui_extra_requires():
     (app,) = cfg["tool"]["briefcase"]["app"].values()
     assert set(app["requires"]) == extra
     assert "opencv-python-headless>=4.8,<4.13" in extra
+    assert "imageio-ffmpeg>=0.5" in extra            # the video clip of an exported interval needs ffmpeg

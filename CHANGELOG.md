@@ -6,6 +6,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Export the video clip with an interval.** When the blocks you export have a video file, the export dialog has a
+  *Video* box: tick it to also write the matching clip, either in the file's original format (copied, nothing
+  re-encoded; it can start a little before the interval, at the video's previous key frame) or as H.264 in an MP4
+  file that plays on every platform (frame accurate). The clip gets the data file's name, with the clip's
+  extension (the video's own, or `.mp4`), in the same folder (not in a subfolder as LabChart does). An interval over several blocks gives one
+  clip. The box is unticked each time you export. The clip is cut by ffmpeg, which the new `imageio-ffmpeg`
+  dependency brings (or an `ffmpeg` on the PATH, or `ADICHTION_FFMPEG`); `adichtion.videoclip` is the Qt-free API.
 - **Every export RespMech reads is now a file RespMech can load.** New formats: a tab-separated table
   (`--format tsv`, a `.txt` with one header line) and MATLAB (`--format mat`, level 5, which RespMech and
   scipy read; one `data_block<N>` matrix per block with the channels as rows, plus `titles_block<N>`,

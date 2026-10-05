@@ -707,7 +707,7 @@ class MainWindow(QMainWindow):
         cancel = self._export_cancel = threading.Event()
         self._export_job = self.runner.submit(
             "export", partial(_export_job, f, req, export_selections, cancel), coalesce=False)
-        dlg = QProgressDialog(f"Exporting {req.scope_label} to {os.path.basename(req.path)}…", "Cancel", 0, 1000, self)
+        dlg = QProgressDialog(f"Exporting {req.scope_label}{' and its video clip' if req.video_mode else ''} to {os.path.basename(req.path)}…", "Cancel", 0, 1000, self)
         dlg.setWindowTitle("Export")
         dlg.setWindowModality(Qt.WindowModal)
         dlg.setMinimumDuration(300)
@@ -721,7 +721,7 @@ class MainWindow(QMainWindow):
         dlg, req = self._export_dialog, self._export_request
         if dlg is None or req is None or total <= 0 or (self._export_cancel is not None and self._export_cancel.is_set()):
             return
-        dlg.setLabelText(f"Exporting {req.scope_label} to {os.path.basename(req.path)}… {100 * done // total} %")
+        dlg.setLabelText(f"Exporting {req.scope_label}{' and its video clip' if req.video_mode else ''} to {os.path.basename(req.path)}… {100 * done // total} %")
         # the bar itself, never QProgressDialog.setValue: once a modal dialog is shown, that runs the event loop, the
         # worker's "done" is then handled in here and the dialog deleted under its own setValue (a crash on macOS)
         bar = dlg.findChild(QProgressBar)
@@ -749,6 +749,16 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Export failed.")
             return
         text = f"Exported {result:,} rows to {req.path if req else 'file'}."
+        if req is not None and req.video_mode and not req.video_error:
+            text += f" Video clip: {os.path.basename(req.video_path)}."
+        elif req is not None and req.video_error:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Video clip not exported")
+            box.setText("The data was exported, but the video clip could not be made.")
+            box.setInformativeText(req.video_error)
+            box.exec()
+            text += " The video clip was not made."
         if req is not None and self.file is not None:
             try:
                 from ..export import upsampling_notice
@@ -845,11 +855,42 @@ def _infer_job(rec, targets, stale, report):
 
 
 def _export_job(f, req, export_selections, cancel, stale, report):
-    """The export; ``None`` when it was cancelled (the Cancel button, or the window closing)."""
+    """The export; ``None`` when it was cancelled (the Cancel button, or the window closing).
+
+    With a video clip asked for, the clip is cut first (the longer part, 0 to 80 % of the progress bar) and
+    kept under its temporary name until the data file is written, so that a cancelled or failed export leaves
+    neither.  A clip that cannot be made (``req.video_error``) does not stop the data export."""
+    from .. import videoclip
     from ..export import ExportCancelled
+    stop = lambda: cancel.is_set() or stale()                                # noqa: E731
+    pending = None
+    lo, span = 0, 1000
+    if req.video_mode:
+        lo, span = 800, 200
+        try:
+            pending = videoclip.write_clip(req.video_segments, req.video_mode, req.video_path, stale=stop,
+                                           progress=lambda p: report((int(800 * p), 1000)))
+        except videoclip.VideoExportCancelled:
+            return None
+        except videoclip.VideoExportError as exc:
+            req.video_error = str(exc)
+            lo, span = 0, 1000                                  # no clip: the data export has the whole bar
     try:
-        return export_selections(f, req.selections, req.channels, req.path, fmt=req.fmt, decimal=req.decimal,
-                                 header=req.header, units=req.units, comments=req.comments,
-                                 stale=lambda: cancel.is_set() or stale(), progress=lambda done, total: report((done, total)))
+        rows = export_selections(f, req.selections, req.channels, req.path, fmt=req.fmt, decimal=req.decimal,
+                                 header=req.header, units=req.units, comments=req.comments, stale=stop,
+                                 progress=lambda done, total: report((lo + span * done // max(total, 1), 1000)))
+        if pending is not None:
+            try:
+                pending.commit()
+            except OSError as exc:                              # the data file is written; only the clip's name is not free
+                pending.discard()
+                req.video_error = f"The clip could not be saved as {os.path.basename(req.video_path)} ({exc.strerror or exc})."
+        return rows
     except ExportCancelled:
+        if pending is not None:
+            pending.discard()
         return None
+    except BaseException:
+        if pending is not None:
+            pending.discard()
+        raise

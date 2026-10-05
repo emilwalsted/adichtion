@@ -78,6 +78,9 @@ them, with the block labels and comment flags in a strip above the channels.
   to select an interval; the data panel then gives min, max and mean per channel.
   Right click a channel to export the interval (or, with none selected, the whole
   recording).
+* Exporting an interval of a recording that has video can also write the matching video clip, in the file's original
+  format (copied) or as H.264 in an MP4 file, named like the data file and in the same folder (the export dialog's
+  *Video* box; `adichtion.videoclip` in the API). It needs an ffmpeg program: the `imageio-ffmpeg` package brings one.
 * The video panel plays the clip from the cursor (Space, or the ▶ button): the
   cursor moves with the video and every overlay and panel follows, the view
   pages along, and playback pauses at the end of the block; with an interval
@@ -193,5 +196,6 @@ export next to them must match it sample for sample).
 
 ## Licence
 
-GPL-3.0-or-later, like RespMech. ADInstruments, LabChart and PowerLab are
+GPL-3.0-or-later, like RespMech. The video clip export uses an ffmpeg program (FFmpeg, GPL build with libx264,
+bundled by the `imageio-ffmpeg` package; source: https://ffmpeg.org/). ADInstruments, LabChart and PowerLab are
 trademarks of ADInstruments; this project is not affiliated with them.

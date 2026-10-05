@@ -30,8 +30,11 @@ dependencies = ["numpy>=1.24"]
 [project.optional-dependencies]
 # the desktop viewer; openpyxl for Excel export, OpenCV for the video frames. OpenCV below 4.13:
 # 4.13 bundles FFmpeg 8, whose scaler refuses interlaced frames, and the DV movies of LabChart
-# for Mac come back black (docs/beslutninger.md 2026-09-29 (2)).
-ui = ["PySide6>=6.6", "pyqtgraph>=0.13", "openpyxl>=3.1", "opencv-python-headless>=4.8,<4.13"]
+# for Mac come back black (docs/beslutninger.md 2026-09-29 (2)). imageio-ffmpeg brings the ffmpeg program
+# that cuts the video clip of an exported interval (adichtion.videoclip; OpenCV's own FFmpeg has no H.264
+# encoder).
+ui = ["PySide6>=6.6", "pyqtgraph>=0.13", "openpyxl>=3.1", "opencv-python-headless>=4.8,<4.13",
+      "imageio-ffmpeg>=0.5"]
 dev = ["pytest>=7.0", "openpyxl>=3.1"]
 
 # One command: `adichtion` starts the app (optionally with a .adicht path); `adichtion info …`
@@ -92,6 +95,7 @@ requires = [
     "pyqtgraph>=0.13",
     "openpyxl>=3.1",
     "opencv-python-headless>=4.8,<4.13",
+    "imageio-ffmpeg>=0.5",
 ]
 test_requires = ["pytest>=7.0"]
 
