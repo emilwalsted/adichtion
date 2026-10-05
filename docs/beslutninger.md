@@ -2,6 +2,34 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-05 (3) — Eksport, som RespMech kan indlæse, og MATLAB-format
+
+Fund fra release-noteudkastet til RespMech 2.5.0 og Emils ønske: for de formater RespMech understøtter skal adichtion altid
+skrive filer, RespMech kan indlæse, og der skal kunne eksporteres til MATLAB i den nyeste, mest gængse version RespMech
+understøtter. Målt mod RespMechs egen `core.io.loaders.load` (både PyPI 2.4.0 og master) og mod pandas/scipy.
+
+- **CSV med decimalkomma bruger `;` som skilletegn** (RespMech: `.csv` er komma-separeret, semikolon-separeret under
+  decimalkomma). Før blev komma brugt begge steder, så ingen kunne læse filen. Kommentarer og titler med skilletegn,
+  tab eller linjeskift renses til mellemrum (et komma i en CSV-kommentar bliver stadig et semikolon, som før); et
+  linjeskift i en kommentar brød før en række.
+- **Det LabChart-stilede `txt` forbliver, som LabChart skriver det, og er IKKE en tabel RespMech læser** (RespMech tager
+  første linje som kolonnenavne). I stedet nyt format `tsv`: tabulator-separeret, én headerlinje, samme `block`-kolonne
+  som CSV ved flere blokke, filendelse `.txt`. Fravalgt: at ændre `txt`s header (ville bryde LabChart-kompatibiliteten
+  og `verify`/`read_labchart_text`), og at lade RespMech lære LabChart-headeren (RespMech-repoets sag).
+- **Excel-arket er en ren tabel**: første række er kolonnetitlerne. Blok, start, markeringens start og interval står i
+  celler til højre for tabellen (header-rækken og første datarække), ikke i en række over titlerne, som gjorde første
+  datarække til en tekstrække for pandas og RespMech.
+- **MATLAB: level 5 (`save -v6/-v7`, ukomprimeret)**, det RespMech (`scipy.io.loadmat`), MATLAB og Octave alle læser;
+  v7.3 (HDF5) læser RespMech ikke. Skrevet med en lille egen skriver (`matfile.py`, kun numpy, streamet i bidder), så
+  biblioteket ikke får scipy som afhængighed; testet ved at læse filerne tilbage med scipy og RespMechs loader.
+  Layoutet er LabChart for Windows' blokeksport, dvs. RespMechs `windows`-variant: `data_block<N>` (kanaler x samples,
+  doubles, i enheder, eller lagrede tællinger med `units=False`), `titles_block<N>`, `units_block<N>`,
+  `samplerate_block<N>`, `record_block<N>`. RespMech læser kun `data_block1`: eksportér én blok ad gangen til det.
+  Tegn skrives som miUTF8 (scipy dekoder miUINT16 som UTF-8 og ødelagde æøå; fundet af review). Fravalgt: Mac-varianten (RespMech indekserer dér gennem scipys variabelliste inkl. `__header__`, så kolonnenumre
+  bliver uigennemskuelige).
+- **Kendt rest, ikke ændret:** tidskolonnen er `%.7g` som LabChart (ved en optagelse over ca. 10.000 s ved 1 kHz mister
+  den sin millisekund-opløsning); RespMech bruger ikke kolonnen.
+
 ## 2026-10-05 (2) — Den afkodede kurve bliver stående under scroll og zoom
 
 Emil (skærmoptagelse på Mac'en efter P1 til P9): selv ved et langsomt scroll viste plottene de grove blokindeks-kurver

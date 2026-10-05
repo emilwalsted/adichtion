@@ -176,9 +176,10 @@ def test_export_whole_file_txt_csv_xlsx(synthetic, tmp_path):
         wb = load_workbook(p, read_only=True)
         assert wb.sheetnames == ["Block 1", "Block 2"]
         ws = wb["Block 2"]
-        rows = list(ws.iter_rows(min_row=1, max_row=4, values_only=True))
-        assert rows[1][:3] == ("time_s", "Flow [V]", "Pmo [cmH2O]") and rows[1][3] == "comment"
-        assert rows[2][0] == 0.0 and abs(rows[3][0] - 0.001) < 1e-9
+        rows = list(ws.iter_rows(min_row=1, max_row=3, values_only=True))
+        assert rows[0][:3] == ("time_s", "Flow [V]", "Pmo [cmH2O]") and rows[0][3] == "comment"      # the first row is the titles
+        assert rows[1][0] == 0.0 and abs(rows[2][0] - 0.001) < 1e-9
+        assert rows[0][5:9] == ("Block", "start", "selection start (s)", "interval (s)") and rows[1][5] == 2
         # a selection longer than a worksheet is refused up front
         rec = f.records[0]
         with pytest.raises(ValueError, match="rows do not fit"):

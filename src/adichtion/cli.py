@@ -5,7 +5,7 @@ Commands
 info      records, channels, comments of a file
 tree      the container's storages and streams
 comments  comment list (all records or one)
-export    write a selection of a record as LabChart-style text or CSV
+export    write a selection of a record as LabChart-style text, CSV, a tab table, Excel or MATLAB
 verify    compare decoded samples with a LabChart text export (the oracle)
 check     decode every block and compare with the min/max LabChart stored
 videos    the video clips recorded with the records
@@ -26,7 +26,7 @@ import numpy as np
 from . import __version__
 from .chartdata import tagged_strings
 from .container import AdichtContainer
-from .export import export_selections, read_labchart_text, upsampling_notice, whole_file
+from .export import FORMATS, export_selections, read_labchart_text, upsampling_notice, whole_file
 from .file import AdichtFile, Selection
 
 
@@ -195,7 +195,7 @@ def cmd_export(a: argparse.Namespace) -> None:
             for item in a.range_volts:
                 ch, v = item.split("=")
                 f.set_range_volts(int(ch) - 1, float(v))
-        fmt = a.format or {"csv": "csv", "xlsx": "xlsx"}.get(os.path.splitext(a.output)[1].lstrip(".").lower(), "txt")
+        fmt = a.format or {"csv": "csv", "xlsx": "xlsx", "mat": "mat", "tsv": "tsv"}.get(os.path.splitext(a.output)[1].lstrip(".").lower(), "txt")
         if a.all_records:
             selections = whole_file(f)
             what = f"all {len(selections)} records"
@@ -219,6 +219,10 @@ def cmd_export(a: argparse.Namespace) -> None:
             note = upsampling_notice(f, selections, channels)
         except (ValueError, RuntimeError) as exc:
             sys.exit(f"error: {exc}")
+        if a.no_header and fmt in ("csv", "tsv", "xlsx"):
+            print("note: without the header line RespMech takes the first row of data as column titles")
+        if len(selections) > 1 and fmt in ("csv", "tsv"):
+            print("note: several blocks give a leading 'block' column, which shifts the column numbers (RespMech: export one block)")
         print(f"wrote {n} rows x {len(channels)} channels ({what}) to {a.output}")
         if note:
             print(f"note: {note}")
@@ -376,7 +380,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     s.add_argument("--start", type=float, help="start time in seconds from record start")
     s.add_argument("--stop", type=float, help="stop time in seconds from record start")
     s.add_argument("--between", nargs=2, metavar=("START_TEXT", "STOP_TEXT"), help="select from a comment to the next matching comment")
-    s.add_argument("--format", choices=("txt", "csv", "xlsx"), help="default: from the output file's extension (txt otherwise)")
+    s.add_argument("--format", choices=FORMATS, help="txt: LabChart-style text; csv; tsv: tab-separated table with one header line (a .txt RespMech reads); "
+                                                   "xlsx; mat: MATLAB level 5. Default: from the output file's extension (.csv .xlsx .mat .tsv; txt otherwise)")
     s.add_argument("--all-records", action="store_true", help="export every record (LabChart block) of the file")
     s.add_argument("--decimal", default=".", help="decimal separator (e.g. ',' for Danish Excel)")
     s.add_argument("--no-header", action="store_true"); s.add_argument("--no-comments", action="store_true")
