@@ -2,6 +2,36 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-05 (4) — Videoklip ved interval-eksport
+
+Ønske: eksportér et videoklip svarende til det eksporterede interval, som originalformat eller en moderne codec, med
+datafilens navn og i samme mappe (ikke i en undermappe som LabChart).
+
+- **ffmpeg som program, ikke OpenCV.** OpenCV-hjulet (4.12) har ingen H.264-encoder (målt: `avc1`/`H264` fejler med
+  "Encoder not found"; kun `mp4v`, MJPG, WMV2 m.fl.). Klippene skæres derfor af et `ffmpeg`-program (`videoclip.find_ffmpeg`:
+  `ADICHTION_FFMPEG`, ellers den ffmpeg, pakken `imageio-ffmpeg` medbringer, ellers `ffmpeg` på PATH). `imageio-ffmpeg>=0.5` er
+  tilføjet `[ui]`-ekstraen og briefcase-`requires` (testen `test_the_bundle_requires_what_the_ui_extra_requires` holder dem ens).
+  Prisen er en statisk ffmpeg på ca. 80 MB pr. platform i hver installer, og den er en GPL-bygning (libx264): forenelig med
+  adichtions GPL-3.0-or-later, men Emil skal være opmærksom på kildekodeforpligtelsen ved udgivelse og på, at en macOS-dmg
+  skal signere/notarisere den medfølgende binær (kan kun ses i et rigtigt installer-bygge). Fravalgt: OpenCV `mp4v` (MPEG-4
+  part 2 er ikke moderne og giver store filer), og at skrive frames fra OpenCV til en ffmpeg-pipe (to afkodningsstier, ingen gevinst).
+- **"Originalformat" = stream copy** (`-c copy`): samme container og codec, intet tabt, hurtigt. Ulempen er, at et kopieret
+  klip kun kan starte på et nøgleframe, så det kan begynde før intervallet (målt på en syntetisk WMV med nøgleframe hvert
+  sekund: op til ca. 1,5 s før; en rigtig LabChart-WMV kan have længere afstand); slutningen er nøjagtig. Dialogen siger det.
+  Fravalgt: genkodning til "samme codec" (WMV3 har ingen encoder i ffmpeg).
+- **H.264 = libx264, crf 20, yuv420p, `+faststart`, i en `.mp4`** (afspilles overalt); billednøjagtigt. Lyd bevares for ét
+  klip (aac) og udelades, når flere blokke samles.
+- **Flere blokke giver ét klip** (stykkerne i rækkefølge; tiden mellem blokke findes ikke i videoen og udelades). H.264
+  skalerer alle stykker til det første stykkes størrelse; kopi kræver samme filtype og lige streams (ffmpeg afviser ellers, og
+  fejlen vises). En blok uden videofil udelades og nævnes i dialogens note.
+- **Spørgsmålet er en boks i eksportdialogen**, kun synlig når intervallets blokke har en videofil, og **den er fravalgt hver
+  gang** (et klip er stort og må ikke skrives af vane); *slags* klip huskes som de andre valg. Findes klippet i forvejen,
+  spørges der, før det erstattes.
+- **Rækkefølge og annullering:** klippet skæres først (0 til 80 % af statuslinjen) under et midlertidigt navn
+  (`<navn>.part<endelse>`), derefter skrives datafilen, og først derefter omdøbes klippet; annullering eller en fejl i
+  dataeksporten efterlader ingen af filerne. Kan klippet ikke laves (ingen ffmpeg, afvist af ffmpeg), skrives datafilen alligevel,
+  og brugeren får en advarsel.
+
 ## 2026-10-05 (3) — Eksport, som RespMech kan indlæse, og MATLAB-format
 
 Fund fra release-noteudkastet til RespMech 2.5.0 og Emils ønske: for de formater RespMech understøtter skal adichtion altid
