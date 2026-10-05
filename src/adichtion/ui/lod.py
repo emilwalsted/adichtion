@@ -5,7 +5,8 @@ when the range holds fewer samples than about twice the pixel budget, the
 samples themselves are used; otherwise a min/max envelope with one bucket pair
 per pixel, taken from the block index, from the min/max summaries that decoding leaves
 behind (``Record.summary_overview``), or from the decoded samples, in that order of preference.  ``coarse=True`` takes the envelope from the file's block index
-wherever the range holds whole blocks (no decoding), which is what the plots
+wherever the range holds whole blocks (no decoding), and from the summaries of the blocks decoded
+before where a bucket is narrower than a block (``Record.quick_overview``), which is what the plots
 show first while the worker decodes the real thing.
 """
 from __future__ import annotations
@@ -22,6 +23,12 @@ from .timeline import Timeline
 # the quick pass answers a whole record from the block index when the record spans no more buckets than this;
 # at most n_buckets / COARSE_WHOLE_BUCKETS such records fit a view, so the ones left to the per-record path are few
 COARSE_WHOLE_BUCKETS = 8
+# ...and it leaves at most this many records per curve to the block summaries: a record drawn with storage blocks
+# COARSE_SUMMARY_PX buckets (pixels) wide or more, where the index shows as steps and the summaries are 32 times
+# finer.  More records than that, or narrower blocks, stay with the table (0.1 ms per curve; the summaries cost up
+# to 0.5 ms for a view of 450 blocks)
+COARSE_SUMMARY_RECORDS = 12
+COARSE_SUMMARY_PX = 4
 
 
 def interleave(t: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -32,7 +39,8 @@ def interleave(t: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> tuple[np.ndarra
 
 
 def _record_curve(f: AdichtFile, timeline: Timeline, index: int, channel: int, lo_t: float, hi_t: float,
-                  start: int, stop: int, n_part: int, coarse: bool) -> tuple[np.ndarray, np.ndarray, str]:
+                  start: int, stop: int, n_part: int, coarse: bool,
+                  decode: bool = True) -> tuple[np.ndarray, np.ndarray, str]:
     """The curve of one record over ticks ``[start, stop)`` in ``n_part`` buckets, taking the
     block index, the samples or the block summaries, whichever the range calls for."""
     b = timeline.blocks[index]
@@ -40,13 +48,18 @@ def _record_curve(f: AdichtFile, timeline: Timeline, index: int, channel: int, l
     spt = rec.samples_per_tick(channel)
     n_samples = int(round((stop - start) * spt))
     bucket_ticks = (stop - start) / n_part
-    if (stop - start) >= BLOCK_TICKS and (coarse or bucket_ticks >= BLOCK_TICKS / 4):
-        # a bucket a quarter block wide or more: the block index is the envelope, to the pixel;
-        # blocks without a stored min/max are decoded by the worker only, never by the quick
-        # coarse pass on the GUI thread
-        t, mn, mx = rec.overview(channel, n_part, start, stop, coarse=True, fill=not coarse)
+    if coarse and ((stop - start) >= BLOCK_TICKS or (not decode and n_samples > 2 * n_part)):
+        # the quick picture: the summaries of the blocks decoded before, the block index for the
+        # rest, nothing decoded (blocks without a stored min/max stay empty until the worker's pass)
+        t, mn, mx = rec.quick_overview(channel, n_part, start, stop)
         x, y = interleave(t + b.start_s, mn, mx)
-        level = "coarse" if coarse else "envelope"
+        level = "coarse"
+    elif (stop - start) >= BLOCK_TICKS and bucket_ticks >= BLOCK_TICKS / 4:
+        # a bucket a quarter block wide or more: the block index is the envelope, to the pixel
+        # (the worker's pass decodes the blocks whose min/max the index lacks)
+        t, mn, mx = rec.overview(channel, n_part, start, stop, coarse=True, fill=True)
+        x, y = interleave(t + b.start_s, mn, mx)
+        level = "envelope"
     elif n_samples <= 2 * n_part:
         y = rec.read(channel, start, stop)
         x = rec.time(start, stop, channel) + b.start_s
@@ -111,16 +124,19 @@ def _index_curves(f: AdichtFile, timeline: Timeline, channel: int, rec: np.ndarr
 
 def curve_for_range(f: AdichtFile, timeline: Timeline, channel: int, t0: float, t1: float,
                     n_buckets: int, coarse: bool = False,
-                    stale=None) -> tuple[np.ndarray, np.ndarray, str]:
+                    stale=None, decode: bool = True) -> tuple[np.ndarray, np.ndarray, str]:
     """``(x, y, level)`` for ``channel`` over file times ``[t0, t1]``; ``level`` is
     ``"samples"``, ``"envelope"`` or ``"coarse"``.  Blocks are separated by a NaN so
     the plot leaves a gap between them.  ``stale()`` may abort a long job early.
+    ``decode=False`` (with ``coarse``) keeps the quick pass from decoding for an envelope at all,
+    also where the range is shorter than a storage block: the strip of a view that a decoded
+    curve does not reach is drawn that way with every move.
 
     A record whose share of the range is answered by the block index (a whole record in a few buckets,
     or a stretch of at least one storage block, see :func:`_from_index`) is handled for all such
     records at once from the channel's block table; the few others (the records at the
     ends of the range, or a range inside one record) take :func:`_record_curve` one by one."""
-    n_buckets = max(16, int(n_buckets))
+    n_buckets = max(16 if decode else 1, int(n_buckets))
     span = max(t1 - t0, 1e-9)
     tl = timeline
     r0 = int(np.searchsorted(tl.stops, t0, side="right"))       # the first block that ends after t0
@@ -151,7 +167,7 @@ def curve_for_range(f: AdichtFile, timeline: Timeline, channel: int, t0: float, 
         if stale is not None and stale():
             break
         x, y, level = _record_curve(f, tl, int(rec[i]), channel, lo_t[i], hi_t[i], int(start[i]), int(stop[i]),
-                                    int(n_part[i]), coarse)
+                                    int(n_part[i]), coarse, decode)
         xs[i], ys[i] = x, y
         size[i] = len(x)
         levels.add(level)
@@ -213,6 +229,14 @@ def _from_index(f: AdichtFile, timeline: Timeline, channel: int, rec: np.ndarray
     if ok.any():
         first = f.block_table(channel).first
         ok &= first[rec + 1] > first[rec]               # the channel has data in the record
+    if coarse and ok.any():
+        # storage blocks several pixels wide: the index would draw each block as one step, the summaries of the
+        # blocks decoded before (the view's neighbours, or the whole file once it is indexed) are 32 times finer
+        fine = np.flatnonzero(ok & (covered * COARSE_SUMMARY_PX <= n_part * BLOCK_TICKS))
+        if 0 < len(fine) <= COARSE_SUMMARY_RECORDS:
+            for i in fine:
+                if f.summary_store(int(rec[i]), channel) is not None:
+                    ok[i] = False
     return ok
 
 

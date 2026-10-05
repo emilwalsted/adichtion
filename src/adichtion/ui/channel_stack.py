@@ -5,7 +5,9 @@
   and comment flags;
 * the trace is a min/max envelope at pixel resolution, or the samples themselves
   when zoomed in far enough; the first picture after a pan/zoom comes from the
-  file's block index at once, the decoded one follows from the worker thread;
+  file's block index at once, the decoded one follows from the worker thread; a decoded
+  curve stays on screen for as long as it reaches into the view, and only the strip it
+  does not reach is drawn from the index (or from the summaries decoding left behind);
 * click = cursor on every channel (the overlay of each channel shows its value),
   Shift+click or a drag = interval; scroll = x zoom, Alt+drag (or the middle button, or
   a sideways swipe) = pan; the wheel over a y-axis (or the small buttons in a channel's
@@ -34,6 +36,7 @@ from .warmup import PREFETCH_SPAN, Activity, Warmer
 from .workers import JobRunner
 
 RENDER_DEBOUNCE_MS = 60
+RENDER_MAX_WAIT_MS = 150        # a hand that keeps moving still gets a pass this often (the debounce alone would wait for it to stop)
 COARSE_SYNC_BUDGET_MS = 8.0     # the coarse picture is drawn with the move itself only while a pass takes less than this
 COARSE_SYNC_MIN_GAP_S = 0.016   # ...and at most once per frame: a burst of queued inputs leaves the rest to the debounced pass
 AXIS_MIN_WIDTH = 44             # floor (px) of the shared left-axis width
@@ -41,6 +44,12 @@ AXIS_STEP = 4                   # the shared width moves in steps, and only shri
 AXIS_HYSTERESIS = 12            # so it does not shift the plots on every y-zoom
 CLICK_SLOP_PX = 4               # a drag shorter than this is a click, not an interval
 RENDER_MARGIN = 0.25            # fraction of the visible span decoded on each side, for small pans
+RENDER_LEAD = 0.5               # ...and on the side a pan is heading for
+RENDER_AHEAD = 0.15             # while panning, the next curve is asked for when the decoded one ends this close ahead of the view
+MOVE_RUN_GAP_MS = 300           # moves further apart than this are separate moves, not one run with a pace and a speed
+SETTLE_GAPS = 1.5               # the view has come to rest when no move came for this many of the run's gaps (at least the debounce)
+SETTLE_MAX_MS = 200
+DETAIL_KEEP_DENSITY = 0.125     # a decoded curve stays on screen through a zoom-in until it is this coarse against the pixels
 MIN_X_RANGE_S = 0.002
 
 
@@ -277,6 +286,8 @@ class ChannelPlot(QWidget):
         self._calc_text = ""
         self._curve_x = np.zeros(0)
         self._curve_y = np.zeros(0)
+        self._edge_x = np.zeros(0)
+        self._edge_y = np.zeros(0)
         self.level = ""
         self.axis_width = theme.PLOT_AXIS_WIDTH
         self.setMinimumHeight(theme.PLOT_ROW_MIN_HEIGHT)
@@ -302,6 +313,9 @@ class ChannelPlot(QWidget):
             self.widget.setBackground(pal["bg_calc"])
         self.curve = pg.PlotCurveItem(pen=_pen(colour, 1.0))
         self.item.addItem(self.curve)
+        # the quick picture of the strip of the view that the decoded curve does not reach (see ChannelStack._draw_quick)
+        self.edge = pg.PlotCurveItem(pen=_pen(colour, 1.0))
+        self.item.addItem(self.edge)
         self.zero = pg.InfiniteLine(pos=0, angle=0, pen=_pen(pal["zero_line"], 1.0, Qt.DashLine), movable=False)
         self.zero.setZValue(-10)
         self.item.addItem(self.zero, ignoreBounds=True)
@@ -428,6 +442,25 @@ class ChannelPlot(QWidget):
             self.coarse_key = None
         with perf.quiet_span("curve.set_data"):
             self.curve.setData(x, y, connect="finite", skipFiniteCheck=False)
+        self.set_edges(np.zeros(0), np.zeros(0))
+
+    def set_edges(self, x: np.ndarray, y: np.ndarray) -> None:
+        """The quick picture beside the decoded curve (empty: none)."""
+        if not len(x) and not len(self._edge_x):
+            return
+        self._edge_x, self._edge_y = x, y
+        with perf.quiet_span("curve.set_data"):
+            self.edge.setData(x, y, connect="finite", skipFiniteCheck=False)
+
+    def detail_usable(self, t0: float, t1: float, width_px: int) -> Optional[tuple[float, float]]:
+        """The span of the decoded curve when it is worth keeping on screen for the view ``[t0, t1]``: it reaches
+        into the view and is not hopelessly coarse for it (a zoom-in of more than ``1 / DETAIL_KEEP_DENSITY``)."""
+        c = self._detail_cover
+        if c is None or c[1] <= t0 or c[0] >= t1:
+            return None
+        if self.level != "samples" and self._detail_density < DETAIL_KEEP_DENSITY * width_px / max(t1 - t0, 1e-9):
+            return None
+        return c
 
     def detail_covers(self, t0: float, t1: float, width_px: int) -> bool:
         """Whether the decoded curve already shows ``[t0, t1]`` at (nearly) pixel resolution."""
@@ -443,15 +476,16 @@ class ChannelPlot(QWidget):
         self.coarse_key = None
 
     def visible_y_range(self) -> Optional[tuple[float, float]]:
-        """Min/max of the drawn curve inside the current x range."""
-        if not len(self._curve_x):
-            return None
+        """Min/max of what is drawn (the curve and the quick strip beside it) inside the current x range."""
         x0, x1 = self.vb.viewRange()[0]
-        m = (self._curve_x >= x0) & (self._curve_x <= x1) & np.isfinite(self._curve_y)
-        if not m.any():
-            return None
-        y = self._curve_y[m]
-        return float(y.min()), float(y.max())
+        lo, hi = np.inf, -np.inf
+        for x, y in ((self._curve_x, self._curve_y), (self._edge_x, self._edge_y)):
+            if not len(x):
+                continue
+            m = (x >= x0) & (x <= x1) & np.isfinite(y)
+            if m.any():
+                lo, hi = min(lo, float(y[m].min())), max(hi, float(y[m].max()))
+        return (lo, hi) if np.isfinite(lo) else None
 
     # -- y zoom -----------------------------------------------------------------------
     def set_y_range(self, lo: float, hi: float) -> None:
@@ -629,6 +663,16 @@ class ChannelStack(QWidget):
         self._auto_zoom = False
         self._drag_selects = True
         self._axis_fresh = True                 # the next measured axis width is taken as it is (no hysteresis)
+        self._first_request = 0.0               # when the oldest render request not yet served was made (perf_counter)
+        self._last_request = 0.0                # ...and the newest
+        self._render_live: Optional[tuple[int, float, float]] = None   # the render job in flight: (job id, the span it decodes)
+        self._held: dict[int, tuple] = {}       # decoded curves that arrived mid-move, per channel: shown with the next move
+        self._last_range: Optional[tuple[float, float]] = None
+        self._pan_dir = 0                       # +1 / -1 while the view is being panned later / earlier, 0 otherwise (a zoom, a jump)
+        self._pan_speed = 0.0                   # ...and how fast, in views per second (smoothed over the last moves)
+        self._last_move = 0.0                   # when the view last moved (perf_counter)
+        self._move_gap = 0.0                    # seconds between the moves of the run under way (smoothed; 0: a single move)
+        self._job_s = 0.0                       # how long the last finished render job took on its thread
         self._coarse_end = 0.0                  # when the last coarse pass finished (perf_counter)
         self._coarse_ms = 0.0                   # smoothed duration of a coarse pass (decides whether one runs with the move)
         self._axis_width = theme.PLOT_AXIS_WIDTH
@@ -694,6 +738,13 @@ class ChannelStack(QWidget):
     def set_file(self, f: Optional[AdichtFile]) -> None:
         self._stop_warmer()                     # before the caller closes the old file: no block is being decoded from it
         self._render_job = 0                    # a render result of the old file still in the queue is dropped, not drawn on this one
+        self._render_live = None
+        self._held = {}
+        self._last_range = None
+        self._pan_dir = 0
+        self._pan_speed = 0.0
+        self._move_gap = 0.0
+        self._job_s = 0.0
         self._clear_plots()
         self.file = f
         self.timeline = Timeline(f) if f is not None else None
@@ -968,6 +1019,8 @@ class ChannelStack(QWidget):
         perf.count("signal.x_range")                   # the master's signal: one per move (the linked views follow it)
         with perf.quiet_span("stack.x_range"):
             x0, x1 = self.view_range()
+            self._note_move(x0, x1)
+            self._show_held(fit=False)          # curves decoded meanwhile go on screen with this move's repaint
             with perf.quiet_span("stack.sync_hbar"):
                 self._sync_hbar(x0, x1)
             with perf.quiet_span("stack.range_changed"):         # the slots of every listener, e.g. the main window's
@@ -976,6 +1029,24 @@ class ChannelStack(QWidget):
                     and time.perf_counter() - self._coarse_end >= COARSE_SYNC_MIN_GAP_S):
                 self._coarse_pass()             # in the same event-loop turn as the move: one repaint per plot, not two
             self._schedule_render()
+
+    def _note_move(self, x0: float, x1: float) -> None:
+        """Which way the view is being panned: a move of less than a screen that keeps the span.  The decoded curve is
+        then asked for further ahead on that side (``RENDER_LEAD``) and before the view reaches its end (``RENDER_AHEAD``)."""
+        last, self._last_range = self._last_range, (x0, x1)
+        now = time.perf_counter()
+        dt, self._last_move = now - self._last_move, now
+        in_run = dt * 1000.0 < MOVE_RUN_GAP_MS              # one of a run of moves: its pace and speed count
+        self._move_gap = (0.5 * (self._move_gap + dt) if self._move_gap else dt) if in_run else 0.0
+        self._pan_dir = 0
+        if last is not None:
+            span, shift = x1 - x0, x0 - last[0]
+            if abs(span - (last[1] - last[0])) <= 1e-6 * max(span, 1e-9) and 0.0 < abs(shift) < span:
+                self._pan_dir = 1 if shift > 0 else -1
+                if in_run:
+                    self._pan_speed = 0.5 * (self._pan_speed + abs(shift) / span / max(dt, 1e-3))
+                    return
+        self._pan_speed = 0.0
 
     #: Most steps the time scroll bar is given (QScrollBar is int32; the scale keeps hours-long files inside it).
     HBAR_STEPS = 1_000_000
@@ -1121,13 +1192,38 @@ class ChannelStack(QWidget):
 
     # -- rendering -------------------------------------------------------------------------
     def _schedule_render(self) -> None:
+        """Ask for a render pass: debounced (a burst of moves gives one pass), but a hand that keeps moving gets one
+        every ``RENDER_MAX_WAIT_MS`` at the latest, so the decoded curves keep up with a slow, steady scroll."""
         self.activity.touch()
-        if self.file is not None:
+        if self.file is None:
+            return
+        now = time.perf_counter()
+        self._last_request = now
+        if not self._timer.isActive():
+            self._first_request = now
             self._timer.start()
+        elif (now - self._first_request) * 1000.0 < RENDER_MAX_WAIT_MS - RENDER_DEBOUNCE_MS:
+            self._timer.start()                 # still a burst: wait for its end
+        # else the timer is left to fire: the pass has waited long enough
 
     def _render(self) -> None:
+        # a request newer than the debounce means the timer was left to fire while the view is still moving.  So does
+        # one newer than the pace of the moves: when a frame takes longer than the debounce, every move of a steady
+        # scroll would otherwise look like a stop (and fit the y-axes, and start a decoding the next move throws away)
+        since = (time.perf_counter() - self._last_request) * 1000.0
+        moving = since < max(0.9 * RENDER_DEBOUNCE_MS, min(SETTLE_MAX_MS, SETTLE_GAPS * self._move_gap * 1000.0))
+        if not moving:
+            self._show_held(fit=True)           # (while it moves they wait for the next move: no repaint in between)
         with perf.quiet_span("stack.render"):               # the debounced pass: the coarse curves, the auto-zoom, the job submit
-            self._render_now()
+            self._render_now(settled=not moving)
+        if moving and self.file is not None:                # the pass that follows the last move is still to come
+            self._first_request = time.perf_counter()
+            self._timer.start()
+
+    def _too_fast(self) -> bool:
+        """Whether the view is panned faster than a decoded curve could follow: by the time a pass like the last one
+        was done, the view would have left the span it decodes."""
+        return bool(self._pan_dir) and self._pan_speed * self._job_s > RENDER_LEAD
 
     def _coarse_pass(self) -> list[int]:
         """Draw the block-index envelope for every shown channel whose decoded curve does not cover the view, and
@@ -1137,7 +1233,6 @@ class ChannelStack(QWidget):
         x0, x1 = self.view_range()
         m = self._master()
         width = max(200, int(m.vb.width())) if m is not None else 800
-        f, tl = self.file, self.timeline
         key = (x0, x1, width)
         pending = []
         drawn = 0
@@ -1150,10 +1245,8 @@ class ChannelStack(QWidget):
                 pending.append(c)
                 if p.coarse_key == key:
                     continue
-                x, y, level = lod.curve_for_range(f, tl, c, x0, x1, width, coarse=True)
-                p.set_curve(x, y, level, None)
+                drawn += self._draw_quick(p, x0, x1, width)
                 p.coarse_key = key
-                drawn += 1
             sp.set(channels=len(pending), span_s=float(x1 - x0))
         if drawn:                               # a pass that drew nothing says nothing about the cost
             took = (time.perf_counter() - started) * 1000.0
@@ -1161,45 +1254,128 @@ class ChannelStack(QWidget):
             self._coarse_end = time.perf_counter()
         return pending
 
-    def _render_now(self) -> None:
+    def _draw_quick(self, p: ChannelPlot, x0: float, x1: float, width: int) -> int:
+        """The quick picture of what ``p``'s decoded curve does not show of the view, with nothing decoded for it.  A
+        decoded curve that reaches into the view stays (a pan past its end, a zoom): only the strip beside it is drawn,
+        on the plot's second curve.  Without such a curve the whole view is drawn from the block index, as the first
+        picture always was.  Returns 1 when something was computed (0: the decoded curve spans the view as it is)."""
+        f, tl = self.file, self.timeline
+        cover = p.detail_usable(x0, x1, width)
+        if cover is None:
+            x, y, level = lod.curve_for_range(f, tl, p.index, x0, x1, width, coarse=True)
+            p.set_curve(x, y, level, None)
+            return 1
+        span = max(x1 - x0, 1e-9)
+        xs, ys = [], []
+        for e0, e1 in ((x0, min(cover[0], x1)), (max(cover[1], x0), x1)):
+            if e1 - e0 <= 0.5 * span / width:   # under half a pixel
+                continue
+            n = int(np.ceil(width * (e1 - e0) / span))
+            x, y, _ = lod.curve_for_range(f, tl, p.index, e0, e1, n, coarse=True, decode=False)
+            xs += [x, np.full(1, np.nan)]
+            ys += [y, np.full(1, np.nan)]
+        if not xs:
+            p.set_edges(np.zeros(0), np.zeros(0))
+            return 0
+        p.set_edges(np.concatenate(xs), np.concatenate(ys))
+        return 1
+
+    def _render_now(self, settled: bool = True) -> None:
+        """One render pass: the quick pictures, then the job that decodes.  ``settled`` False is a pass made while the
+        view is still moving (``RENDER_MAX_WAIT_MS``): it leaves the y-axes alone and a running job that still serves
+        the view to finish, and while panning it asks for the next curve before the view reaches the end of the one
+        on screen."""
         if self.file is None or self.timeline is None or not self._visible:
             return
         x0, x1 = self.view_range()
         m = self._master()
         width = max(200, int(m.vb.width())) if m is not None else 800
         f, tl = self.file, self.timeline
+        span = x1 - x0
         pending = self._coarse_pass()
-        if self._auto_zoom:
+        if self._auto_zoom and settled:
             self.zoom_to_fit()                  # the move is over (the render is debounced): fit what is drawn now
+        lead_l = lead_r = RENDER_MARGIN
+        if not settled and self._pan_dir:
+            # panning: the curve is wanted before the view runs off the one on screen, and further on that side
+            ahead = span * RENDER_AHEAD
+            a0, a1 = (x0, min(tl.duration_s, x1 + ahead)) if self._pan_dir > 0 else (max(0.0, x0 - ahead), x1)
+            pending = [c for c in self._visible if not self.plots[c].detail_covers(a0, a1, width)]
+            if self._pan_dir > 0:
+                lead_r = RENDER_LEAD
+            else:
+                lead_l = RENDER_LEAD
+            if pending and self._too_fast():
+                # a flick over blocks that are slow to decode: the view would have left the curve before it came, and
+                # the decoding would only take time from the drawing.  The pass after the last move asks for it
+                perf.count("render.skipped_fast")
+                return
         if not pending:
             return
-        margin = (x1 - x0) * RENDER_MARGIN
-        a, b = max(0.0, x0 - margin), min(tl.duration_s, x1 + margin)
-        n = int(width * (b - a) / max(x1 - x0, 1e-9))
+        a, b = max(0.0, x0 - span * lead_l), min(tl.duration_s, x1 + span * lead_r)
+        live = self._render_live
+        if not settled and live is not None and live[1] <= x0 and live[2] >= x1:
+            return                              # the job in flight still serves this view: let it finish
+        n = int(width * (b - a) / max(span, 1e-9))
         if self.warmer is not None:
             self.warmer.set_view(0.5 * (x0 + x1), list(self._visible))     # the sweep starts where the user is looking
         self._render_job = self.runner.submit("render", partial(_render_job, f, tl, list(pending), a, b, n))
+        self._render_live = (self._render_job, a, b)
 
     def _on_progress(self, job_id: int, kind: str, payload) -> None:
         if kind != "render" or job_id != self._render_job:
             perf.count("render.result_stale")
             return
-        c, a, b, x, y, level, n, used = payload
         self.activity.touch()                   # a picture is being drawn: the background waits for it to be done
-        x0, x1 = self.view_range()
-        if a > x0 + 1e-9 or b < x1 - 1e-9:        # the view moved on since the job began: its curve would replace
-            perf.count("render.result_stale")     # the fresh coarse picture with one that misses the view's edge
+        if self._timer.isActive():
+            # the view is moving: a curve set now would repaint its plot between two moves.  It is kept and goes on
+            # screen in the turn of the next move, or with the pass that follows the last one (at most the debounce later)
+            self._held[payload[0]] = payload
             return
-        if 0 <= c < len(self.plots):
-            with perf.quiet_span("stack.on_progress"):    # a decoded curve arriving from the worker, on the GUI thread
-                self.plots[c].set_curve(x, y, level, (a, b), n / max(b - a, 1e-9))
-                if (self._auto_zoom and c in self._visible) or c in self._y_unset:
-                    self._y_unset.discard(c)
-                    self.plots[c].auto_y()          # the decoded curve replaces the coarse one: fit to that
-            if used:                                # it needed decoded samples: the blocks next to them are worth having ready
-                self._request_prefetch(c, a, b, x0, x1)
+        self._show_result(payload, fit=True)
+
+    def _show_held(self, fit: bool) -> None:
+        if self._held:
+            held, self._held = self._held, {}
+            for payload in held.values():
+                self._show_result(payload, fit)
+
+    def _show_result(self, payload, fit: bool) -> None:
+        """Put a decoded curve from the worker on screen, unless the view has left it behind.  ``fit`` lets the
+        auto-zoom fit the y-axis to it (not while the view is moving: the pass after the last move fits them all)."""
+        c, a, b, x, y, level, n, used = payload
+        x0, x1 = self.view_range()
+        if not 0 <= c < len(self.plots):
+            return
+        p = self.plots[c]
+        covers = a <= x0 + 1e-9 and b >= x1 - 1e-9
+        if not covers:
+            # the view moved on since the job began.  Its curve is still the better picture when it shows more of the
+            # view than the decoded curve on screen does (the strip it misses is then drawn the quick way); otherwise
+            # it is dropped
+            cur = p._detail_cover
+            shown = min(cur[1], x1) - max(cur[0], x0) if cur is not None else 0.0
+            if min(b, x1) - max(a, x0) <= max(shown, 0.0) + 1e-9:
+                perf.count("render.result_stale")
+                return
+        with perf.quiet_span("stack.on_progress"):    # a decoded curve from the worker, on the GUI thread
+            p.set_curve(x, y, level, (a, b), n / max(b - a, 1e-9))
+            if not covers and c in self._visible:
+                m = self._master()
+                width = max(200, int(m.vb.width())) if m is not None else 800
+                self._draw_quick(p, x0, x1, width)
+                p.coarse_key = (x0, x1, width)
+            if (self._auto_zoom and fit and c in self._visible) or c in self._y_unset:
+                self._y_unset.discard(c)
+                p.auto_y()                          # the decoded curve replaces the coarse one: fit to that
+        if used:                                    # it needed decoded samples: the blocks next to them are worth having ready
+            self._request_prefetch(c, a, b, x0, x1)
 
     def _on_done(self, job_id: int, kind: str, result, error) -> None:
+        if kind == "render" and self._render_live is not None and job_id == self._render_live[0]:
+            self._render_live = None
+        if kind == "render" and result is not None and job_id == self._render_job:
+            self._job_s = float(result[1])          # what a pass costs here and now (decides whether a flick gets one)
         if error and kind == "render":
             print(error)
 
@@ -1253,6 +1429,9 @@ class ChannelStack(QWidget):
 
 
 def _render_job(f: AdichtFile, tl: Timeline, channels: list[int], a: float, b: float, n: int, stale, report):
+    """The worker's pass: one decoded curve per channel, reported as it is done.  Returns the number of channels and
+    the seconds the pass took (None when a newer job made it stale)."""
+    started = time.perf_counter()
     for c in channels:
         if stale():
             return None
@@ -1268,4 +1447,4 @@ def _render_job(f: AdichtFile, tl: Timeline, channels: list[int], a: float, b: f
         if stale():
             return None
         report((c, a, b, x, y, level, n, used))
-    return len(channels)
+    return len(channels), time.perf_counter() - started

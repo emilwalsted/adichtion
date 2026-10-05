@@ -2,6 +2,67 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-05 (2) — Den afkodede kurve bliver stående under scroll og zoom
+
+Emil (skærmoptagelse på Mac'en efter P1 til P9): selv ved et langsomt scroll viste plottene de grove blokindeks-kurver
+(ét min/max pr. lagerblok, 4 s ved 4 kHz), og det forstyrrede. Ingen afkodede værdier, ingen eksportbytes og intet i
+det, API'et returnerede i forvejen, er ændret (`Record.quick_overview` og `curve_for_range(..., decode=False)` er nye).
+
+- **To årsager, begge målt.** (1) `_coarse_pass` (P4) erstattede HELE den afkodede kurve med blokindekset, så snart
+  visningen gik en pixel ud over den afkodede margen (25 % af visningen). (2) Detaljepasset var debounced 60 ms og
+  startede forfra ved hvert træk, så under et uafbrudt scroll kom det aldrig. På en rigtig optagelse (9 viste kanaler,
+  rigtigt vindue) viste 225 af 250 scroll-trin a 1 % udelukkende blokindeks-kurver.
+- **Den afkodede kurve bliver stående** (`ChannelPlot.detail_usable`, `ChannelStack._draw_quick`): rækker den ind i
+  visningen, tegnes kun striben uden for den hurtigt, på plottets anden kurve (`ChannelPlot.edge`); selve kurven røres
+  ikke (ingen `setData`, samme `QPainterPath`). Det gælder også zoom: ved zoom ind beholdes kurven, til den er under
+  1/8 af pixelopløsningen (`DETAIL_KEEP_DENSITY`; et større spring, fx zoom til et interval, får det hurtige billede af
+  hele visningen som før), ved zoom ud står den i midten med en stribe på hver side. Fravalgt: at sætte kurve og stribe
+  sammen i én kurve (ville bygge hele stien om ved hvert træk).
+- **Striben afkoder aldrig** (`curve_for_range(coarse=True, decode=False)`), undtagen når der er zoomet ind til
+  enkelte samples (da læses de, typisk fra cachen, som det hurtige pas altid har gjort for en visning under én blok).
+- **Det hurtige billede bruger blok-resuméerne, hvor de findes** (`Record.quick_overview`, `lod._from_index`): 32
+  min/max pr. blok fra P2/P9 i stedet for ét, blok for blok blandet med indekset for de blokke, der ikke er afkodet.
+  Kun når en blok er mindst `COARSE_SUMMARY_PX` = 4 pixels bred, og højst for `COARSE_SUMMARY_RECORDS` = 12 optagelser
+  pr. kurve; ellers den vektoriserede tabel fra P3. Målt på én optagelse med 2000 blokke: 0,09 ms pr. kurve fra
+  tabellen, 0,15 til 0,22 ms med resuméer. Uden resuméer er resultatet bit for bit det gamle første billede.
+- **Detaljepas også mens visningen bevæger sig** (`_schedule_render`, `RENDER_MAX_WAIT_MS` = 150): debouncen får
+  et loft, så en hånd, der bliver ved, får et pas mindst så ofte. Et pas under bevægelse (`_render_now(settled=False)`)
+  (a) beder under panorering om næste kurve, FØR visningen når enden af den, der står (`RENDER_AHEAD` = 15 % af
+  visningen), og afkoder længere frem i bevægelsens retning (`RENDER_LEAD` = 50 % mod 25 % bagud), (b) lader et
+  kørende job, der stadig dækker visningen, blive færdigt i stedet for at erstatte det, og (c) rører ikke y-akserne:
+  autozoom tilpasser, når bevægelsen er slut, som før.
+- **"Slut" følger trækkenes takt** (`_move_gap`, `SETTLE_GAPS` = 1,5, højst `SETTLE_MAX_MS` = 200): når et billede
+  tager længere end debouncen (9 plots i et stort vindue: ca. 50 ms pr. træk på Emils Mac), fyrer timeren mellem to
+  træk af et jævnt scroll. Før blev hvert træk så taget for et stop (autozoom og et nyt afkodningsjob pr. træk).
+- **Kurver, der ankommer midt i en bevægelse, venter på næste træk** (`_held`, `_show_held`): de sættes i samme
+  tur som trækket, så plottet stadig tegnes én gang pr. træk (P4's regel). Uden det gav hvert leveret job 9 ekstra
+  gentegninger (p95 pr. trin 98 mod 60 ms i målingen).
+- **Et forsinket resultat, der kun dækker en del af visningen, vises, hvis det viser mere, end det der står**
+  (`_show_result`); resten tegnes som stribe. Før blev det kasseret.
+- **Værn mod forgæves afkodning** (`_too_fast`, `_pan_speed`, `_job_s`): panoreres der hurtigere, end et pas som det
+  seneste kan nå at blive færdigt (visningen ville have forladt det afkodede), springes passet over under bevægelsen,
+  og passet efter sidste træk afkoder. Uden værnet kostede et hurtigt flick over kolde blokke i en bred visning
+  GUI-tråden tid (arbejdstråden og tegningen deler GIL'en).
+- **Målt på Emils Mac, rigtigt vindue, rigtig optagelse (9 viste kanaler), gammel mod ny kode, GUI-tid pr. trin:**
+
+  | Scenarie | Trin uden afkodet kurve | GUI-tid pr. trin |
+  |---|---|---|
+  | 26 s visning, 1 % pr. trin, indekseret | 225/250 -> 0/250 | 58,9 -> 52,9 ms |
+  | 370 s visning, 1 % pr. trin, indekseret | 226/250 -> 0/250 | 55,6 -> 51,6 ms |
+  | 26 s visning, 1 % pr. trin, kold fil | 179/250 -> 0/250 | 49,7 -> 47,3 ms |
+  | 26 s, 15 % pr. trin (flick), kold | 59/60 -> 0/60 helt grove (22 med en stribe) | 48,9 til 50,3 -> 47,8 til 48,3 ms |
+  | 26 s, 40 % pr. trin, kold | 39/40 -> 0/40 helt grove (32 med en stribe) | 51,2 til 51,9 -> 52,4 til 52,6 ms |
+  | 370 s, 15 % pr. trin, kold | 6 til 9 af 30 helt grove -> 19 af 30 | 82 til 84 -> 47,4 til 47,7 ms |
+
+  `adichtion bench --pan` (standardscenariet): pan 57,3 til 57,6 -> 49,4 ms pr. trin, zoom 45,7 til 46,1 -> 43,3;
+  `paint.plot` 708 til 712 -> 684. Tallene svinger et par ms fra kørsel til kørsel; konklusionen er "ikke dyrere", ikke
+  et præcist tal for gevinsten. Den sidste række er værnet: kan afkodningen ikke følge med, vises det hurtige billede
+  (på en indekseret fil er det resuméerne: 2 af 30 trin med en stribe), og afkodningen venter til bevægelsen er slut.
+- **Ikke verificeret her:** følelsen med rigtig trackpad og mus (målingen kalder `pan_fraction` i takt, ikke ægte
+  hjulevents, som kommer tættere end billederne) og Windows/Linux. Emil prøver.
+- **Ikke gjort:** at lade striben afkode fra cachen, når blokkene ligger der (resuméerne dækker det samme uden kopi);
+  færre gentegninger pr. træk (P4's post); at tegne det hurtige billede finere end resuméerne.
+
 ## 2026-10-05 (1) — Forhåndsafkodning og baggrundsopvarmning (P9)
 
 Efter P2 (blokresuméer og hukommelsesstyret cache) bruger viseren ledig tid til at blive hurtigere, mens brugeren kigger:

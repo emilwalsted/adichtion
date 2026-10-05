@@ -6,6 +6,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Scrolling and zooming keep the real curves on screen. Before, a view that reached past what had been decoded
+  was redrawn as the coarse block outline (one step per storage block, 4 s at 4 kHz) until you stopped moving,
+  which showed even on a slow scroll. Now the decoded curve stays, only the strip it does not reach is drawn the
+  quick way (from the min/max summaries when the file is indexed, so it looks close to the real thing), and the
+  decoding keeps up while you move instead of waiting for you to stop. Measured in a real window on a real
+  recording with nine channels: 225 of 250 slow scroll steps showed only the coarse outline before, none now,
+  with the time per step unchanged or slightly lower. With auto zoom on, the y-axes are fitted when the move is
+  over, as before.
 - Export is faster and can be stopped: text and CSV are formatted a block of rows at a time (the files are
   byte for byte what they were; 600,000 rows x 4 channels, CSV about 1.8 s to about 0.8 s measured in a test
   environment), and Excel sheets are written as a stream (600,000 x 5 cells about 32 s to about 4 s). The

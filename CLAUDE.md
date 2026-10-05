@@ -89,6 +89,9 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   detail pass from them when every block in range has one and a pixel bucket is at least a summary bucket
   wide. The cache is limited in bytes and keeps 16-bit blocks as int16; `decode_block` still returns int32.
   Anything new that reads `Record.overview` keeps the exact (decoded) answer unless it opts in.
+  `Record.quick_overview` (2026-10-05 (2)) is the viewer's first picture and nothing else: summaries where blocks
+  were decoded, the block index elsewhere, never a decode, each piece spread over every bucket it touches. It is
+  never narrower than the samples but it is not a measurement; do not build statistics or exports on it.
 
 - **Timing is numbers only** (`perf.py`, `bench.py`): an event is a code-literal name plus
   numeric fields, and `perf.event` raises on anything else, so file names, titles, comment

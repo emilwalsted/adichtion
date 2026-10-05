@@ -61,7 +61,7 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   `markers.paint`, `cursor.paint`, `cursor.set`, `cursor.values`, `curve.set_data`, `plot.auto_y`,
   `stack.render` (the debounced pass, with `render.coarse` inside), `stack.on_progress` (a decoded curve
   arriving on the GUI thread), `stack.axis_width`. Counts: `signal.x_range` (master), `signal.x_range.all`
-  (every view's), `paint.plot` (plot repaints), `render.result_stale`. Spans nest, so totals are not
+  (every view's), `paint.plot` (plot repaints), `render.result_stale`, `render.skipped_fast`. Spans nest, so totals are not
   additive. `ev.<Type>.<receiver class>` is every top-level Qt event of the GUI thread, timed by
   `perfmon.timed_notify` from `AdichtionApplication.notify` (only when the timing is on; a
   QGraphicsView repaints inside its `MetaCall`, so `ev.MetaCall.GraphicsScene` contains `frame.paint`).
@@ -85,10 +85,24 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   `JobRunner.submit(kind, fn)` and comes back via `progress`/`done` signals with a job id
   the receiver checks. `AdichtFile`'s block cache is lock-guarded, so both threads may
   decode.
-- **Coarse first.** A pan/zoom draws the block-index envelope at once (`coarse=True`),
-  then the decoded curve replaces it. `ChannelPlot.detail_covers(t0, t1, width)` decides
-  whether the decoded curve is still good enough (span AND resolution): forgetting the
-  resolution made a whole-file curve "cover" a 0.5 s zoom.
+- **Coarse first, but never over a decoded curve.** A pan/zoom draws the quick picture at once
+  (`coarse=True`: the block index, or the block summaries where blocks are 4 px wide or more), then the
+  decoded curve replaces it. `ChannelPlot.detail_covers(t0, t1, width)` decides whether the decoded curve is
+  still good enough (span AND resolution): forgetting the resolution made a whole-file curve "cover" a 0.5 s
+  zoom. A decoded curve that reaches into the view is NOT replaced by the quick picture
+  (`detail_usable`, `ChannelStack._draw_quick`, `docs/beslutninger.md` 2026-10-05 (2)): it stays on
+  `ChannelPlot.curve` untouched and only the strip beside it goes on `ChannelPlot.edge`, computed with
+  `decode=False`. Replacing the whole view with the block index on every move past the margin is what made
+  slow scrolls look blocky; don't bring it back. Anything that reads what a plot shows
+  (`visible_y_range`) counts both curves.
+- **Render passes while the view moves.** `_schedule_render` debounces (60 ms) with a ceiling
+  (`RENDER_MAX_WAIT_MS`), so a steady scroll gets passes; `_render` tells a pass made mid-move
+  (`settled=False`) from the one after the last move by the pace of the moves (`_move_gap`: a frame can take
+  longer than the debounce). A mid-move pass asks ahead in the pan direction (`RENDER_AHEAD`, `RENDER_LEAD`),
+  leaves a job that still serves the view running (`_render_live`), skips when the pan outruns the decoding
+  (`_too_fast`, counted as `render.skipped_fast`) and never fits the y-axes. Curves that arrive mid-move are
+  held (`_held`) and shown in the turn of the next move, or by the settled pass: that keeps the one repaint
+  per plot per move below.
 - **pyqtgraph auto-range is off** on every ViewBox (`disableAutoRange()`); the stack owns
   the x range (linked to the first shown plot) and each plot its y range. With it on, new
   data silently re-fitted y to the whole curve including the decode margins.
@@ -124,8 +138,9 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   view transform at once (pyqtgraph does it inside the first paint, which dirties the plot again: two paints per
   plot), and `ChannelStack._coarse_pass` draws the block-index envelope in the same turn as the move
   (`ChannelPlot.coarse_key` keeps the debounced pass from drawing it twice; it is skipped while a pass costs more
-  than `COARSE_SYNC_BUDGET_MS` and runs at most once per `COARSE_SYNC_MIN_GAP_S`; a detail result that no longer covers
-  the view is dropped in `_on_progress`). Anything new that changes a plot on a move belongs in that turn, not in a timer.
+  than `COARSE_SYNC_BUDGET_MS` and runs at most once per `COARSE_SYNC_MIN_GAP_S`; a detail result that shows less of
+  the view than the curve on screen is dropped in `_show_result`, one that arrives mid-move waits in `_held` for the
+  next move). Anything new that changes a plot on a move belongs in that turn, not in a timer.
 - **Wide views use the block index, not a decode**: `lod.curve_for_range` takes the index
   envelope whenever a bucket spans a quarter block or more; a whole-file view of a 200 MB
   file then renders in under a second instead of ten.

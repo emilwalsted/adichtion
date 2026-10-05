@@ -975,6 +975,40 @@ class Record:
             mn, mx = mn.astype(np.float64), mx.astype(np.float64)
         return self._spread(t0, t1, n_points, ta, tb, mn, mx)
 
+    def quick_overview(self, channel: int, n_points: int, start: int = 0, stop: Optional[int] = None,
+                       units: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """``(time, min, max)`` of ``[start, stop)`` in ``n_points`` buckets from what is at hand,
+        with nothing decoded: the min/max summaries of the blocks that were decoded before
+        (``SUMMARY_BUCKETS`` per block) and the block index for the others (NaN where the index
+        holds no min/max).  Each piece feeds every bucket it overlaps, so the envelope is never
+        narrower than the samples; it is a first picture for a viewer, not a measurement."""
+        stop = self.ticks if stop is None else min(stop, self.ticks)
+        start = max(0, start)
+        n_points = max(1, int(n_points))
+        t0, t1 = start / self.tick_rate_hz, stop / self.tick_rate_hz
+        b0, b1, mins, maxs = self.block_envelope(channel, units, fill=False)
+        store = self.file.summary_store(self.index, channel)
+        if store is not None and len(b0) == len(store.have) and stop > start:
+            k0 = max(int(np.searchsorted(b1, t0, side="right")), 0)
+            k1 = min(int(np.searchsorted(b0, t1, side="left")), len(b0))
+            fine = np.flatnonzero(store.have[k0:k1] & (store.count[k0:k1] > 0)) + k0
+            if len(fine):
+                cnt = store.count[fine].astype(np.int64)
+                j = np.arange(SUMMARY_BUCKETS + 1, dtype=np.int64)[None, :]
+                edges = store.bounds[fine][:, None] + (j * store.n[fine][:, None]) // cnt[:, None]
+                valid = j[:, :-1] < cnt[:, None]
+                rate = self.sample_rate_hz(channel)
+                mn, mx = store.mins[fine][valid], store.maxs[fine][valid]
+                if units:
+                    a, b = self.convert(channel, mn), self.convert(channel, mx)
+                    mn, mx = np.fmin(a, b), np.fmax(a, b)                    # a negative slope swaps them
+                rest = np.ones(len(b0), dtype=bool)
+                rest[fine] = False
+                b0 = np.concatenate([b0[rest], (edges[:, :-1] / rate)[valid]])
+                b1 = np.concatenate([b1[rest], (edges[:, 1:] / rate)[valid]])
+                mins, maxs = np.concatenate([mins[rest], mn]), np.concatenate([maxs[rest], mx])
+        return self._spread(t0, t1, n_points, b0, b1, mins, maxs)
+
     def overview(self, channel: int, n_points: int = 2000, start: int = 0, stop: Optional[int] = None,
                  units: bool = True, coarse: bool = False, fill: bool = True,
                  from_summaries: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
