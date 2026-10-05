@@ -25,7 +25,8 @@ def legacy_write_text(record, selection, channels, out, *, fmt="txt", header=Tru
     ch_infos = [f.channel_info(c) for c in channels]
     t, cols, rate, row_of_tick = ex._table(record, selection, channels, units)
     n = len(t)
-    sep = "\t" if fmt == "txt" else ","
+    sep = "\t" if fmt in ("txt", "tsv") else ("," if decimal == "." else ";")
+    one_line = lambda text, to=" ": text.replace(sep, to).replace("\t", " ").replace("\r", " ").replace("\n", " ")   # noqa: E731
     if fmt == "txt" and header:
         out.write(f"Interval=\t{ex._fmt(1.0 / rate, decimal)} s\n")
         out.write(f"ExcelDateTime=\t{ex._excel_datetime(record.start_utc):.10g}\t{record.start_local:%Y-%m-%d %H:%M:%S.%f}\n")
@@ -34,17 +35,17 @@ def legacy_write_text(record, selection, channels, out, *, fmt="txt", header=Tru
         out.write("ChannelTitle=\t" + "\t".join(ci.title for ci in ch_infos) + "\n")
         out.write("Range=\t" + "\t".join(f"{ex._fmt(ci.range_volts, decimal)} V" if ci.range_volts else "" for ci in ch_infos) + "\n")
         out.write("UnitName=\t" + "\t".join(record.value_label(c) for c in channels) + "\n")
-    elif fmt == "csv" and header:
-        out.write(("block," if block_column else "") + "time_s,"
-                  + ",".join(f"{ci.title} [{record.value_label(c)}]".replace(",", " ") for ci, c in zip(ch_infos, channels))
-                  + (",comment" if comments else "") + "\n")
+    elif fmt in ("csv", "tsv") and header:
+        out.write(("block" + sep if block_column else "") + "time_s" + sep
+                  + sep.join(one_line(f"{ci.title} [{record.value_label(c)}]") for ci, c in zip(ch_infos, channels))
+                  + (sep + "comment" if comments else "") + "\n")
     by_row = ex._comment_rows(record, selection, row_of_tick) if comments else {}
-    prefix = f"{record.index + 1}," if (block_column and fmt == "csv") else ""
+    prefix = f"{record.index + 1}{sep}" if (block_column and fmt != "txt") else ""
     for i in range(n):
         parts = [ex._fmt(t[i], decimal)] + [ex._fmt(float(col[i]), decimal) for col in cols]
         if i in by_row:
             text = " | ".join(by_row[i])
-            parts.append("#* " + text if fmt == "txt" else text.replace(",", ";"))
+            parts.append("#* " + one_line(text) if fmt == "txt" else one_line(text, ";" if sep == "," else " "))
         out.write(prefix + sep.join(parts) + "\n")
     return n
 
@@ -74,7 +75,7 @@ def odd(tmp_path_factory):
 
 # -- the text writer ------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("fmt", ["txt", "csv"])
+@pytest.mark.parametrize("fmt", ["txt", "csv", "tsv"])
 @pytest.mark.parametrize("decimal", [".", ","])
 @pytest.mark.parametrize("options", [dict(), dict(header=False), dict(comments=False), dict(units=False),
                                      dict(header=False, comments=False, units=False)])
@@ -98,7 +99,7 @@ def test_write_text_is_byte_identical_to_the_value_by_value_writer(odd, monkeypa
 def test_the_synthetic_documents_text_is_unchanged_too(synthetic):
     with AdichtFile(synthetic["path"]) as f:
         for rec in f.records:
-            for fmt in ("txt", "csv"):
+            for fmt in ("txt", "csv", "tsv"):
                 new, old = io.StringIO(), io.StringIO()
                 write_text(rec, Selection(rec.index, 0, rec.ticks), [0, 1, 2, 3], new, fmt=fmt, decimal=",")
                 legacy_write_text(rec, Selection(rec.index, 0, rec.ticks), [0, 1, 2, 3], old, fmt=fmt, decimal=",")
@@ -174,8 +175,8 @@ def test_streamed_xlsx_comments_and_non_finite_values(odd, tmp_path):
         assert "_x005F_x0041_ literal" in xml                                      # a literal escape sequence protected
         assert "a &amp; b &lt;c&gt;" in xml
         cells = _cells(path)["Block 1"]
-        header, rows = cells[:2], cells[2:]
-        assert header[1] == ["time_s", "Calc [V]", "comment"] or header[1][0] == "time_s"
+        header, rows = cells[:1], cells[1:]
+        assert header[0][:3] == ["time_s", "Calc [V]", "comment"]                # the first row is the column titles
         by_text = {r[2]: r for r in rows if len(r) > 2 and r[2] is not None}
         assert by_text["=SUM(A1)"][2] == "=SUM(A1)"                              # text, not a formula
         assert by_text["  padded  "][2] == "  padded  "
@@ -200,12 +201,12 @@ def test_xlsx_falls_back_to_openpyxl_when_its_layout_is_not_the_expected_one(syn
     monkeypatch.setattr(ex, "_xlsx_streamed", lambda *a, **k: False)
     with AdichtFile(synthetic["path"]) as f:
         assert write_xlsx(f, [Selection(0, 0, 300)], [0, 1], tmp_path / "x.xlsx") == 300
-    assert len(_cells(tmp_path / "x.xlsx")["Block 1"]) == 302 and not (tmp_path / "x.xlsx.part").exists()
+    assert len(_cells(tmp_path / "x.xlsx")["Block 1"]) == 301 and not (tmp_path / "x.xlsx.part").exists()
 
 
 # -- progress, cancelling, the .part file ---------------------------------------------------------
 
-@pytest.mark.parametrize("fmt", ["txt", "csv", "xlsx"])
+@pytest.mark.parametrize("fmt", ["txt", "csv", "tsv", "xlsx", "mat"])
 def test_progress_counts_rows_up_to_the_total(synthetic, tmp_path, monkeypatch, fmt):
     pytest.importorskip("openpyxl")
     monkeypatch.setattr(ex, "CHUNK_ROWS", 1000)
@@ -216,7 +217,7 @@ def test_progress_counts_rows_up_to_the_total(synthetic, tmp_path, monkeypatch, 
     assert all(t == 45000 for _d, t in seen) and [d for d, _t in seen] == sorted(d for d, _t in seen) and len(seen) >= 45
 
 
-@pytest.mark.parametrize("fmt", ["txt", "csv", "xlsx"])
+@pytest.mark.parametrize("fmt", ["txt", "csv", "tsv", "xlsx", "mat"])
 def test_a_cancelled_export_leaves_nothing_and_keeps_an_existing_file(synthetic, tmp_path, monkeypatch, fmt):
     pytest.importorskip("openpyxl")
     monkeypatch.setattr(ex, "CHUNK_ROWS", 1000)

@@ -10,7 +10,17 @@ Three flavours:
   lines repeated at every record start, as LabChart does for several blocks.
 * ``"csv"``: plain comma-separated values with a one-line header; with several
   records a leading ``block`` column says which one a row belongs to.
+* ``"tsv"``: a plain tab-separated table with one header line, the layout RespMech's ``.txt``
+  loader reads (the LabChart header lines of ``"txt"`` are not a table); same ``block`` column
+  as CSV with several records.
 * ``"xlsx"``: an Excel workbook (``openpyxl``), one sheet per record.
+* ``"mat"``: a MATLAB level-5 file (:mod:`adichtion.matfile`), one ``data_block<N>`` matrix with
+  the channels as rows per exported block, the layout of RespMech's ``windows`` MATLAB variant.
+
+RespMech reads ``csv``, ``tsv``, ``xlsx`` and ``mat`` exports as they are (not ``txt``, whose
+LabChart header lines are not a table).  CSV with a decimal comma is ``;``-separated, as
+RespMech and European Excel expect: a comma both as decimal and as separator cannot be read by
+anything.
 
 Values are what :meth:`adichtion.Record.read` returns (units when possible),
 formatted with ``%.7g`` like LabChart's 7 significant digits.  Time is
@@ -56,11 +66,32 @@ class ExportCancelled(Exception):
     """The export was cancelled (``stale()`` returned True); nothing was written to the target."""
 
 
+def _cell(text: str, sep: str, repl: str = " ") -> str:
+    """Free text (a channel title, a comment) as one field: the separator would split the row
+    and a line break or tab would break it, so each becomes ``repl`` (a space; a comment in a
+    comma-separated file gets a semicolon, as it always has)."""
+    return text.replace(sep, repl).replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+
 def _excel_datetime(dt) -> float:
     """Excel serial date (days since 1899-12-30) of a datetime."""
     from datetime import datetime, timezone
     epoch = datetime(1899, 12, 30, tzinfo=timezone.utc)
     return (dt.astimezone(timezone.utc) - epoch).total_seconds() / 86400.0
+
+
+#: The formats written as one delimited line per row.
+_DELIMITED = ("txt", "csv", "tsv")
+#: Every format :func:`export_selections` knows.
+FORMATS = ("txt", "csv", "tsv", "xlsx", "mat")
+
+
+def _separator(fmt: str, decimal: str) -> str:
+    """The field separator of a delimited format: a tab for the text flavours, a comma for CSV
+    (a semicolon when the decimal is a comma, so the two never collide)."""
+    if fmt in ("txt", "tsv"):
+        return "\t"
+    return ";" if decimal == "," else ","
 
 
 def _fmt(v: float, decimal: str) -> str:
@@ -241,7 +272,7 @@ def write_text(record: Record, selection: Selection, channels: Sequence[int], ou
     ch_infos = [f.channel_info(c) for c in channels]
     t, cols, rate, row_of_tick = _table(record, selection, channels, units)
     n = len(t)
-    sep = "\t" if fmt == "txt" else ","
+    sep = _separator(fmt, decimal)
     if fmt == "txt" and header:
         out.write(f"Interval=\t{_fmt(1.0 / rate, decimal)} s\n")
         out.write(f"ExcelDateTime=\t{_excel_datetime(record.start_utc):.10g}\t{record.start_local:%Y-%m-%d %H:%M:%S.%f}\n")
@@ -250,13 +281,13 @@ def write_text(record: Record, selection: Selection, channels: Sequence[int], ou
         out.write("ChannelTitle=\t" + "\t".join(ci.title for ci in ch_infos) + "\n")
         out.write("Range=\t" + "\t".join(f"{_fmt(ci.range_volts, decimal)} V" if ci.range_volts else "" for ci in ch_infos) + "\n")
         out.write("UnitName=\t" + "\t".join(record.value_label(c) for c in channels) + "\n")
-    elif fmt == "csv" and header:
-        out.write(("block," if block_column else "") + "time_s,"
-                  + ",".join(f"{ci.title} [{record.value_label(c)}]".replace(",", " ") for ci, c in zip(ch_infos, channels))
-                  + (",comment" if comments else "") + "\n")
+    elif fmt in ("csv", "tsv") and header:
+        out.write(("block" + sep if block_column else "") + "time_s" + sep
+                  + sep.join(_cell(f"{ci.title} [{record.value_label(c)}]", sep) for ci, c in zip(ch_infos, channels))
+                  + (sep + "comment" if comments else "") + "\n")
     by_row = _comment_rows(record, selection, row_of_tick) if comments else {}
     commented = sorted(by_row)
-    prefix = f"{record.index + 1}," if (block_column and fmt == "csv") else ""
+    prefix = f"{record.index + 1}{sep}" if (block_column and fmt != "txt") else ""
     lo = 0
     while lo < n:
         if job is not None:
@@ -268,7 +299,7 @@ def write_text(record: Record, selection: Selection, channels: Sequence[int], ou
                 out.write(_text_rows(t, cols, pos, r, prefix, sep, decimal))
             text = " | ".join(by_row[r])
             out.write(_text_rows(t, cols, r, r + 1, prefix, sep, decimal)[:-1] + sep
-                      + ("#* " + text if fmt == "txt" else text.replace(",", ";")) + "\n")
+                      + ("#* " + _cell(text, sep) if fmt == "txt" else _cell(text, sep, ";" if sep == "," else " ")) + "\n")
             pos = r + 1
         if pos < hi:
             out.write(_text_rows(t, cols, pos, hi, prefix, sep, decimal))
@@ -294,7 +325,7 @@ def export_selections(f: AdichtFile, selections: Sequence[Selection], channels: 
                       progress: Optional[Callable[[int, int], None]] = None, **kw) -> int:
     """Export several selections (of one or more records) into one file.
 
-    ``fmt`` is ``"txt"``, ``"csv"`` or ``"xlsx"``; the keyword arguments are those of
+    ``fmt`` is one of :data:`FORMATS`; the keyword arguments are those of
     :func:`write_text` (``header``, ``decimal``, ``units``, ``comments``).  Returns
     the number of data rows written.  Text and CSV exports of several records repeat
     the header per record (txt) or carry a ``block`` column (csv), as described in
@@ -307,7 +338,7 @@ def export_selections(f: AdichtFile, selections: Sequence[Selection], channels: 
     selections = [s for s in selections if s.stop > s.start]
     if not selections:
         raise ValueError("nothing to export: the selection is empty")
-    if fmt not in ("txt", "csv", "xlsx"):
+    if fmt not in FORMATS:
         raise ValueError(f"unknown export format {fmt!r}")
     channels = list(channels)
     if not channels:
@@ -315,6 +346,9 @@ def export_selections(f: AdichtFile, selections: Sequence[Selection], channels: 
     job = _Progress(sum(table_rows(f.records[s.record], s, channels) for s in selections), stale, progress)
     if fmt == "xlsx":
         return write_xlsx(f, selections, channels, path, job=job, **kw)
+    if fmt == "mat":
+        from .matfile import write_mat
+        return write_mat(f, selections, channels, path, units=kw.get("units", True), job=job)
     header = kw.pop("header", True)
     rows = 0
     with _partial_file(path) as tmp, open(tmp, "w", encoding="utf-8", newline="\n") as fh:
@@ -376,18 +410,35 @@ def _xlsx_numbers(block: np.ndarray, first_row: int) -> str:
     return (row * n) % tuple(args.ravel().tolist())
 
 
+def _xlsx_info(rec: Record, sel: Selection, rate: float, n_channels: int, comments: bool):
+    """``(first column, labels, values)`` of the cells that describe a sheet: block, start, where
+    the selection starts and the sampling interval.  They sit to the right of the table, one
+    empty column after it, in the header row and the first data row, so the sheet itself stays a
+    plain table whose first row is the column titles (what RespMech's Excel loader reads)."""
+    first_col = 1 + n_channels + (1 if comments else 0) + 2
+    labels = ["Block", "start", "selection start (s)", "interval (s)"]
+    values = [sel.record + 1, rec.start_local.strftime("%Y-%m-%d %H:%M:%S"), sel.start / rec.tick_rate_hz, 1.0 / rate]
+    return first_col, labels, values
+
+
+def _xlsx_header_values(f: AdichtFile, rec: Record, channels: Sequence[int], comments: bool, info) -> list:
+    """The cells of the header row, ``None`` for a gap: the column titles, then the info labels."""
+    row: list = ["time_s"] + [f"{f.channel_info(c).title} [{rec.value_label(c)}]" for c in channels] + (["comment"] if comments else [])
+    if info is not None:
+        row += [None] * (info[0] - 1 - len(row)) + list(info[1])
+    return row
+
+
 def _xlsx_sheet_rows(f: AdichtFile, rec: Record, sel: Selection, channels: Sequence[int], write: Callable[[str], object], *,
                      header: bool, units: bool, comments: bool, job: Optional[_Progress]) -> int:
     """The ``<row>`` elements of the sheet of one selection, through ``write``; returns its data rows."""
     t, cols, rate, row_of_tick = _table(rec, sel, channels, units)
     n = len(t)
     first = 1
+    info = _xlsx_info(rec, sel, rate, len(channels), comments) if header else None
     if header:
-        write(_xlsx_row(1, ["Block", sel.record + 1, "start", rec.start_local.strftime("%Y-%m-%d %H:%M:%S"),
-                            "selection start (s)", sel.start / rec.tick_rate_hz, "interval (s)", 1.0 / rate]))
-        write(_xlsx_row(2, ["time_s"] + [f"{f.channel_info(c).title} [{rec.value_label(c)}]" for c in channels]
-                        + (["comment"] if comments else [])))
-        first = 3
+        write(_xlsx_row(1, _xlsx_header_values(f, rec, channels, comments, info)))
+        first = 2
     by_row = _comment_rows(rec, sel, row_of_tick) if comments else {}
     comment_col = get_column_letter(len(channels) + 2)
     for lo in range(0, n, CHUNK_ROWS):
@@ -398,18 +449,21 @@ def _xlsx_sheet_rows(f: AdichtFile, rec: Record, sel: Selection, channels: Seque
         block[:, 0] = t[lo:hi]
         for j, col in enumerate(cols):
             block[:, j + 1] = col[lo:hi]
+        # cells after the table's own columns: a comment, and (on the first data row) the info cells
+        extra: dict[int, str] = {r: _xlsx_cell(f"{comment_col}{first + r}", " | ".join(by_row[r])) for r in by_row if lo <= r < hi}
+        if info is not None and lo == 0:
+            extra[0] = extra.get(0, "") + "".join(_xlsx_cell(f"{get_column_letter(info[0] + j)}{first}", v) for j, v in enumerate(info[2]))
         if np.isfinite(block).all():
             text = _xlsx_numbers(block, first + lo)
-            if by_row:
-                # the rows that carry a comment get the comment cell before their closing tag
+            if extra:
                 rows = text.split("</row>")
-                for r in [r for r in by_row if lo <= r < hi]:
-                    rows[r - lo] += _xlsx_cell(f"{comment_col}{first + r}", " | ".join(by_row[r]))
+                for r, cells in extra.items():
+                    rows[r - lo] += cells
                 text = "</row>".join(rows)
             write(text)
         else:
             vals = block.tolist()
-            write("".join(_xlsx_row(first + lo + i, vals[i] + ([" | ".join(by_row[lo + i])] if comments and lo + i in by_row else []))
+            write("".join(_xlsx_row(first + lo + i, vals[i])[:-len("</row>")] + extra.get(lo + i, "") + "</row>"
                           for i in range(hi - lo)))
         if job is not None:
             job.advance(hi - lo)
@@ -497,11 +551,9 @@ def write_xlsx(f: AdichtFile, selections: Sequence[Selection], channels: Sequenc
         for name, rec, sel in sheets:
             t, cols, rate, row_of_tick = _table(rec, sel, channels, units)
             ws = wb.create_sheet(name)
+            info = _xlsx_info(rec, sel, rate, len(channels), comments) if header else None
             if header:
-                ws.append(["Block", sel.record + 1, "start", rec.start_local.strftime("%Y-%m-%d %H:%M:%S"),
-                           "selection start (s)", sel.start / rec.tick_rate_hz, "interval (s)", 1.0 / rate])
-                ws.append(["time_s"] + [f"{f.channel_info(c).title} [{rec.value_label(c)}]" for c in channels]
-                          + (["comment"] if comments else []))
+                ws.append(_xlsx_header_values(f, rec, channels, comments, info))
             by_row = _comment_rows(rec, sel, row_of_tick) if comments else {}
             for i in range(len(t)):
                 if i % CHUNK_ROWS == 0:
@@ -509,6 +561,8 @@ def write_xlsx(f: AdichtFile, selections: Sequence[Selection], channels: Sequenc
                 row = [float(t[i])] + [float(col[i]) for col in cols]
                 if comments:
                     row.append(" | ".join(by_row[i]) if i in by_row else None)
+                if info is not None and i == 0:
+                    row += [None] * (info[0] - 1 - len(row)) + list(info[2])
                 ws.append(row)
                 if i % CHUNK_ROWS == CHUNK_ROWS - 1 or i == len(t) - 1:
                     job.advance(i % CHUNK_ROWS + 1)
