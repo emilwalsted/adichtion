@@ -5,6 +5,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Right-click a row in the file panel's Comments or Blocks table and choose *Mark interval*: the cursor goes to
+  the start, the interval is selected and every graph is zoomed to show all of it. For a comment the interval
+  runs to just before the next comment (to the end of the file for the last one); for a block it is the whole
+  block. The Channels table has no such menu.
+
 ### Changed
 - The splash screen no longer names the GitHub repository.
 - The file panel opens on Comments, then Channels, then Blocks. The Blocks table's Video column is shown only

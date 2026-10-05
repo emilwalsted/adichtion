@@ -118,6 +118,23 @@ class Timeline:
                 out.append(Selection(b.index, start, stop))
         return out
 
+    def block_interval(self, index: int) -> tuple[float, float]:
+        """The file times a block spans: its first tick to its end."""
+        b = self.blocks[index]
+        return b.start_s, b.stop_s
+
+    def comment_interval(self, i: int) -> tuple[float, float]:
+        """The interval that belongs to comment ``i`` (an index into ``comments``): from the comment to
+        just before the next comment later in the file (one tick of the block that comment is in),
+        or to the end of the file when it is the last one.  Comments at the same time as this one are
+        not "next"; they share its interval."""
+        t0 = self.comments[i].file_time_s
+        later = [m for m in self.comments if m.file_time_s > t0]
+        if not later:
+            return t0, self.duration_s
+        nxt = min(later, key=lambda m: m.file_time_s)
+        return t0, max(t0, nxt.file_time_s - 1.0 / nxt.block.tick_rate_hz)
+
     def describe(self, t: float) -> str:
         """``Block 3 · 12.345 s · 13:45:12.345`` for a file time."""
         pos = self.locate(t)

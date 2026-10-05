@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
         self.info.blockActivated.connect(self.go_to_block)
         self.info.blockFitRequested.connect(self.fit_block)
         self.info.commentActivated.connect(self.go_to_time)
+        self.info.markIntervalRequested.connect(self.mark_interval)
         self.stack.contextRequested.connect(self._on_context_menu)
         self.stack.autoZoomChanged.connect(self._on_auto_zoom_changed)
         self.video.btn_play.clicked.disconnect()
@@ -612,6 +613,17 @@ class MainWindow(QMainWindow):
         b = self.timeline.blocks[index]
         self.stack.set_range(b.start_s, b.stop_s)
         self.stack.set_cursor(b.start_s)
+
+    def mark_interval(self, t0: float, t1: float) -> None:
+        """"Mark interval" on a comment or block row: the cursor goes to the start, the interval is
+        selected and every graph shows all of it (with a little air on each side)."""
+        if self.timeline is None or self.file is None:
+            return
+        t0, t1 = max(0.0, t0), min(self.timeline.duration_s, t1)
+        pad = 0.02 * (t1 - t0)
+        self.stack.set_range(t0 - pad, t1 + pad)
+        self.stack.set_cursor(t0)                      # clears a selection, so the interval is set after it
+        self.stack.set_selection(t0, t1)
 
     def _on_progress(self, job_id: int, kind: str, payload) -> None:
         if kind == "stats" and job_id == self._stats_job:

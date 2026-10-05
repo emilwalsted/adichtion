@@ -382,3 +382,21 @@ def test_a_second_export_waits_and_closing_the_file_cancels_a_running_one(qapp, 
     gate.set()
     assert wait_until(qapp, lambda: window.statusBar().currentMessage() == "Export cancelled." or window._export_cancel is None, timeout=30)
     assert not os.path.exists(path) and not os.path.exists(path + ".part")
+
+
+def test_mark_interval_selects_it_and_shows_all_of_it(qapp, window, synthetic):
+    window.open_file_sync(synthetic["path"])
+    qapp.processEvents()
+    st = window.stack
+    st.set_range(0.0, 5.0)
+    window.info._mark_interval("comment", 1)           # comment 2 up to just before comment 3
+    sel = st.selection
+    assert sel == (pytest.approx(16.005), pytest.approx(39.994))
+    assert st.cursor == pytest.approx(16.005)
+    x0, x1 = st.view_range()
+    assert x0 <= sel[0] and x1 >= sel[1]               # the whole interval is on screen
+    assert x1 - x0 < window.timeline.duration_s        # ... and it is not just the whole file
+    window.info._mark_interval("block", 1)             # block 2: 40 s to the end
+    assert st.selection == (pytest.approx(40.0), pytest.approx(45.0))
+    x0, x1 = st.view_range()
+    assert x0 <= 40.0 and x1 >= 45.0

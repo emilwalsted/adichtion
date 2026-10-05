@@ -178,3 +178,38 @@ def test_video_column_only_when_a_clip_is_attached(qapp, panel, tmp_path):
     assert not panel.blocks.isColumnHidden(_VIDEO_COLUMN)
     panel.set_file(f, Timeline(f))                                     # and hidden again for the next file
     assert panel.blocks.isColumnHidden(_VIDEO_COLUMN)
+
+
+def test_mark_interval_is_on_the_comment_and_block_rows_only(qapp, panel, synthetic):
+    from PySide6.QtCore import QPoint, Qt
+    f = AdichtFile(synthetic["path"])
+    tl = Timeline(f)
+    panel.set_file(f, tl)
+    heard = []
+    panel.markIntervalRequested.connect(lambda a, b: heard.append((a, b)))
+    # the menu of a comment row: one entry, and it reports the interval up to the next comment
+    menu = panel._row_menu("comment", 1)
+    assert [a.text() for a in menu.actions()] == ["Mark interval"]
+    menu.actions()[0].trigger()
+    assert heard == [(pytest.approx(16.005), pytest.approx(39.994))]
+    # a block row reports the block's span
+    menu = panel._row_menu("block", 1)
+    menu.actions()[0].trigger()
+    assert heard[-1] == (pytest.approx(40.0), pytest.approx(45.0))
+    # a real right click on a row opens the menu for that row; one below the last row does not
+    shown = []
+    panel.comments.rowContextMenuRequested.connect(lambda r, pos: shown.append(r))
+    view = panel.comments
+    rect = view.visualRect(view.model().index(2, 3))
+    view._on_context_menu(QPoint(rect.center().x(), rect.center().y()))
+    assert shown == [2] and view.currentIndex().row() == 2
+    view._on_context_menu(QPoint(5, view.viewport().height() - 2))
+    assert shown == [2]
+    # Channels has no context menu at all
+    assert panel.channels.contextMenuPolicy() != Qt.CustomContextMenu
+    assert not panel.channels.actions()
+    # no file, nothing to mark
+    panel.set_file(None, None)
+    n = len(heard)
+    panel._mark_interval("block", 0)
+    assert len(heard) == n

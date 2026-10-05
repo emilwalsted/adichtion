@@ -5,8 +5,8 @@ import os
 import threading
 from typing import Callable, Optional, Sequence
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel, QTableView, QTableWidget, QTableWidgetItem,
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt, Signal
+from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel, QMenu, QTableView, QTableWidget, QTableWidgetItem,
                                QTabWidget, QVBoxLayout, QWidget)
 
 from ..file import AdichtFile
@@ -90,10 +90,13 @@ class _RowsView(QTableView):
 
     cellClicked = Signal(int, int)
     cellDoubleClicked = Signal(int, int)
+    rowContextMenuRequested = Signal(int, QPoint)           # (row, global position) of a right click on a row
 
     def __init__(self, model: _RowsModel, parent=None):
         super().__init__(parent)
         self.setModel(model)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
         self.verticalHeader().setVisible(False)
         # fixed row height: the default would ask the delegate about every row to size it
         self.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
@@ -113,6 +116,12 @@ class _RowsView(QTableView):
     def rowCount(self) -> int:
         return self.model().rowCount()
 
+    def _on_context_menu(self, pos: QPoint) -> None:
+        idx = self.indexAt(pos)
+        if idx.isValid():
+            self.selectRow(idx.row())
+            self.rowContextMenuRequested.emit(idx.row(), self.viewport().mapToGlobal(pos))
+
 
 _VIDEO_COLUMN = 4                               # the Video column of the Blocks table
 
@@ -121,6 +130,7 @@ class InfoPanel(QWidget):
     blockActivated = Signal(int)                # record index (a click)
     blockFitRequested = Signal(int)             # record index (a double-click)
     commentActivated = Signal(float)            # file time
+    markIntervalRequested = Signal(float, float)    # (start, end) file times, from "Mark interval"
     _video_counted = Signal(int, int)           # (token, clips found), from the background lookup
 
     def __init__(self, parent=None):
@@ -153,6 +163,8 @@ class InfoPanel(QWidget):
         self.blocks.cellClicked.connect(lambda r, _c: self.blockActivated.emit(r))
         self.blocks.cellDoubleClicked.connect(lambda r, _c: self.blockFitRequested.emit(r))
         self.comments.cellClicked.connect(self._on_comment_clicked)
+        self.blocks.rowContextMenuRequested.connect(lambda r, pos: self._row_menu("block", r).popup(pos))
+        self.comments.rowContextMenuRequested.connect(lambda r, pos: self._row_menu("comment", r).popup(pos))
         self._comment_times: list[float] = []
         self._video_token = 0                    # which file the background clip count belongs to
         self._video_counted.connect(self._on_video_counted)
@@ -268,6 +280,24 @@ class InfoPanel(QWidget):
     def set_definition(self, channel: int, text: Optional[str]) -> None:
         if 0 <= channel < self.channels.rowCount():
             self.channels.setItem(channel, 6, _item(text or ""))
+
+    def _row_menu(self, kind: str, row: int) -> QMenu:
+        """The context menu of a Blocks or Comments row (the Channels table has none): "Mark interval"
+        reports the row's interval, a block's span or a comment up to the next comment."""
+        menu = QMenu(self)
+        menu.setAttribute(Qt.WA_DeleteOnClose)
+        act = menu.addAction("Mark interval")
+        act.triggered.connect(lambda: self._mark_interval(kind, row))
+        return menu
+
+    def _mark_interval(self, kind: str, row: int) -> None:
+        tl = self.timeline
+        if tl is None:
+            return
+        if kind == "block" and 0 <= row < len(tl.blocks):
+            self.markIntervalRequested.emit(*tl.block_interval(row))
+        elif kind == "comment" and 0 <= row < len(tl.comments):
+            self.markIntervalRequested.emit(*tl.comment_interval(row))
 
     def _on_comment_clicked(self, row: int, _col: int) -> None:
         if 0 <= row < len(self._comment_times):

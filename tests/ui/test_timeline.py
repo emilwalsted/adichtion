@@ -39,3 +39,16 @@ def test_comments_carry_file_times(synthetic):
         times = [round(c.file_time_s, 3) for c in tl.comments]
         assert times == [0.01, 16.005, 39.995, 42.5]
         assert tl.comments[-1].block.number == 2 and tl.comments[-1].comment.text == "short"
+
+
+def test_a_comments_interval_runs_to_just_before_the_next_comment(synthetic):
+    with AdichtFile(synthetic["path"]) as f:
+        tl = Timeline(f)
+        # one tick (1 ms) short of the next comment; the last comment runs to the end of the file
+        assert tl.comment_interval(0) == (pytest.approx(0.01), pytest.approx(16.004))
+        assert tl.comment_interval(1) == (pytest.approx(16.005), pytest.approx(39.994))
+        assert tl.comment_interval(2) == (pytest.approx(39.995), pytest.approx(42.499))
+        assert tl.comment_interval(3) == (pytest.approx(42.5), pytest.approx(tl.duration_s))
+        # a block's interval is its own span
+        assert tl.block_interval(0) == (0.0, pytest.approx(40.0))
+        assert tl.block_interval(1) == (pytest.approx(40.0), pytest.approx(45.0))
