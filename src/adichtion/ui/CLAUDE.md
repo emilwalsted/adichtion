@@ -73,10 +73,10 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 
 - **Background decoding is polite (P9).** Anything that decodes on its own initiative (prefetch, warm-up) runs on
   `ChannelStack.warm_runner`, never on `runner` (a long job there delays every render behind it), calls
-  `ChannelStack.activity.touch()`-style gating through `Warmer`, and never fills the block cache with blocks nobody asked for
+  waits for `ChannelStack.activity` through `Warmer`, and never fills the block cache with blocks nobody asked for
   (`decode_block(cache=False)`). `Warmer.cancel()` is called before the file is closed (`set_file`, `close`): it returns
-  only when no block is being decoded, which is what makes closing safe. Anything new that reacts to the user
-  (a move, a click, a repaint) should `touch()` the activity, or the background will not know to wait. The status bar
+  only when no block is being decoded, which is what makes closing safe. The activity is touched by a move, a click, the cursor, a render and a drawn curve (not by a y-zoom,
+  a resize or hovering); anything new that reacts to the user should `touch()` it, or the background will not know to wait. The status bar
   label (`MainWindow.warm_label`) is always shown and has a fixed minimum width: showing it the first time laid the
   status bar out again and cost 70 to 110 ms in the offscreen run.
 

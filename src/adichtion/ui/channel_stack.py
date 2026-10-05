@@ -764,7 +764,10 @@ class ChannelStack(QWidget):
         if kind != "warm" or job_id != self._warm_job or self.warmer is None or not self._warm_enabled:
             return                              # a late report of the file before (its job id is not the current one)
         done, total = payload
-        self.warmProgress.emit(0, 0) if done >= total else self.warmProgress.emit(int(done), int(total))
+        if done >= total:
+            self.warmProgress.emit(0, 0)
+        else:
+            self.warmProgress.emit(int(done), int(total))
 
     def _request_prefetch(self, channel: int, a: float, b: float, x0: float, x1: float) -> None:
         """A detail pass just decoded ``[a, b]`` for ``channel``: the blocks half a screen width beyond each side
@@ -1181,7 +1184,7 @@ class ChannelStack(QWidget):
         if kind != "render" or job_id != self._render_job:
             perf.count("render.result_stale")
             return
-        c, a, b, x, y, level, n, *rest = payload     # the last item (the curve needed decoded samples) is optional
+        c, a, b, x, y, level, n, used = payload
         self.activity.touch()                   # a picture is being drawn: the background waits for it to be done
         x0, x1 = self.view_range()
         if a > x0 + 1e-9 or b < x1 - 1e-9:        # the view moved on since the job began: its curve would replace
@@ -1193,7 +1196,7 @@ class ChannelStack(QWidget):
                 if (self._auto_zoom and c in self._visible) or c in self._y_unset:
                     self._y_unset.discard(c)
                     self.plots[c].auto_y()          # the decoded curve replaces the coarse one: fit to that
-            if rest and rest[0]:                    # it needed decoded samples: the blocks next to them are worth having ready
+            if used:                                # it needed decoded samples: the blocks next to them are worth having ready
                 self._request_prefetch(c, a, b, x0, x1)
 
     def _on_done(self, job_id: int, kind: str, result, error) -> None:

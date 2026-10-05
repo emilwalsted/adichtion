@@ -139,7 +139,7 @@ def test_warm_up_off_decodes_nothing_and_on_again_resumes(f):
     n, reports = run_for(w, seconds=0.3)
     assert n == 0 and w.progress()[0] == 0
     stop = threading.Event()
-    t = threading.Thread(target=lambda: w.run(stop.is_set))
+    t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
     t.start()
     try:
         time.sleep(0.1)
@@ -158,7 +158,7 @@ def test_a_finished_sweep_idles_and_a_new_view_does_not_start_it_again(f):
     run_for(w, until=lambda: w.progress()[0] == 3 * N_BLOCKS)
     before = w.decoded
     stop = threading.Event()
-    t = threading.Thread(target=lambda: w.run(stop.is_set))
+    t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
     t.start()
     w.set_view(3.0, [0])
     time.sleep(0.4)
@@ -174,7 +174,7 @@ def test_nothing_is_decoded_while_the_user_is_active(f):
     w = warmer(f, activity=act, idle_s=0.2, prefetch_idle_s=0.2)
     w.request_prefetch(0, (0.0, 1.0), (1.0, 40.0))
     stop = threading.Event()
-    t = threading.Thread(target=lambda: w.run(stop.is_set))
+    t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
     act.touch()
     t.start()
     try:
@@ -194,21 +194,23 @@ def test_nothing_is_decoded_while_the_user_is_active(f):
 
 def test_an_interaction_pauses_a_running_sweep_at_once(f):
     act = Activity()
-    w = warmer(f, activity=act, idle_s=0.15)
+    w = warmer(f, activity=act, idle_s=0.4)
     stop = threading.Event()
-    t = threading.Thread(target=lambda: w.run(stop.is_set))
+    t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
     t.start()
-    end = time.monotonic() + 5
-    while w.decoded < 3 and time.monotonic() < end:
-        time.sleep(0.005)
-    assert w.decoded >= 3
-    act.touch()
-    time.sleep(0.04)                                               # a block or two may be in flight
-    n = w.decoded
-    time.sleep(0.1)
-    assert w.decoded == n                                          # quiet for less than idle_s: paused
-    stop.set()
-    t.join(5)
+    try:
+        end = time.monotonic() + 5
+        while w.decoded < 3 and time.monotonic() < end:
+            time.sleep(0.005)
+        assert w.decoded >= 3
+        act.touch()
+        time.sleep(0.05)                                           # a block or two may be in flight
+        n = w.decoded
+        time.sleep(0.15)
+        assert w.decoded == n                                      # quiet for less than idle_s: paused
+    finally:
+        stop.set()
+        t.join(5)
 
 
 # -- stopping ---------------------------------------------------------------------------------------------
@@ -216,9 +218,10 @@ def test_an_interaction_pauses_a_running_sweep_at_once(f):
 def test_stale_stops_the_job_quickly(f):
     w = warmer(f)
     stop = threading.Event()
-    t = threading.Thread(target=lambda: w.run(stop.is_set))
+    t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
     t.start()
-    while w.decoded < 2:
+    end = time.monotonic() + 5
+    while w.decoded < 2 and time.monotonic() < end:
         time.sleep(0.002)
     stop.set()
     t.join(2)
@@ -238,7 +241,7 @@ def test_cancel_returns_after_the_block_in_flight_and_nothing_follows(f, monkeyp
     monkeypatch.setattr(f, "decode_block", slow)
     w = warmer(f)
     stop = threading.Event()
-    t = threading.Thread(target=lambda: w.run(stop.is_set))
+    t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
     t.start()
     assert inside.wait(5)
     done = []
@@ -300,7 +303,7 @@ def test_a_newer_prefetch_request_replaces_the_older_one(f, monkeypatch):
     act = Activity()
     w = warmer(f, warm=False, activity=act, prefetch_idle_s=0.15)
     stop = threading.Event()
-    t = threading.Thread(target=lambda: w.run(stop.is_set))
+    t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
     act.touch()
     t.start()
     w.request_prefetch(0, (0.0, 0.0), (1 * per, 4 * per))
@@ -331,3 +334,60 @@ def test_thread_block_requests_count_only_the_calling_thread(f):
     assert f.thread_block_requests() == mine                       # another thread's decodes (and the shared stats) do not count
     f.decode_block(0, 2, 0)
     assert f.thread_block_requests() == mine + 1
+
+
+def test_the_file_counts_its_summaries_once_each(f):
+    assert f.summarised_blocks() == 0
+    f.decode_block(0, 3, 0)
+    f.decode_block(0, 3, 0, cache=False)                           # the same block again: still one summary
+    f.decode_block(0, 3, 1)
+    assert f.summarised_blocks() == 2
+    ts = [threading.Thread(target=lambda: [f.decode_block(1, 0, c, cache=False) for c in range(3) for _ in range(20)])
+          for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert f.summarised_blocks() == 5                              # three more, however many threads raced for them
+    f.clear_cache()
+    assert f.summarised_blocks() == 0
+
+
+def test_a_long_sweep_wait_does_not_starve_a_prefetch_request(f):
+    act = Activity()
+    w = warmer(f, activity=act, idle_s=0.5, prefetch_idle_s=0.1)
+    stop = threading.Event()
+    t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
+    act.touch()
+    t.start()
+    try:
+        end = time.monotonic() + 1.2
+        while time.monotonic() < end:
+            act.touch()                                            # the user keeps panning: never 0.5 s of quiet ...
+            time.sleep(0.2)
+            w.request_prefetch(0, (0.0, 0.0), (0.0, 3.0))          # ... but a screen's worth of calm for the prefetch
+        assert w.decoded >= 1 and f.summary_store(0, 1) is None    # the prefetch ran; the sweep (channel 1 too) did not
+    finally:
+        stop.set()
+        t.join(5)
+
+
+def test_a_new_view_reorders_only_what_is_left_and_nothing_is_decoded_twice(f, monkeypatch):
+    seen = []
+    real = f.decode_block
+    monkeypatch.setattr(f, "decode_block", lambda r, b, c, cache=True: (seen.append((c, r, b)), real(r, b, c, cache))[1])
+    w = warmer(f)
+    stop = threading.Event()
+    t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
+    t.start()
+    try:
+        end = time.monotonic() + 5
+        while len(seen) < 10 and time.monotonic() < end:
+            time.sleep(0.002)
+        w.set_view(13.5 * BLOCK_TICKS / RATE, [1])
+        end = time.monotonic() + 10
+        while w.progress()[0] < 3 * N_BLOCKS and time.monotonic() < end:
+            time.sleep(0.01)
+    finally:
+        stop.set()
+        t.join(5)
+    assert w.progress() == (3 * N_BLOCKS, 3 * N_BLOCKS)
+    assert len(seen) == len(set(seen)) == 3 * N_BLOCKS             # every block once, none repeated after the re-order

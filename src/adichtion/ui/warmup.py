@@ -115,10 +115,9 @@ class Warmer:
         self._view: Optional[tuple[float, list[int]]] = None
         self._order_dirty = True
         self._maps: dict[int, ChannelBlocks] = {}
-        self._record_ids: dict[int, np.ndarray] = {}
         self._order: Optional[tuple[np.ndarray, np.ndarray]] = None     # (channel, flat block index) of the sweep
         self._pos = 0
-        self._total = 0
+        self._total: Optional[int] = None
 
     # -- requests (GUI thread) ----------------------------------------------------------------------------
     @property
@@ -156,16 +155,11 @@ class Warmer:
 
     # -- progress ------------------------------------------------------------------------------------------
     def progress(self) -> tuple[int, int]:
-        """``(blocks with a summary, blocks of every channel with data)``: the truth, whoever decoded them."""
-        total = done = 0
-        for c in self.channels:
-            blocks = self._blocks(c)
-            total += len(blocks)
-            for r in self._records_of(c):
-                store = self.f.summary_store(int(r), c)
-                if store is not None:
-                    done += int(np.count_nonzero(store.have))
-        return done, total
+        """``(blocks with a summary, blocks of every channel with data)``: the truth, whoever decoded them, and O(1)
+        (the file counts its summaries as they are made)."""
+        if self._total is None:
+            self._total = sum(len(self._blocks(c)) for c in self.channels)
+        return min(self.f.summarised_blocks(), self._total), self._total
 
     # -- the job (worker thread) --------------------------------------------------------------------------
     def run(self, stale, report=None) -> int:
@@ -175,13 +169,18 @@ class Warmer:
         complete = False
         while not self._stopped(stale):
             if self._has_prefetch():
-                if not self._wait_quiet(stale, self.prefetch_idle_s):
+                if self._wait_quiet(stale, self.prefetch_idle_s) is False:
                     break
                 item = self._pop_prefetch()
                 if item is not None:
                     self._decode(*item, cache=True, kind="prefetch")
                 continue
             if self._warm and not complete:
+                quiet = self._wait_quiet(stale, self.idle_s, self._has_prefetch)    # before looking for the next block too:
+                if quiet is False:                                                    # re-ordering the sweep is work as well
+                    break
+                if quiet is None:
+                    continue                                       # a prefetch request came in: it goes first
                 item = self._next_warm()
                 if item is None:
                     complete = True
@@ -190,8 +189,6 @@ class Warmer:
                     if report is not None:
                         report((done, total))
                     continue
-                if not self._wait_quiet(stale, self.idle_s):
-                    break
                 self._decode(*item, cache=False, kind="warm")
                 now = time.monotonic()
                 if report is not None and now - last_report >= PROGRESS_INTERVAL_S:
@@ -203,14 +200,19 @@ class Warmer:
             if complete and not self._finished:
                 with self._lock:
                     complete = not self._order_dirty      # the user went somewhere else: sweep again from there
+        if report is not None and self._failures >= MAX_FAILURES:
+            report((0, 0))                        # the sweep gave up: the status bar must not keep the last percentage
         return self.decoded
 
     def _stopped(self, stale) -> bool:
         return self._cancelled or self._failures >= MAX_FAILURES or bool(stale())
 
-    def _wait_quiet(self, stale, idle_s: float) -> bool:
-        """Wait until the user has been quiet for ``idle_s``; False if the job must stop first."""
+    def _wait_quiet(self, stale, idle_s: float, interrupt: Optional[Callable[[], bool]] = None) -> Optional[bool]:
+        """Wait until the user has been quiet for ``idle_s``: True when so, False if the job must stop first, and None
+        when ``interrupt()`` became true meanwhile (the longer wait of the sweep must not starve a prefetch request)."""
         while not self._stopped(stale):
+            if interrupt is not None and interrupt():
+                return None
             if self.activity.quiet_for(idle_s):
                 return True
             time.sleep(POLL_S)
@@ -221,12 +223,6 @@ class Warmer:
         if m is None:
             m = self._maps[channel] = channel_blocks(self.f, self.tl, channel)
         return m
-
-    def _records_of(self, channel: int) -> np.ndarray:
-        r = self._record_ids.get(channel)
-        if r is None:
-            r = self._record_ids[channel] = np.unique(self._blocks(channel).record)
-        return r
 
     def _has_prefetch(self) -> bool:
         with self._lock:
@@ -282,19 +278,27 @@ class Warmer:
         return None
 
     def _build_order(self, view: Optional[tuple[float, list[int]]]) -> None:
-        """Visible channels first (in the order given), then the others; within a channel the blocks
-        nearest the view's centre first."""
+        """Visible channels first (in the order given), then the others; within a channel the blocks nearest the view's
+        centre first.  Only what the sweep has not passed yet is ordered again (all of it the first time), so a
+        re-order after a move costs in proportion to the work left, not to the size of the file."""
         centre, shown = view if view is not None else (0.0, [])
-        order = shown + [c for c in self.channels if c not in shown]
+        if self._order is None:
+            parts = [(c, np.arange(len(self._blocks(c)), dtype=np.int64)) for c in self.channels]
+        else:
+            chans, idx = self._order
+            chans, idx = chans[self._pos:], idx[self._pos:]
+            parts = [(c, idx[chans == c]) for c in self.channels]
+        rank = shown + [c for c in self.channels if c not in shown]
+        by_channel = dict(parts)
         chan_parts, idx_parts = [], []
-        for c in order:
-            blocks = self._blocks(c)
-            if not len(blocks):
+        for c in rank:
+            idx = by_channel.get(c)
+            if idx is None or not len(idx):
                 continue
-            mid = 0.5 * (blocks.start + blocks.stop)
-            idx = np.argsort(np.abs(mid - centre), kind="stable")
+            blocks = self._blocks(c)
+            mid = 0.5 * (blocks.start[idx] + blocks.stop[idx])
             chan_parts.append(np.full(len(idx), c, dtype=np.int64))
-            idx_parts.append(idx)
+            idx_parts.append(idx[np.argsort(np.abs(mid - centre), kind="stable")])
         self._order = (np.concatenate(chan_parts), np.concatenate(idx_parts)) if idx_parts else \
             (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64))
         self._pos = 0
