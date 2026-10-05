@@ -25,7 +25,7 @@ understøtter. Målt mod RespMechs egen `core.io.loaders.load` (både PyPI 2.4.0
   Layoutet er LabChart for Windows' blokeksport, dvs. RespMechs `windows`-variant: `data_block<N>` (kanaler x samples,
   doubles, i enheder, eller lagrede tællinger med `units=False`), `titles_block<N>`, `units_block<N>`,
   `samplerate_block<N>`, `record_block<N>`. RespMech læser kun `data_block1`: eksportér én blok ad gangen til det.
-  Fravalgt: Mac-varianten (RespMech indekserer dér gennem scipys variabelliste inkl. `__header__`, så kolonnenumre
+  Tegn skrives som miUTF8 (scipy dekoder miUINT16 som UTF-8 og ødelagde æøå; fundet af review). Fravalgt: Mac-varianten (RespMech indekserer dér gennem scipys variabelliste inkl. `__header__`, så kolonnenumre
   bliver uigennemskuelige).
 - **Kendt rest, ikke ændret:** tidskolonnen er `%.7g` som LabChart (ved en optagelse over ca. 10.000 s ved 1 kHz mister
   den sin millisekund-opløsning); RespMech bruger ikke kolonnen.

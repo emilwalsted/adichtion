@@ -33,7 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .file import AdichtFile, Selection
 
 # data types of a data element, and array classes (MATLAB "MAT-File Format", level 5)
-_MI_INT8, _MI_INT32, _MI_UINT16, _MI_UINT32, _MI_DOUBLE, _MI_MATRIX = 1, 5, 4, 6, 9, 14
+_MI_INT8, _MI_INT32, _MI_UINT32, _MI_DOUBLE, _MI_MATRIX, _MI_UTF8 = 1, 5, 6, 9, 14, 16
 _MX_CHAR, _MX_DOUBLE = 4, 6
 
 _MAX_ELEMENT = 2**32 - 1
@@ -76,9 +76,11 @@ def put_chars(fh: BinaryIO, name: str, rows: Sequence[str]) -> None:
     ``char`` does).  Characters outside the Basic Multilingual Plane are replaced by ``?``."""
     rows = [("".join(ch if ord(ch) < 0x10000 else "?" for ch in r)) for r in rows] or [""]
     width = max(len(r) for r in rows)
-    grid = np.array([[ord(c) for c in r.ljust(width)] for r in rows], dtype="<u2").reshape(len(rows), width)
-    raw = grid.tobytes(order="F")                      # MATLAB stores column by column
-    _matrix_head(fh, name, _MX_CHAR, (len(rows), width), _MI_UINT16, len(raw))
+    padded = [r.ljust(width) for r in rows]
+    # MATLAB stores column by column; the characters go as UTF-8 (miUTF8), which scipy and MATLAB
+    # both decode (scipy reads miUINT16 characters as UTF-8 and would garble anything but ASCII)
+    raw = "".join(padded[i][j] for j in range(width) for i in range(len(rows))).encode("utf-8")
+    _matrix_head(fh, name, _MX_CHAR, (len(rows), width), _MI_UTF8, len(raw))
     fh.write(raw + b"\0" * _pad(len(raw)))
 
 

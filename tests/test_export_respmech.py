@@ -179,3 +179,12 @@ def test_respmechs_own_loader_reads_every_exported_format(recording, tmp_path, f
         assert len(flow) == TICKS[0]
         for got, want in zip((flow, poes, vol), ref):
             assert np.allclose(got, want, rtol=1e-6, atol=0)
+
+
+def test_mat_titles_keep_non_ascii_characters(tmp_path):
+    from adichtion.matfile import put_chars, write_header
+    with open(tmp_path / "t.mat", "wb") as fh:
+        write_header(fh)
+        put_chars(fh, "titles", ["æøå µ", "Flow", "ab\U0001F600"])
+    m = sio.loadmat(tmp_path / "t.mat")
+    assert [t.rstrip() for t in m["titles"]] == ["æøå µ", "Flow", "ab?"]
