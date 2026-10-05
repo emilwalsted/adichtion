@@ -145,6 +145,40 @@ def test_the_export_shows_progress(qapp, window, synthetic, tmp_path, monkeypatc
     assert window._export_dialog is None and os.path.exists(path) and not os.path.exists(path + ".part")
 
 
+def test_the_export_is_never_finished_from_inside_a_progress_update(qapp, window, synthetic, tmp_path, monkeypatch):
+    """``QProgressDialog.setValue`` of a modal dialog runs the event loop once the dialog is shown.  The worker's
+    "done" was then handled inside the progress update, and the dialog deleted under its own ``setValue``: a
+    use-after-free that crashed on macOS.  A progress update must not process events at all."""
+    window.open_file_sync(synthetic["path"])
+    gate, reached = _slow_export(monkeypatch, 5)
+    depth, deepest, finished_at = [0], [0], []
+    progress, finish = window._export_progress, window._finish_export
+
+    def in_progress(*a):
+        depth[0] += 1
+        deepest[0] = max(deepest[0], depth[0])
+        try:
+            progress(*a)
+        finally:
+            depth[0] -= 1
+
+    def finishing(*a):
+        finished_at.append(depth[0])
+        finish(*a)
+
+    monkeypatch.setattr(window, "_export_progress", in_progress)
+    monkeypatch.setattr(window, "_finish_export", finishing)
+    path = str(tmp_path / "n.csv")
+    window.run_export(ExportRequest(path=path, fmt="csv", selections=window.timeline.selections(0.0, 10.0), channels=[0, 1],
+                                    scope_label="selection"))
+    assert wait_until(qapp, reached.is_set, timeout=20)
+    assert wait_until(qapp, lambda: window._export_dialog.isVisible(), timeout=10)     # past its minimum duration
+    gate.set()                                                                # the rest of the progress, then "done"
+    assert wait_until(qapp, lambda: "Exported 10,000 rows" in window.statusBar().currentMessage(), timeout=30)
+    assert finished_at == [0] and deepest[0] == 1                             # no event handled inside an update
+    assert window._export_dialog is None and os.path.exists(path)
+
+
 def test_the_export_can_be_cancelled_and_leaves_no_file(qapp, window, synthetic, tmp_path, monkeypatch):
     window.open_file_sync(synthetic["path"])
     gate, reached = _slow_export(monkeypatch, 5)

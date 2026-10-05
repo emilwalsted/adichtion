@@ -129,6 +129,11 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   (`canceled` sets a `threading.Event`; `_export_job` turns it, or the runner's `stale()`, into `ExportCancelled` and
   returns `None`, shown as "Export cancelled."); `report((done, total))` arrives as `progress` and is shown as a percentage.
   `QProgressDialog.cancel()` does not emit `canceled` (only the button does): tests click the button.
+  **Never call `QProgressDialog.setValue` on a dialog that may be showing** (`_export_progress` sets the dialog's
+  `QProgressBar` instead): for a modal dialog it calls `processEvents()`, the worker's `done` is then handled inside
+  the progress slot, `_finish_export` deletes the dialog, and `setValue` returns into freed memory. It segfaulted
+  on the macOS CI runners and only there (a use-after-free that usually reads intact memory);
+  `test_the_export_is_never_finished_from_inside_a_progress_update` checks the nesting, not the crash.
 - **The export dialog remembers** its choices in `QSettings` group `export`; tests point
   `QSettings` at a temp dir (`tests/ui/conftest.py`), never the user's real settings.
 - **One `GraphicsObject` per plot for many lines** (`MarkersItem`, `CursorItem`): they paint

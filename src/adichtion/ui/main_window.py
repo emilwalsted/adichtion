@@ -10,8 +10,8 @@ from typing import Optional
 
 from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMenu, QMessageBox, QProgressDialog,
-                               QSplitter, QToolBar, QWidget, QVBoxLayout)
+from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMenu, QMessageBox, QProgressBar,
+                               QProgressDialog, QSplitter, QToolBar, QWidget, QVBoxLayout)
 
 from .. import __version__, perf
 from ..file import AdichtFile
@@ -710,7 +710,11 @@ class MainWindow(QMainWindow):
         if dlg is None or req is None or total <= 0 or (self._export_cancel is not None and self._export_cancel.is_set()):
             return
         dlg.setLabelText(f"Exporting {req.scope_label} to {os.path.basename(req.path)}… {100 * done // total} %")
-        dlg.setValue(min(999, 1000 * done // total))
+        # the bar itself, never QProgressDialog.setValue: once a modal dialog is shown, that runs the event loop, the
+        # worker's "done" is then handled in here and the dialog deleted under its own setValue (a crash on macOS)
+        bar = dlg.findChild(QProgressBar)
+        if bar is not None:
+            bar.setValue(min(999, 1000 * done // total))
 
     def _finish_export(self, result, error) -> None:
         dlg, self._export_dialog = self._export_dialog, None
