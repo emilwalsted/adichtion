@@ -185,5 +185,11 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
   `QGuiApplication` icon: the packaged app is covered by its `CFBundleIconFile`, a run from
   source by `logo.dock_icon()` (large full-logo pixmaps only). Keep both, or `MainWindow`'s
   `app_icon()` (16 px first) can end up in the Dock under a non-bundled Python.
+- **`theme.apply_theme` is a no-op for an application that already has the theme** (a mark on the application
+  object, valid while its style sheet is the one set with it). `setStyle`, `setPalette` and `setStyleSheet` on the
+  application polish every widget alive even when nothing changed: `main()` called inside the test suite spent 3.2 s
+  there on the Mac (over 800 widgets left by earlier tests, 2 ms alone), enough to run
+  `test_app_main_opens_the_file_from_the_command_line` out of its 15 s on the Windows runners now and then. Don't set
+  an application-wide style, palette or sheet anywhere else.
 - Tests grab the widgets offscreen (`widget.grab().save(...)`) when a look needs checking;
   the platform plugin prints "does not support propagateSizeHints", which is noise.

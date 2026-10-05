@@ -349,6 +349,33 @@ def _build_palette(t: dict):
     return p
 
 
+_APPLIED_PROPERTY = "_adichtion_theme"
+
+
+def _apply_to_application(app, tokens: dict, sheet: str) -> None:
+    try:
+        app.setStyle("Fusion")
+    except Exception:
+        pass
+    try:
+        f = app.font()
+        if f.pointSizeF() > 0:
+            f.setPointSizeF(max(f.pointSizeF(), 10.5))
+        else:
+            f.setPixelSize(14)
+        app.setFont(f)
+    except Exception:
+        pass
+    try:
+        app.setPalette(_build_palette(tokens))
+    except Exception:
+        pass
+    try:
+        app.setStyleSheet(sheet)
+    except Exception:
+        pass
+
+
 def apply_theme(app) -> str:
     """Fusion + palette + style sheet + base font + pyqtgraph defaults.  Never raises."""
     global _ACTIVE, _IS_DARK
@@ -357,34 +384,34 @@ def apply_theme(app) -> str:
         _IS_DARK = dark
         tokens = _DARK if dark else _LIGHT
         _ACTIVE = dict(tokens)
+        sheet = ""
         try:
-            app.setStyle("Fusion")
-        except Exception:
-            pass
-        try:
-            f = app.font()
-            if f.pointSizeF() > 0:
-                f.setPointSizeF(max(f.pointSizeF(), 10.5))
-            else:
-                f.setPixelSize(14)
-            app.setFont(f)
-        except Exception:
-            pass
-        try:
-            app.setPalette(_build_palette(tokens))
-        except Exception:
-            pass
-        try:
-            app.setStyleSheet(_QSS.safe_substitute(dict(
+            sheet = _QSS.safe_substitute(dict(
                 tokens,
                 check_icon=_icon_path("check", tokens["accent_fg"]),
                 grip_icon=_icon_path("grip", tokens["text_muted"]),
                 arrow_up=_icon_path("up", tokens["text"]),
                 arrow_down=_icon_path("down", tokens["text"]),
                 arrow_up_dim=_icon_path("up", tokens["disabled_fg"]),
-                arrow_down_dim=_icon_path("down", tokens["disabled_fg"]))))
+                arrow_down_dim=_icon_path("down", tokens["disabled_fg"])))
         except Exception:
             pass
+        # Applying the same theme again is a no-op: a style, a palette or a style sheet set on the application
+        # polishes every widget alive, also when nothing changed (seconds in a process that has built hundreds of
+        # widgets, as the test suite has by the time it runs main()).  The mark is on the application object itself
+        # and counts only while its style sheet is still the one that was set with it.
+        mark = "dark" if dark else "light"
+        applied = False
+        try:
+            applied = bool(sheet) and app.property(_APPLIED_PROPERTY) == mark and app.styleSheet() == sheet
+        except Exception:
+            pass
+        if not applied:
+            _apply_to_application(app, tokens, sheet)
+            try:
+                app.setProperty(_APPLIED_PROPERTY, mark)
+            except Exception:
+                pass
         style_pyqtgraph()
         return "dark" if dark else "light"
     except Exception:
