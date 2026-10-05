@@ -306,12 +306,21 @@ def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic, monkeypa
         tops = [w for w in qapp.topLevelWidgets() if w.isVisible()]
         seen["splash"] |= any(isinstance(w, QSplashScreen) for w in tops)
         wins = [w for w in tops if w.__class__.__name__ == "MainWindow"]
+        if wins:
+            seen.setdefault("first_window_ms", int((time.monotonic() - t0) * 1000))
         if (not wins or wins[0].file is None) and time.monotonic() - t0 < 15:      # the file opens on a worker thread
             QTimer.singleShot(50, poll)
             return
         seen["n"] = len(wins)
         seen["file"] = os.path.basename(wins[0].file.path) if wins and wins[0].file else None
         seen["revealed_ms"] = int((time.monotonic() - t0) * 1000)
+        # what the window was doing, for the failure message (this test has timed out on the Windows runners)
+        seen["state"] = {"first_window_ms": seen.get("first_window_ms"),
+                         "status": wins[0].statusBar().currentMessage() if wins else None,
+                         "open_job": wins[0]._open_job if wins else None,
+                         "tops": [f"{type(w).__name__}:{w.informativeText()[:300]}" if isinstance(w, QMessageBox)
+                                  else type(w).__name__ for w in tops],
+                         "windows": sum(w.__class__.__name__ == "MainWindow" for w in qapp.topLevelWidgets())}
         for w in wins:
             w.close()
             w.deleteLater()
@@ -319,7 +328,7 @@ def test_app_main_opens_the_file_from_the_command_line(qapp, synthetic, monkeypa
 
     QTimer.singleShot(50, poll)
     assert appmod.main(["adichtion", synthetic["path"]]) == 0
-    assert seen["splash"] and seen["n"] == 1 and seen["file"] == os.path.basename(synthetic["path"])
+    assert seen["splash"] and seen["n"] == 1 and seen["file"] == os.path.basename(synthetic["path"]), seen
     assert seen["revealed_ms"] >= appmod.MIN_SPLASH_MS - 50
     assert not any(isinstance(w, QSplashScreen) and w.isVisible() for w in qapp.topLevelWidgets())
     assert appmod.startup_path(["x", "nope.adicht"]) is None
