@@ -6,10 +6,24 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Every export RespMech reads is now a file RespMech can load.** New formats: a tab-separated table
+  (`--format tsv`, a `.txt` with one header line) and MATLAB (`--format mat`, level 5, which RespMech and
+  scipy read; one `data_block<N>` matrix per block with the channels as rows, plus `titles_block<N>`,
+  `units_block<N>`, `samplerate_block<N>`, `record_block<N>`). Both are in the export dialog. The README no
+  longer claims that LabChart-style text is readable by RespMech: it is not a table.
 - Right-click a row in the file panel's Comments or Blocks table and choose *Mark interval*: the cursor goes to
   the start, the interval is selected and every graph is zoomed to show all of it. For a comment the interval
   runs up to the next comment (to the end of the file for the last one); for a block it is the whole
   block. The Channels table has no such menu.
+
+### Fixed
+- CSV with a decimal comma (`--decimal ,`, the dialog's "comma, e.g. Danish Excel") now separates the fields with
+  `;`. Before it used a comma for both, and no program could read the file.
+- A comment or channel title with a line break, a tab or the file's own separator no longer breaks a row of a
+  text, CSV or tab-separated export (each becomes a space; a comma in a CSV comment is still a semicolon).
+- The Excel export is a plain table again: the sheet's first row is the column titles. The block, start, selection
+  start and interval used to sit in a row above them, which made the first row of data a text row to Excel
+  readers such as pandas and RespMech; they are now in cells to the right of the table.
 
 ### Changed
 - The splash screen no longer names the GitHub repository.

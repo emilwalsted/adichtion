@@ -22,7 +22,9 @@ from .timeline import Timeline
 
 SETTINGS_GROUP = "export"
 SCOPES = ("file", "block", "selection")
-FORMATS = [("Text, LabChart style (.txt)", "txt", "txt"), ("CSV (.csv)", "csv", "csv"), ("Excel workbook (.xlsx)", "xlsx", "xlsx")]
+FORMATS = [("Text, LabChart style (.txt)", "txt", "txt"), ("CSV (.csv)", "csv", "csv"),
+           ("Tab-separated table (.txt)", "tsv", "txt"), ("Excel workbook (.xlsx)", "xlsx", "xlsx"),
+           ("MATLAB (.mat)", "mat", "mat")]
 
 
 @dataclass
@@ -140,6 +142,8 @@ class ExportDialog(QDialog):
         self._restore_options()
         for w in (self.format, self.rb_file, self.rb_block, self.rb_sel, self.rb_shown, self.rb_all, self.rb_pick):
             (w.currentIndexChanged if isinstance(w, QComboBox) else w.toggled).connect(lambda *_a: self._update_note())
+        self.format.currentIndexChanged.connect(lambda *_a: self._sync_options())
+        self._sync_options()
         self._update_note()
         self.resize(520, 640)
 
@@ -245,18 +249,28 @@ class ExportDialog(QDialog):
         chans = self.channels()
         return upsampling_notice(self.file, self.selections(), chans) if chans else None
 
+    def _sync_options(self) -> None:
+        """A MATLAB file has no decimal separator, header lines or comment column; Excel no decimal
+        separator (Excel applies its own); only LabChart-style text has the header lines of its own kind."""
+        fmt = self.fmt()
+        self.decimal.setEnabled(fmt in ("txt", "csv", "tsv"))
+        self.cb_header.setEnabled(fmt != "mat")
+        self.cb_comments.setEnabled(fmt != "mat")
+
     def _update_note(self) -> None:
         per_table = self._table_rows()
         rows = sum(per_table)
         n_sel = len(per_table)
         text = f"{rows:,} rows × {len(self.channels())} channels"
-        if self.fmt() == "xlsx":
+        if self.fmt() == "mat":
+            text += f", one matrix per block ({n_sel}) with the channels as rows (data_block1, data_block2 …)"
+        elif self.fmt() == "xlsx":
             biggest = max(per_table, default=0)
             text += f", one sheet per block ({n_sel})"
             if biggest + 1 > XLSX_MAX_ROWS:
                 text += f". A block of {biggest:,} rows does not fit an Excel sheet ({XLSX_MAX_ROWS - 1:,} rows): choose text or CSV, or a shorter selection."
         elif n_sel > 1:
-            text += ", " + ("the header repeated at every block" if self.fmt() == "txt" else "with a block column")
+            text += ", " + ("the header repeated at every block" if self.fmt() == "txt" else "with a block column first (RespMech reads the first block only: export one block at a time for it)")
         note = self.upsampling_note()
         if note:
             text += ".\n" + note
