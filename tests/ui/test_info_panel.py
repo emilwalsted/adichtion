@@ -58,7 +58,8 @@ def test_comments_and_blocks_of_a_big_file_are_listed_lazily(qapp, panel, tmp_pa
     qapp.processEvents()
     assert took < 0.15, f"set_file took {took * 1e3:.0f} ms for {n} comments"       # ~2 ms here; one item per cell took ~270
     assert panel.comments.rowCount() == n and panel.blocks.rowCount() == 4
-    assert panel.tabs.tabText(2) == f"Comments ({n})" and panel.tabs.tabText(0) == "Blocks (4)"
+    assert panel.tabs.tabText(0) == f"Comments ({n})" and panel.tabs.tabText(2) == "Blocks (4)"
+    assert panel.tabs.tabText(1) == "Channels (1)" and panel.tabs.currentIndex() == 0   # Comments first and shown at start
     # row and cell content, first, middle and last row
     for row in (0, n // 2, n - 1):
         m = tl.comments[row]
@@ -162,3 +163,18 @@ def test_a_late_clip_count_for_an_earlier_file_is_dropped(qapp, panel, tmp_path)
     panel._video_counted.emit(token - 1, 1)
     qapp.processEvents()
     assert panel.summary.text() == n_text
+
+
+def test_video_column_only_when_a_clip_is_attached(qapp, panel, tmp_path):
+    from adichtion.ui.info_panel import _VIDEO_COLUMN
+    f = AdichtFile(_many_comments(tmp_path, n_records=2, per_record=3))
+    panel.set_file(f, Timeline(f))
+    assert panel.blocks.isColumnHidden(_VIDEO_COLUMN)
+    assert not any(panel.blocks.isColumnHidden(c) for c in range(_VIDEO_COLUMN))
+    d = tmp_path / "v"
+    d.mkdir()
+    fv = AdichtFile(_many_comments(d, n_records=2, per_record=3, video=True))
+    panel.set_file(fv, Timeline(fv))
+    assert not panel.blocks.isColumnHidden(_VIDEO_COLUMN)
+    panel.set_file(f, Timeline(f))                                     # and hidden again for the next file
+    assert panel.blocks.isColumnHidden(_VIDEO_COLUMN)

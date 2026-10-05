@@ -6,6 +6,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- The splash screen no longer names the GitHub repository.
+- The file panel opens on Comments, then Channels, then Blocks. The Blocks table's Video column is shown only
+  when the file has video clips attached.
 - Scrolling and zooming keep the real curves on screen. Before, a view that reached past what had been decoded
   was redrawn as the coarse block outline (one step per storage block, 4 s at 4 kHz) until you stopped moving,
   which showed even on a slow scroll. Now the decoded curve stays, only the strip it does not reach is drawn the
