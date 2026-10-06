@@ -13,7 +13,16 @@ Daterede beslutninger og afgjorte punkter. Nyeste øverst.
   flyttet ind under 1.0.0. Datoen er rettet til 2026-10-06, linjen om at splash-skærmen ikke længere viser repoet er fjernet, og en
   tom `## [Unreleased]` står øverst igen.
 - **PyPI venter på Emils godkendelse:** miljøet `pypi` får Emil som påkrævet godkender, før tagget sættes, så installerne udgives
-  straks, mens PyPI-jobbet venter på et klik i Actions (som for RespMech). En PyPI-version kan ikke erstattes.
+  straks, mens PyPI-jobbet venter på et klik i Actions. En PyPI-version kan ikke erstattes.
+- **README og release-noterne er rettet før tagget**, fordi README bliver PyPI-siden for 1.0.0: (a) Windows- og macOS-installerne
+  har ingen kommandolinje (macOS-appen sender output til systemloggen via briefcases `std-nslog`, Windows-MSI'en er en GUI-stub
+  uden konsol og uden PATH); kommandolinjen kommer med Ubuntu-pakken og Python-pakken. (b) Ubuntu-pakken bruger Ubuntu 24.04's
+  Python 3.12 og virker ikke på Debian, så "Debian-based" er rettet. (c) RespMechs app holder kolonne 1 til tid, så første kanal i
+  en MATLAB-eksport kan ikke tildeles dér; README anbefaler CSV, tab-tabellen eller Excel til appen. (d) `pip install adichtion`
+  alene kan ikke skrive Excel eller videoklip (openpyxl og ffmpeg kommer med `ui`). (e) `Documentation` i `[project.urls]` peger på
+  respmech.dk/adichtion.html.
+- **Åbne produktvalg, ikke gjort:** en kommandolinje i Windows- og macOS-installerne, og en tidsrække i MATLAB-eksporten (eller en
+  ændring i RespMech), så første kanal kan bruges i RespMechs app.
 
 ## 2026-10-05 (7) — Kommandolinjen kan skrive videoklip
 

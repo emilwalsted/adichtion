@@ -39,22 +39,26 @@ the *Build installers* workflow and attached to every
 
 | Platform | File | Notes |
 |---|---|---|
-| Windows | `adichtion-*.msi` | unsigned: if SmartScreen warns, *More info ▸ Run anyway* |
-| macOS (Apple Silicon) | `adichtion-*.dmg` | drag to Applications; an ad-hoc-signed build needs right-click ▸ *Open* the first time |
-| Ubuntu 24.04 / Debian-based | `adichtion_*_amd64.deb` | `sudo apt install ./adichtion_*_amd64.deb` |
+| Windows | `adichtion-*.msi` | if SmartScreen warns, *More info ▸ Run anyway* |
+| macOS (Apple Silicon) | `adichtion-*.dmg` | drag to Applications (Developer ID-signed and notarised; an ad-hoc test build needs right-click ▸ *Open* the first time) |
+| Ubuntu 24.04 and distributions based on it | `adichtion_*_amd64.deb` | `sudo apt install ./adichtion_*_amd64.deb` |
 
-Each bundles its own Python and libraries; `.adicht` files open in the app by
-double-click, and the installed binary is also the command line
-(`adichtion info FILE`). LabChart for Mac documents have no extension, so
-they are not registered for double-click: open them with *File > Open* (the
-file dialog's second filter shows all files) or name them on the command line.
+The Windows and macOS installers bundle their own Python and libraries; the
+Ubuntu package uses Ubuntu 24.04's Python 3.12, which apt installs with it. On
+Windows and macOS, `.adicht` files open in the app by double-click; on Ubuntu,
+use *File > Open*. The Windows and macOS installers contain the app only: for the
+command line there, install the Python package (below). On Ubuntu the installed
+`adichtion` is also the command line (`adichtion info FILE`). LabChart for Mac
+documents have no extension, so they are not registered for double-click: open
+them with *File > Open* (the file dialog's second filter shows all files) or name
+them on the command line.
 See [`docs/RELEASING.md`](docs/RELEASING.md) for how the installers are built.
 
 **From PyPI** (the library and the command line; the `ui` extra adds the app):
 
 ```
-pip install adichtion            # the library and the command line (numpy only)
-pip install "adichtion[ui]"      # plus the viewer: then `adichtion` alone starts the app
+pip install adichtion            # the library and the command line (numpy only; Excel export also needs openpyxl, video clips ffmpeg)
+pip install "adichtion[ui]"      # plus the viewer, openpyxl and ffmpeg: then `adichtion` alone starts the app
 ```
 
 **From source** (the library, the command line and, with `ui`, the app):
@@ -176,9 +180,11 @@ separated by `;`, as European Excel and RespMech expect), a tab-separated table
 (`--format tsv`, one header line), an Excel workbook (one sheet per block, a plain
 table with the block, start and interval to the right of it) or a MATLAB level-5
 file (one `data_block<N>` matrix per block, the channels as rows).
-**RespMech reads the CSV, tab-separated, Excel and MATLAB exports as they are**
-(for MATLAB choose the `windows` variant; time is column 1 of a table, and channel
-1 is column 1 of a MATLAB file). For RespMech export one block at a time: with several
+**RespMech reads the CSV, tab-separated and Excel exports as they are** (time is
+column 1, so channel 1 is column 2 in RespMech's column settings). A MATLAB export
+has no time column: RespMech reads it with the `windows` variant, but RespMech's app
+keeps column 1 for time, so the first channel of a MATLAB export cannot be assigned
+there; for the app, use CSV, the tab-separated table or Excel. For RespMech export one block at a time: with several
 blocks a CSV or tab table gets a leading `block` column that shifts the column numbers,
 and RespMech reads only the first Excel sheet and `data_block1`. Keep the header on
 (`--no-header` makes RespMech take the first row of data as column titles). The LabChart-style text is not a table, and

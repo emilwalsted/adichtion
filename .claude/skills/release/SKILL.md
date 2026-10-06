@@ -34,8 +34,10 @@ Run workflow*) only produces artifacts and needs no permission.
   `scripts/sign-msi-certum.sh vX.Y.Z` (ported from RespMech); it refuses to run while the
   build for that tag is still in flight, since that run would overwrite the signed asset.
 - The packaged binary is `python -m adichtion`: the app without arguments, the CLI with a
-  subcommand. Smoke-test an installer with `adichtion --version`, `adichtion info FILE` and a
-  plain start.
+  subcommand. Only the Ubuntu `.deb` gives a usable command line (`/usr/bin/adichtion`): the macOS
+  app sends stdout/stderr to the unified log (briefcase's `std-nslog`) and the Windows MSI is a GUI
+  stub without a console and not on the PATH. Smoke-test the `.deb` with `adichtion --version` and
+  `adichtion info FILE`, the dmg and MSI with a plain start.
 - A `.adicht` double-click opens the app (document type registered by briefcase; macOS
   `FileOpen` handled in `ui/app.py`). This is the part only a real Mac or Windows machine can
   verify; the headless tests cannot.

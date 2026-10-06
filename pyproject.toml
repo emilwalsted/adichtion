@@ -47,6 +47,7 @@ Homepage = "https://github.com/emilwalsted/adichtion"
 Repository = "https://github.com/emilwalsted/adichtion"
 Changelog = "https://github.com/emilwalsted/adichtion/blob/main/CHANGELOG.md"
 Issues = "https://github.com/emilwalsted/adichtion/issues"
+Documentation = "https://www.respmech.dk/adichtion.html"
 
 [tool.hatch.version]
 path = "src/adichtion/__init__.py"
