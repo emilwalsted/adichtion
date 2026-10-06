@@ -5,18 +5,16 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-- **`adichtion export --video original|h264`** writes the video clip of the exported interval beside the data file, as the
-  export dialog's *Video* box does (`original` copies without re-encoding and may start at the previous key frame; `h264`
-  re-encodes to MP4; several blocks give one clip). It needs ffmpeg (the `imageio-ffmpeg` package, an `ffmpeg` on the PATH,
-  or `ADICHTION_FFMPEG`). Nothing is left behind when the clip or the data export fails.
-
-## [1.0.0] – 2026-10-05
+## [1.0.0] – 2026-10-06
 
 First stable release: the library, the command line and the desktop app, as installers for Windows, macOS and
 Ubuntu and as a package on PyPI.
 
 ### Added
+- **`adichtion export --video original|h264`** writes the video clip of the exported interval beside the data file, as the
+  export dialog's *Video* box does (`original` copies without re-encoding and may start at the previous key frame; `h264`
+  re-encodes to MP4; several blocks give one clip). It needs ffmpeg (the `imageio-ffmpeg` package, an `ffmpeg` on the PATH,
+  or `ADICHTION_FFMPEG`). Nothing is left behind when the clip or the data export fails.
 - **Export the video clip with an interval.** When the blocks you export have a video file, the export dialog has a
   *Video* box: tick it to also write the matching clip, either in the file's original format (copied, nothing
   re-encoded; it can start a little before the interval, at the video's previous key frame) or as H.264 in an MP4
@@ -98,7 +96,6 @@ Ubuntu and as a package on PyPI.
   install the viewer instead of ending in a `ModuleNotFoundError` traceback.
 
 - **The Video menu shows only when the open file has a video.** Without one (or with no file open) the menu is hidden instead of greyed out.
-- The splash screen no longer names the GitHub repository.
 - The file panel opens on Comments, then Channels, then Blocks. The Blocks table's Video column is shown only
   when the file has video clips attached.
 - Scrolling and zooming keep the real curves on screen. Before, a view that reached past what had been decoded

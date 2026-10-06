@@ -179,7 +179,7 @@ def test_splash_svg_has_the_brand_and_the_version():
     assert ">adichtion<" in svg and "v9.9.9" in svg and "Emil Ingerslev Walsted" in svg
     assert splash.AMBER in svg and splash.INK in svg
     assert svg.count("<polyline") == 1                              # one ink trace
-    assert "github" not in svg.lower()                              # the splash names no repository
+    assert "github.com/emilwalsted/adichtion" in svg                # the splash names the repository
 
 
 def test_make_splash_builds_on_the_paper(qapp):

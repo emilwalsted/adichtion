@@ -2,6 +2,19 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-06 — Splash-skærmen viser repoet igen, og 1.0.0 tagges
+
+Ønske: før release skal splash-skærmen tilbage til den gamle, hvor GitHub-repoet fremgik.
+
+- **Repo-linjen er tilbage** nederst til højre på splash-skærmen (`github.com/emilwalsted/adichtion`). Den blev fjernet
+  2026-10-05, mens repoet var privat; nu er det offentligt. `ui/splash.py` er igen identisk med versionen før fjernelsen, så
+  taglinen fra samme dag er bevaret, og `tests/ui/test_logo.py` kræver nu adressen i stedet for at forbyde den.
+- **CHANGELOG:** punktet om `export --video` stod under `[Unreleased]`, men koden er på `main` og kommer med i tagget, så det er
+  flyttet ind under 1.0.0. Datoen er rettet til 2026-10-06, linjen om at splash-skærmen ikke længere viser repoet er fjernet, og en
+  tom `## [Unreleased]` står øverst igen.
+- **PyPI venter på Emils godkendelse:** miljøet `pypi` får Emil som påkrævet godkender, før tagget sættes, så installerne udgives
+  straks, mens PyPI-jobbet venter på et klik i Actions (som for RespMech). En PyPI-version kan ikke erstattes.
+
 ## 2026-10-05 (7) — Kommandolinjen kan skrive videoklip
 
 Ønske: kommandolinje-interface til adichtion, "som med RespMech, så vidt muligt".
