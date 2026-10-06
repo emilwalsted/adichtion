@@ -179,9 +179,9 @@ distribution" on 2026-10-05; that does not prove nobody else has registered it).
 
 What goes in the package: the wheel holds `src/adichtion` only (no `CLAUDE.md` files). The sdist also holds the tests,
 the docs, the logo sources and the installer icons (the tests read them), but not `.claude/`, `.github/` or any
-`CLAUDE.md`. The PyPI page is the README: its relative links and the logo image do not resolve on PyPI while the
-repository is private, and PyPI never resolves relative links or images, so they stay broken even once the repository
-is public, until the README is given absolute URLs (github.com/.../blob/main/..., raw.githubusercontent.com/...).
+`CLAUDE.md`. The PyPI page is the README: PyPI never resolves relative links or images, so its relative links and
+the logo image stay broken on PyPI until the README is given absolute URLs (github.com/.../blob/main/...,
+raw.githubusercontent.com/...).
 
 Things to know before the first tag: bump first (section 1), or the *Build* job fails by design (built version must
 equal the tag, and `CHANGELOG.md` needs the `## [X.Y.Z]` entry). The build also refuses a tag whose commit is not on

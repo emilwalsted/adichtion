@@ -2,7 +2,7 @@
 
 Project memory for **adichtion**: a reader (and, later, a desktop viewer/exporter
 app) for ADInstruments LabChart `.adicht` files, built on a reverse-engineered
-format description. Private repo `emilwalsted/adichtion`, GPL-3.0-or-later.
+format description. Public repo `emilwalsted/adichtion`, GPL-3.0-or-later.
 Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 (`emilwalsted/respmech`): same layering, packaging and release discipline.
 

@@ -56,7 +56,7 @@ packages = ["src/adichtion"]
 exclude = ["**/CLAUDE.md"]
 
 # The sdist keeps the tests (and what they read: the logo SVGs, the installer icons) so that
-# `pytest` runs from it, but not the agent notes or the CI workflows.
+# `pytest` runs from it, but not the CLAUDE.md notes or the CI workflows.
 [tool.hatch.build.targets.sdist]
 exclude = ["**/CLAUDE.md", "/.claude", "/.github"]
 
