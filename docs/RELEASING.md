@@ -57,6 +57,18 @@ git push origin vX.Y.Z
 
 The release is created non-draft, so this *is* the publication step: ask first.
 
+The last step of `publish-release` tells the website repo (`emilwalsted/respmech-website`) to
+re-publish, by sending a `repository_dispatch` of type `adichtion-release`, so the Adichtion
+page shows the new version. It needs the repository secret `WEBSITE_DISPATCH_TOKEN`: a
+fine-grained token with *Contents: read and write* on `respmech-website` only. The step is
+not fatal: without the secret it prints a notice and skips, and an HTTP error is a warning;
+the release itself is unaffected, and the page then picks the version up at the website's
+next publish.
+
+The Linux jobs that install Qt libraries with apt (*Tests*, the PyPI *Test gate*) and the
+`.deb` job run on `ubuntu-24.04`, not `ubuntu-latest`, so a new default runner image cannot
+change the package names under them.
+
 ### Locally
 
 ```
