@@ -7,7 +7,10 @@ on:
 
 jobs:
   pytest:
-    runs-on: ${{ matrix.os }}
+    # The matrix label stays "ubuntu-latest" so the check names do not change, but the runner
+    # is pinned: the Linux leg installs Qt system libraries with apt, and package names can
+    # differ on a newer default image.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
