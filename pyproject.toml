@@ -28,12 +28,14 @@ classifiers = [
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
-# the desktop viewer; openpyxl for Excel export, OpenCV for the video frames. OpenCV below 4.13:
+# the desktop viewer. PySide6 6.12.0 is excluded: on Python 3.10 and 3.11 its QPainter.setPen and
+# setRenderHint give back one reference to None per call, so the interpreter aborts after a few thousand
+# paints (docs/beslutninger.md 2026-10-16). openpyxl for Excel export, OpenCV for the video frames. OpenCV below 4.13:
 # 4.13 bundles FFmpeg 8, whose scaler refuses interlaced frames, and the DV movies of LabChart
 # for Mac come back black (docs/beslutninger.md 2026-09-29 (2)). imageio-ffmpeg brings the ffmpeg program
 # that cuts the video clip of an exported interval (adichtion.videoclip; OpenCV's own FFmpeg has no H.264
 # encoder).
-ui = ["PySide6>=6.6", "pyqtgraph>=0.13", "openpyxl>=3.1", "opencv-python-headless>=4.8,<4.13",
+ui = ["PySide6>=6.6,!=6.12.0", "pyqtgraph>=0.13", "openpyxl>=3.1", "opencv-python-headless>=4.8,<4.13",
       "imageio-ffmpeg>=0.5"]
 dev = ["pytest>=7.0", "openpyxl>=3.1"]
 
@@ -99,7 +101,7 @@ test_sources = ["tests"]
 # explicitly so a bundle can never silently drop one.
 requires = [
     "numpy>=1.24",
-    "PySide6>=6.6",
+    "PySide6>=6.6,!=6.12.0",
     "pyqtgraph>=0.13",
     "openpyxl>=3.1",
     "opencv-python-headless>=4.8,<4.13",
