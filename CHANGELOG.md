@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- PySide6 6.12.0 is excluded from the `ui` extra: on Python 3.10 and 3.11 it releases one reference to `None` on every
+  `QPainter.setPen` and `setRenderHint` call, and the viewer aborted with "deallocating None" after a few thousand paints.
+
 ## [1.0.0] – 2026-10-06
 
 First stable release: the library, the command line and the desktop app, as installers for Windows, macOS and

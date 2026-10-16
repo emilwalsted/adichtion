@@ -2,6 +2,19 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-10-16 — PySide6 6.12.0 is excluded (it aborts on Python 3.10 and 3.11)
+
+The CI job on Ubuntu with Python 3.10 died with "Aborted (core dumped)" part-way through the suite; the other five jobs were green.
+
+- **Cause, measured:** with PySide6 6.12.0 on Python 3.10 and 3.11, `QPainter.setPen` and `QPainter.setRenderHint` each give back one
+  reference to `None` per call (`sys.getrefcount(None)` falls by exactly the number of calls). After a few thousand calls the
+  count reaches zero and the interpreter stops with `Fatal Python error: none_dealloc: deallocating None`. The crash site moves
+  from run to run (the viewer repaints pyqtgraph axes, which call both methods), which is why it looked random. Python 3.12 is
+  unaffected because `None` is immortal there; 6.11.1 is unaffected on 3.10.
+- **Decision:** `PySide6>=6.6,!=6.12.0` in the `ui` extra and in the briefcase `requires` (a test keeps them equal), so a later
+  6.12.x that fixes it is allowed. A regression test counts the references to `None` over many painter calls.
+- **Not done:** no test was skipped or quarantined.
+
 ## 2026-10-06 — Splash-skærmen viser repoet igen, og 1.0.0 tagges
 
 Ønske: før release skal splash-skærmen tilbage til den gamle, hvor GitHub-repoet fremgik.
