@@ -192,22 +192,57 @@ def test_nothing_is_decoded_while_the_user_is_active(f):
         t.join(5)
 
 
-def test_an_interaction_pauses_a_running_sweep_at_once(f):
-    act = Activity()
+class FrozenClock:
+    """A clock that only moves when told to: ``Activity.quiet_for`` then does not depend on the runner's speed."""
+
+    def __init__(self):
+        self.now = 100.0
+
+    def __call__(self):
+        return self.now
+
+
+class WatchedActivity(Activity):
+    """Counts the ``quiet_for`` calls that answered no: they only happen while the job waits for the user."""
+
+    def __init__(self, clock):
+        super().__init__(clock)
+        self.refusals = 0
+
+    def quiet_for(self, seconds):
+        quiet = super().quiet_for(seconds)
+        if not quiet:
+            self.refusals += 1
+        return quiet
+
+
+def test_an_interaction_pauses_a_running_sweep_at_once(f, monkeypatch):
+    real = f.decode_block
+    monkeypatch.setattr(f, "decode_block", lambda *a, **k: (time.sleep(0.02), real(*a, **k))[1])   # also on a slow runner
+    clock = FrozenClock()
+    act = WatchedActivity(clock)
     w = warmer(f, activity=act, idle_s=0.4)
     stop = threading.Event()
     t = threading.Thread(target=lambda: w.run(stop.is_set), daemon=True)
     t.start()
-    try:
-        end = time.monotonic() + 5
-        while w.decoded < 3 and time.monotonic() < end:
+
+    def wait_for(cond, what):
+        end = time.monotonic() + 10
+        while not cond() and time.monotonic() < end:
             time.sleep(0.005)
-        assert w.decoded >= 3
+        assert cond(), what
+
+    try:
+        wait_for(lambda: w.decoded >= 3, "the sweep did not start")
         act.touch()
-        time.sleep(0.05)                                           # a block or two may be in flight
+        # a block in flight may finish, but once the job is waiting for the user (it has been refused twice) nothing
+        # more may follow, however long the user stays quiet
+        wait_for(lambda: act.refusals >= 2, "the job did not wait for the user")
         n = w.decoded
-        time.sleep(0.15)
-        assert w.decoded == n                                      # quiet for less than idle_s: paused
+        time.sleep(0.3)
+        assert w.decoded == n                                      # paused: the quiet period never started
+        clock.now += 1.0                                           # the user has now been quiet for longer than idle_s
+        wait_for(lambda: w.decoded > n, "the sweep did not resume")
     finally:
         stop.set()
         t.join(5)
