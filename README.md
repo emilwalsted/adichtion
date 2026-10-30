@@ -31,6 +31,8 @@ capture stamp LabChart wrote for every frame. See
 The *adichtion* desktop app (a channel viewer and exporter in the mould of
 [RespMech](https://github.com/emilwalsted/respmech)) is built on it, see below.
 
+Screenshots, installers and a user guide: [www.respmech.dk/adichtion.html](https://www.respmech.dk/adichtion.html).
+
 ## Install
 
 **The desktop app** comes as a native installer for each platform, built by
