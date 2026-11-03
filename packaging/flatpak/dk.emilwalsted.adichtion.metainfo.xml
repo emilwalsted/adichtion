@@ -63,6 +63,9 @@
   </requires>
   <releases>
     <release version="1.0.0" date="2026-10-06">
+      <description>
+        <p>First release: the viewer, export as text, CSV or Excel, video clips and the recovered definitions of calculated channels.</p>
+      </description>
       <url type="details">https://github.com/emilwalsted/adichtion/releases/tag/v1.0.0</url>
     </release>
   </releases>

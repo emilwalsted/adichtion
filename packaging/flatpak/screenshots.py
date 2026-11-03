@@ -17,7 +17,7 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
-os.environ.setdefault("ADICHTION_THEME", "light")
+os.environ["ADICHTION_THEME"] = "light"           # the published images, whatever the user prefers
 os.environ["ADICHTION_SETTINGS_APP"] = "adichtion-screenshots"   # never the user's own settings
 
 HERE = Path(__file__).resolve().parent
@@ -69,6 +69,9 @@ def main() -> int:
     from PySide6.QtGui import QPainter
     from PySide6.QtWidgets import QApplication
 
+    OUT.mkdir(exist_ok=True)
+    for name in ("viewer.png", "export.png"):
+        (OUT / name).unlink(missing_ok=True)          # a failed run must not pass on old images
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["HOME"] = os.environ["XDG_CONFIG_HOME"] = tmp
         for fmt in (QSettings.NativeFormat, QSettings.IniFormat):
@@ -88,12 +91,13 @@ def main() -> int:
             print("could not open the synthetic recording", file=sys.stderr)
             return 1
         pump(app, 2.0)
-        OUT.mkdir(exist_ok=True)
         w.grab().save(str(OUT / "viewer.png"))
 
         def grab_dialog() -> None:
             dlg = app.activeModalWidget()
-            if dlg is not None:
+            if dlg is None:
+                return
+            try:
                 pump(app, 0.5)
                 # offscreen windows are not composited: paint the dialog onto the window by hand
                 shot = w.grab()
@@ -103,9 +107,11 @@ def main() -> int:
                                    (shot.height() - inner.height()) // 2, inner)
                 painter.end()
                 shot.save(str(OUT / "export.png"))
+            finally:
                 dlg.reject()
 
         QTimer.singleShot(500, grab_dialog)
+        QTimer.singleShot(10_000, lambda: app.activeModalWidget() and app.activeModalWidget().reject())  # never hang
         w.export_dialog("file")
         w.close()
         pump(app, 0.3)

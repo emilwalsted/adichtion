@@ -12,14 +12,15 @@ call rewrites, under ``packaging/``:
   MSI's sha256, product code and upgrade code (any older version folder is removed);
 * ``flatpak/python3-modules.json``: adichtion's wheel and the pinned Python dependencies
   (``flatpak/requirements.txt``) with their sha256 from PyPI, per architecture;
-* ``flatpak/dk.emilwalsted.adichtion.yml``: the tag and commit the desktop files come from;
+* ``flatpak/dk.emilwalsted.adichtion.yml``: the tag and commit the icons are taken from;
 * ``flatpak/dk.emilwalsted.adichtion.metainfo.xml``: a ``<release>`` entry for the version.
 
 Only the public REST endpoints of GitHub and PyPI are read (no token). The sha256 of a
 release asset is GitHub's own ``digest``; ``--verify`` downloads each installer and checks
 it. The MSI's product code is read with ``msiinfo`` (msitools) from the downloaded MSI, or
-given with ``--product-code`` where msitools is missing (Windows: Orca, or
-``Get-AppLockerFileInformation``/``msiexec`` tools; see packaging/README.md).
+given with ``--product-code`` and ``--upgrade-code`` where msitools is missing (on Windows,
+Orca shows the MSI's Property table; see packaging/README.md). Every file is written only
+after all lookups have succeeded, so a failed run leaves packaging/ as it was.
 
 Standard library only, except ``--validate`` (``jsonschema`` and ``PyYAML``).
 """
@@ -28,6 +29,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import hashlib
+import http.client
 import json
 import re
 import shutil
@@ -63,8 +65,9 @@ def http_get(url: str) -> bytes:
 
 # -- release data ----------------------------------------------------------------------------
 
-def release_info(version: str, fetch: Fetch = http_get) -> dict:
-    """The GitHub release ``v<version>``: its date and, per asset, the URL and sha256."""
+def release_info(version: str, fetch: Fetch = http_get, need_digest: bool = True) -> dict:
+    """The GitHub release ``v<version>``: its date and, per asset, the URL and sha256 (GitHub's
+    ``digest``; ``None`` where GitHub gives none, allowed only without ``need_digest``)."""
     rel = json.loads(fetch(f"https://api.github.com/repos/{REPO}/releases/tags/v{version}"))
     assets = {}
     for a in rel.get("assets", []):
@@ -74,7 +77,7 @@ def release_info(version: str, fetch: Fetch = http_get) -> dict:
     for name in (DMG.format(v=version), MSI.format(v=version)):
         if name not in assets:
             raise SystemExit(f"release v{version} has no asset {name}")
-        if not assets[name]["sha256"]:
+        if need_digest and not assets[name]["sha256"]:
             raise SystemExit(f"GitHub gives no sha256 for {name}: run again with --verify")
     date = (rel.get("published_at") or rel.get("created_at") or "")[:10]
     return {"version": version, "date": date, "assets": assets}
@@ -94,18 +97,20 @@ def download(url: str, dest: Path) -> str:
     return h.hexdigest()
 
 
-def checked_download(url: str, dest: Path, expected: str, what: str, tries: int = 3) -> None:
-    """Download until the sha256 matches GitHub's; a cut-off transfer gets another try."""
-    got = ""
+def checked_download(url: str, dest: Path, expected: Optional[str], what: str, tries: int = 3) -> str:
+    """Download until the sha256 matches GitHub's and return it; a cut-off transfer gets another
+    try. Without ``expected`` (GitHub gave no digest), two downloads must agree instead."""
+    got, previous = "", None
     for _ in range(tries):
         try:
             got = download(url, dest)
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             got = f"(failed: {exc})"
             continue
-        if got == expected:
+        if got == expected or (expected is None and got == previous):
             print(f"{what} sha256 checked: {got}")
-            return
+            return got
+        previous = got
     raise SystemExit(f"{what} sha256 {got} differs from GitHub's {expected} after {tries} tries")
 
 
@@ -114,7 +119,7 @@ def msi_codes(path: Path) -> dict:
     if shutil.which("msiinfo") is None:
         raise SystemExit("msiinfo (msitools) not found: install it, or pass --product-code and --upgrade-code")
     out = subprocess.run(["msiinfo", "export", str(path), "Property"], check=True,
-                         capture_output=True, text=True).stdout
+                         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
     return parse_msi_properties(out)
 
 
@@ -127,12 +132,16 @@ def parse_msi_properties(text: str) -> dict:
     return props
 
 
-def tag_commit(version: str) -> str:
+def tag_commit(version: str, run=subprocess.run) -> str:
     """The commit the tag ``v<version>`` points at (annotated tags dereferenced)."""
-    out = subprocess.run(["git", "ls-remote", f"https://github.com/{REPO}.git",
-                          f"refs/tags/v{version}", f"refs/tags/v{version}^{{}}"],
-                         check=True, capture_output=True, text=True).stdout
-    refs = dict(reversed(line.split("\t")) for line in out.splitlines() if "\t" in line)
+    out = run(["git", "ls-remote", f"https://github.com/{REPO}.git",
+               f"refs/tags/v{version}", f"refs/tags/v{version}^{{}}"],
+              check=True, capture_output=True, text=True, encoding="utf-8").stdout
+    refs = {}
+    for line in out.splitlines():
+        sha, _, ref = line.partition("\t")
+        if ref:
+            refs[ref.strip()] = sha.strip()
     commit = refs.get(f"refs/tags/v{version}^{{}}") or refs.get(f"refs/tags/v{version}")
     if not commit:
         raise SystemExit(f"tag v{version} not found on GitHub")
@@ -178,10 +187,22 @@ def wheel_fits(filename: str, arch: Optional[str]) -> bool:
     return ok_py or ok_abi3 or ok_none
 
 
+def _glibc(filename: str) -> tuple[int, int]:
+    """The oldest glibc a manylinux wheel asks for (lower is more portable)."""
+    best = (99, 99)
+    for p in _wheel_tags(filename)[2]:
+        m = re.match(r"manylinux_(\d+)_(\d+)_", p)
+        legacy = {"manylinux1": (2, 5), "manylinux2010": (2, 12), "manylinux2014": (2, 17)}
+        v = (int(m.group(1)), int(m.group(2))) if m else legacy.get(p.split("_")[0], best)
+        best = min(best, v)
+    return best
+
+
 def pypi_wheels(name: str, version: str, fetch: Fetch = http_get) -> list[dict]:
     """The wheels the Flatpak needs for one pin: one pure wheel, or one per architecture."""
     data = json.loads(fetch(f"https://pypi.org/pypi/{name}/{version}/json"))
     files = sorted((u for u in data["urls"] if u["packagetype"] == "bdist_wheel"), key=lambda u: u["filename"])
+    # a pure wheel wins; fine for the pins, which ship either a pure wheel or compiled ones
     pure = [u for u in files if wheel_fits(u["filename"], None)]
     if pure:
         u = pure[0]
@@ -191,7 +212,7 @@ def pypi_wheels(name: str, version: str, fetch: Fetch = http_get) -> list[dict]:
         fits = [u for u in files if wheel_fits(u["filename"], arch)]
         if not fits:
             raise SystemExit(f"{name}=={version} has no wheel for CPython 3.{FLATPAK_PYTHON[1:]} on {arch}")
-        u = fits[0]
+        u = min(fits, key=lambda w: (_glibc(w["filename"]), w["filename"]))
         chosen.append({"type": "file", "url": u["url"], "sha256": u["digests"]["sha256"], "only-arches": [arch]})
     return chosen
 
@@ -207,6 +228,8 @@ def flatpak_modules(version: str, pins: list[tuple[str, str]], fetch: Fetch = ht
         "name": "python3-modules",
         "buildsystem": "simple",
         "build-commands": [
+            # replace the base app's own numpy cleanly (see requirements.txt)
+            "pip3 uninstall -y numpy",
             "pip3 install --verbose --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} "
             f"--no-deps --no-build-isolation {spec}"
         ],
@@ -264,8 +287,7 @@ def render_winget(version: str, date: str, msi_url: str, sha256: str, product_co
         + "FileExtensions:\n- adicht\n"
         + (f"ReleaseDate: {date}\n" if date else "")
         + "AppsAndFeaturesEntries:\n"
-        + f"- DisplayName: adichtion\n  Publisher: {PUBLISHER}\n  DisplayVersion: {version}\n"
-        + f"  ProductCode: '{product_code}'\n  UpgradeCode: '{upgrade_code}'\n"
+        + f"- UpgradeCode: '{upgrade_code}'\n"
         + "Installers:\n"
         + f"- Architecture: x64\n  InstallerUrl: {msi_url}\n  InstallerSha256: {sha256.upper()}\n"
         + f"  ProductCode: '{product_code}'\n"
@@ -363,7 +385,9 @@ def validate(fetch: Fetch = http_get) -> int:
                 sub = json.loads((f.parent / mod).read_text(encoding="utf-8"))
                 module_schema = dict(schema, **{"$ref": "#/definitions/module"}) if "definitions" in schema \
                     and "module" in schema["definitions"] else None
-                if module_schema is not None:
+                if module_schema is None:
+                    print(f"skip {mod}: the schema has no module definition")
+                else:
                     mv = jsonschema.validators.validator_for(module_schema)(module_schema)
                     report(f"flatpak {mod}", [f"{'/'.join(map(str, e.path))}: {e.message}"
                                               for e in mv.iter_errors(sub)])
@@ -403,51 +427,50 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not args.version or not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
         ap.error("give the released version as X.Y.Z")
     version = args.version
-    rel = release_info(version)
+    rel = release_info(version, need_digest=not args.verify)
     dmg, msi = rel["assets"][DMG.format(v=version)], rel["assets"][MSI.format(v=version)]
 
+    # 1. every lookup first: a failure here leaves packaging/ untouched
+    codes = {"ProductCode": args.product_code, "UpgradeCode": args.upgrade_code}
     with tempfile.TemporaryDirectory() as tmp:
-        need_msi = args.verify or not (args.product_code and args.upgrade_code)
         if args.verify:
-            checked_download(dmg["url"], Path(tmp) / "a.dmg", dmg["sha256"], "dmg")
+            dmg["sha256"] = checked_download(dmg["url"], Path(tmp) / "a.dmg", dmg["sha256"], "dmg")
             (Path(tmp) / "a.dmg").unlink()
-        codes = {"ProductCode": args.product_code, "UpgradeCode": args.upgrade_code}
-        if need_msi:
-            checked_download(msi["url"], Path(tmp) / "a.msi", msi["sha256"], "msi")
+        if args.verify or not (codes["ProductCode"] and codes["UpgradeCode"]):
+            msi["sha256"] = checked_download(msi["url"], Path(tmp) / "a.msi", msi["sha256"], "msi")
+        if not (codes["ProductCode"] and codes["UpgradeCode"]):
             read = msi_codes(Path(tmp) / "a.msi")
-            if read.get("ProductVersion") and read["ProductVersion"] != version:
+            if read.get("ProductVersion") and read["ProductVersion"].split(".")[:3] != version.split("."):
                 raise SystemExit(f"the MSI says version {read['ProductVersion']}, not {version}")
             codes = {k: codes[k] or read.get(k) for k in codes}
     if not codes["ProductCode"] or not codes["UpgradeCode"]:
         raise SystemExit("could not determine the MSI's ProductCode and UpgradeCode")
 
-    cask = HERE / "homebrew" / "Casks" / "adichtion.rb"
-    cask.parent.mkdir(parents=True, exist_ok=True)
-    cask.write_text(render_cask(version, dmg["sha256"]), encoding="utf-8")
-    print(f"wrote {cask.relative_to(HERE)}")
-
+    flat = HERE / "flatpak"
+    manifest, meta = flat / f"{APP_ID}.yml", flat / f"{APP_ID}.metainfo.xml"
+    writes: dict[Path, str] = {
+        HERE / "homebrew" / "Casks" / "adichtion.rb": render_cask(version, dmg["sha256"]),
+        flat / "python3-modules.json":
+            json.dumps(flatpak_modules(version, read_pins(flat / "requirements.txt")), indent=4) + "\n",
+        manifest: set_flatpak_tag(manifest.read_text(encoding="utf-8"), version, tag_commit(version)),
+        meta: add_metainfo_release(meta.read_text(encoding="utf-8"), version,
+                                   rel["date"] or _dt.date.today().isoformat()),
+    }
     pkg = HERE / "winget" / "manifests" / "e" / "EmilWalsted" / "adichtion"
+    for name, text in render_winget(version, rel["date"], msi["url"], msi["sha256"],
+                                    codes["ProductCode"], codes["UpgradeCode"]).items():
+        writes[pkg / version / name] = text
+
+    # 2. then write (LF line endings on every platform)
     if pkg.exists():
         for old in pkg.iterdir():
             if old.is_dir() and old.name != version:
                 shutil.rmtree(old)
-    folder = pkg / version
-    folder.mkdir(parents=True, exist_ok=True)
-    for name, text in render_winget(version, rel["date"], msi["url"], msi["sha256"],
-                                    codes["ProductCode"], codes["UpgradeCode"]).items():
-        (folder / name).write_text(text, encoding="utf-8")
-        print(f"wrote {(folder / name).relative_to(HERE)}")
-
-    flat = HERE / "flatpak"
-    modules = flatpak_modules(version, read_pins(flat / "requirements.txt"))
-    (flat / "python3-modules.json").write_text(json.dumps(modules, indent=4) + "\n", encoding="utf-8")
-    manifest = flat / f"{APP_ID}.yml"
-    manifest.write_text(set_flatpak_tag(manifest.read_text(encoding="utf-8"), version, tag_commit(version)),
-                        encoding="utf-8")
-    meta = flat / f"{APP_ID}.metainfo.xml"
-    meta.write_text(add_metainfo_release(meta.read_text(encoding="utf-8"), version,
-                                         rel["date"] or _dt.date.today().isoformat()), encoding="utf-8")
-    print("wrote flatpak/python3-modules.json, the manifest's tag and the metainfo release")
+    for path, text in writes.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        print(f"wrote {path.relative_to(HERE).as_posix()}")
 
     return validate() if args.validate else 0
 

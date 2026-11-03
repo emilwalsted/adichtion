@@ -48,7 +48,8 @@ def test_winget_files_agree_with_each_other(upd):
         assert f"ManifestVersion: {upd.WINGET_SCHEMA}\n" in text
     inst = files["EmilWalsted.adichtion.installer.yaml"]
     assert f"InstallerSha256: {SHA_B.upper()}" in inst          # winget writes the hash in upper case
-    assert inst.count("ProductCode: '{11111111-2222-3333-4444-555555555555}'") == 2
+    assert inst.count("ProductCode: '{11111111-2222-3333-4444-555555555555}'") == 1   # installer level only
+    assert "- UpgradeCode: '{66666666-7777-8888-9999-000000000000}'" in inst
     assert "ReleaseDate: 2027-01-02" in inst
     assert "License: GPL-3.0-or-later" in files["EmilWalsted.adichtion.locale.en-US.yaml"]
     assert "/releases/tag/v2.3.4" in files["EmilWalsted.adichtion.locale.en-US.yaml"]
@@ -105,8 +106,9 @@ def test_flatpak_module_one_wheel_per_arch(upd):
     assert [s["url"].rsplit("/", 1)[1] for s in srcs] == index["adichtion"] + index["numpy"][:2]
     assert "only-arches" not in srcs[0]
     assert [s["only-arches"] for s in srcs[1:]] == [["x86_64"], ["aarch64"]]
-    assert '"adichtion==2.3.4" "numpy==2.2.6"' in mod["build-commands"][0]
-    assert "--no-index" in mod["build-commands"][0] and "--no-deps" in mod["build-commands"][0]
+    assert mod["build-commands"][0] == "pip3 uninstall -y numpy"     # the base app's numpy goes first
+    assert '"adichtion==2.3.4" "numpy==2.2.6"' in mod["build-commands"][1]
+    assert "--no-index" in mod["build-commands"][1] and "--no-deps" in mod["build-commands"][1]
 
 
 def test_flatpak_module_refuses_a_missing_architecture(upd):
@@ -134,6 +136,42 @@ def test_release_info_takes_githubs_digest(upd):
     rel["assets"].pop()
     with pytest.raises(SystemExit, match="msi"):
         upd.release_info("2.3.4", lambda url: json.dumps(rel).encode())
+
+
+class _Done:
+    def __init__(self, stdout):
+        self.stdout = stdout
+
+
+@pytest.mark.parametrize("listing, expected", [
+    ("1111111111111111111111111111111111111111\trefs/tags/v2.3.4\n"
+     "2222222222222222222222222222222222222222\trefs/tags/v2.3.4^{}\n", "2" * 40),      # annotated: the commit
+    ("3333333333333333333333333333333333333333\trefs/tags/v2.3.4\n", "3" * 40),          # lightweight
+])
+def test_tag_commit(upd, listing, expected):
+    assert upd.tag_commit("2.3.4", run=lambda *a, **k: _Done(listing)) == expected
+
+
+def test_tag_commit_missing(upd):
+    with pytest.raises(SystemExit, match="v2.3.4"):
+        upd.tag_commit("2.3.4", run=lambda *a, **k: _Done(""))
+
+
+def test_lowest_glibc_wheel_is_chosen(upd):
+    files = ["x-1.0-cp313-cp313-manylinux_2_39_x86_64.whl", "x-1.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+             "x-1.0-cp313-cp313-manylinux_2_28_aarch64.whl"]
+    got = [s["url"].rsplit("/", 1)[1] for s in upd.pypi_wheels("x", "1.0", lambda url: _pypi(files))]
+    assert got == files[1:]
+
+
+def test_missing_digest_is_allowed_only_for_verify(upd):
+    rel = {"published_at": "2027-01-02T03:04:05Z", "assets": [
+        {"name": "adichtion-2.3.4.dmg", "browser_download_url": "u1"},
+        {"name": "adichtion-2.3.4.msi", "browser_download_url": "u2"}]}
+    with pytest.raises(SystemExit, match="--verify"):
+        upd.release_info("2.3.4", lambda url: json.dumps(rel).encode())
+    info = upd.release_info("2.3.4", lambda url: json.dumps(rel).encode(), need_digest=False)
+    assert info["assets"]["adichtion-2.3.4.dmg"]["sha256"] is None
 
 
 def test_msi_properties(upd):
@@ -169,7 +207,7 @@ def test_committed_manifests_describe_one_version(upd):
     meta = (PKG / "flatpak" / f"{upd.APP_ID}.metainfo.xml").read_text(encoding="utf-8")
     assert re.search(r'<release version="([^"]+)"', meta).group(1) == v
     modules = json.loads((PKG / "flatpak" / "python3-modules.json").read_text(encoding="utf-8"))
-    assert f'"adichtion=={v}"' in modules["build-commands"][0]
+    assert f'"adichtion=={v}"' in modules["build-commands"][-1]
     assert any(f"/adichtion-{v}-py3-none-any.whl" in s["url"] for s in modules["sources"])
 
 
@@ -188,7 +226,7 @@ def test_flatpak_pins_satisfy_the_ui_extra(upd):
             continue                                   # comes from io.qt.PySide.BaseApp
         assert name in pins, f"{name} is not pinned for the Flatpak"
         assert spec.contains(pins[name]), f"{name}=={pins[name]} does not satisfy {spec}"
-    command = json.loads((PKG / "flatpak" / "python3-modules.json").read_text(encoding="utf-8"))["build-commands"][0]
+    command = json.loads((PKG / "flatpak" / "python3-modules.json").read_text(encoding="utf-8"))["build-commands"][-1]
     for name, ver in pins.items():
         assert f'"{name}=={ver}"' in command
 
