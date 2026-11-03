@@ -1,0 +1,14 @@
+# Python packages the Flatpak installs from wheels on top of io.qt.PySide.BaseApp (which brings
+# PySide6 and Python 3.13). Pinned: packaging/update.py looks up each wheel and its sha256 on
+# PyPI. adichtion itself is added by update.py with the version it is called with.
+#
+# numpy replaces the BaseApp's own (2.3.x): opencv-python-headless 4.12 declares numpy < 2.3.
+# opencv-python-headless stays below 4.13 like pyproject.toml (4.13's FFmpeg turns the DV movies
+# of LabChart for Mac black). Keep these in line with the [ui] extra in pyproject.toml.
+numpy==2.2.6
+opencv-python-headless==4.12.0.88
+imageio-ffmpeg==0.8.1
+pyqtgraph==0.14.0
+colorama==0.4.6
+openpyxl==3.1.5
+et-xmlfile==2.0.0

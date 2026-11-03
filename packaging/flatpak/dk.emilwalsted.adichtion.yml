@@ -1,0 +1,45 @@
+id: dk.emilwalsted.adichtion
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+base: io.qt.PySide.BaseApp
+base-version: '6.11'
+command: adichtion
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # A recording's video lies in a folder beside it ("<name> movies/"), which the file chooser
+  # portal does not grant, and exports are written next to the recording by default.
+  - --filesystem=home
+build-options:
+  env:
+    BASEAPP_REMOVE_WEBENGINE: '1'
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
+modules:
+  - python3-modules.json
+  - name: adichtion-desktop
+    buildsystem: simple
+    build-commands:
+      - install -Dm644 dk.emilwalsted.adichtion.desktop -t ${FLATPAK_DEST}/share/applications/
+      - install -Dm644 dk.emilwalsted.adichtion.metainfo.xml -t ${FLATPAK_DEST}/share/metainfo/
+      - install -Dm644 dk.emilwalsted.adichtion.mime.xml ${FLATPAK_DEST}/share/mime/packages/dk.emilwalsted.adichtion.xml
+      - install -Dm644 installer/adichtion-16.png ${FLATPAK_DEST}/share/icons/hicolor/16x16/apps/dk.emilwalsted.adichtion.png
+      - install -Dm644 installer/adichtion-32.png ${FLATPAK_DEST}/share/icons/hicolor/32x32/apps/dk.emilwalsted.adichtion.png
+      - install -Dm644 installer/adichtion-64.png ${FLATPAK_DEST}/share/icons/hicolor/64x64/apps/dk.emilwalsted.adichtion.png
+      - install -Dm644 installer/adichtion-128.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/dk.emilwalsted.adichtion.png
+      - install -Dm644 installer/adichtion-256.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/dk.emilwalsted.adichtion.png
+      - install -Dm644 installer/adichtion-512.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/dk.emilwalsted.adichtion.png
+    sources:
+      - type: git
+        url: https://github.com/emilwalsted/adichtion.git
+        tag: v1.0.0
+        commit: 87b24e49c0ea0067e8362f516d1b7692b27aec7d
+      - type: file
+        path: dk.emilwalsted.adichtion.desktop
+      - type: file
+        path: dk.emilwalsted.adichtion.metainfo.xml
+      - type: file
+        path: dk.emilwalsted.adichtion.mime.xml

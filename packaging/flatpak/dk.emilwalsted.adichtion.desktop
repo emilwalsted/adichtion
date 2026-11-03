@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=adichtion
+GenericName=Recording Viewer
+Comment=View and export LabChart .adicht recordings
+Exec=adichtion %f
+Icon=dk.emilwalsted.adichtion
+Terminal=false
+StartupWMClass=adichtion
+Categories=Science;DataVisualization;Qt;
+MimeType=application/x-adicht;
+Keywords=adicht;physiology;recording;signal;export;csv;excel;
