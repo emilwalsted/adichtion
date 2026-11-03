@@ -214,7 +214,7 @@ def test_committed_manifests_describe_one_version(upd):
 def test_flatpak_pins_satisfy_the_ui_extra(upd):
     specifiers = pytest.importorskip("packaging.specifiers")
     requirements = pytest.importorskip("packaging.requirements")
-    tomllib = pytest.importorskip("tomllib")                # Python 3.11+
+    import tomllib
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     wanted = {}
     for line in project["dependencies"] + project["optional-dependencies"]["ui"]:

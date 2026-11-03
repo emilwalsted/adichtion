@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.10", "3.12"]
+        python: ["3.11", "3.12"]
     env:
       QT_QPA_PLATFORM: offscreen      # the viewer tests run headless
       PYQTGRAPH_QT_LIB: PySide6

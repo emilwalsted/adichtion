@@ -64,7 +64,7 @@ def test_the_bundle_requires_what_the_ui_extra_requires():
     OpenCV bound in particular (below 4.13: LabChart for Mac's interlaced DV movies decode
     black with FFmpeg 8) must be the same in both."""
     import os
-    tomllib = pytest.importorskip("tomllib")
+    import tomllib
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(os.path.join(root, "pyproject.toml"), "rb") as fh:
         cfg = tomllib.load(fh)
