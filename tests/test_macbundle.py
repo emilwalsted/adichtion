@@ -117,7 +117,7 @@ def test_the_bundle_id_is_the_one_briefcase_writes():
     """MACOS_BUNDLE_ID is a copy of pyproject's [tool.briefcase] bundle + "." + app name,
     the CFBundleIdentifier briefcase puts in Info.plist; an app- or macOS-level `bundle`
     would override the global one, so the test merges them the way briefcase does."""
-    tomllib = pytest.importorskip("tomllib")
+    import tomllib
     with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
         cfg = tomllib.load(fh)["tool"]["briefcase"]
     (app_name, app_cfg), = cfg["app"].items()

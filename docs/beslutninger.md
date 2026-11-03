@@ -2,6 +2,21 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-11-03 — Python 3.11 is the minimum (3.10 is end of life)
+
+Python 3.10's security support ended on 1 October 2026 (PEP 619, read in the PEP's own source on 2026-11-03), so
+`requires-python` is now `>=3.11` and the 3.10 classifier is gone. No version bump of its own: the change ships with
+the next release and is in the changelog.
+
+- **The test matrix is 3.11 and 3.12 on three OSes.** 3.11 is the minimum, and it is also a version where PySide6
+  6.12.0 aborted (2026-10-16 below), so it stays covered; 3.12 is what the Ubuntu package, the PyPI gate and the
+  installers build on. Considered and rejected: 3.11 and 3.13 (the newest classifier, and the Flatpak runtime). It
+  would leave the version the installers ship untested on Windows and macOS; adding 3.13 as a third column would
+  make nine jobs per push for a version nothing here ships on its own.
+- **No reason found to keep 3.10:** the installers bundle their own Python, Ubuntu 24.04 has 3.12, and the Flatpak
+  runtime has 3.13. Anyone still on 3.10 keeps getting 1.0.0 from PyPI, since pip honours `requires-python`.
+- The three tests that skipped without `tomllib` now import it directly, so they always run.
+
 ## 2026-11-03 — Damaged files: one error class, a strict reader and a reporting `check`
 
 Fuzzing the readers with mutated synthetic documents (`tests/test_fuzz.py`, docs/FORMAT.md §9) and the review of the change found ten

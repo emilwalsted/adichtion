@@ -26,7 +26,7 @@ Commit the three together (`Release X.Y.Z`).
 ## 2. Check
 
 - `pytest` green locally (unit, synthetic round-trips, headless viewer tests).
-- The *Tests* workflow green on the release commit (three OSes, Python 3.10 and 3.12).
+- The *Tests* workflow green on the release commit (three OSes, Python 3.11 and 3.12).
 - With real recordings at hand: `ADICHTION_SAMPLES=… pytest tests/test_integration_samples.py`
   and `adichtion check FILE` on any new kind of file.
 - **The video clip, in each installer you built** (first release with `imageio-ffmpeg`, `docs/beslutninger.md`
@@ -199,7 +199,7 @@ Things to know before the first tag: bump first (section 1), or the *Build* job 
 equal the tag, and `CHANGELOG.md` needs the `## [X.Y.Z]` entry). The build also refuses a tag whose commit is not on
 `main`. *Build installers* (`release.yml`) runs in parallel and does not wait for the PyPI gate, so one tag can give a
 GitHub release without a PyPI release or the reverse; check both runs. The gate tests Python 3.12 on Ubuntu only: check
-the *Tests* workflow (3.10, three OSes) on the release commit. The dry run publishes whatever ref it is started on.
+the *Tests* workflow (3.11, three OSes) on the release commit. The dry run publishes whatever ref it is started on.
 
 ## 7. Package catalogues (Homebrew, winget, Flathub)
 
@@ -217,7 +217,7 @@ sha256, reads the MSI's product code with `msiinfo` (msitools), looks up the Fla
 on PyPI, and validates the result against the catalogues' schemas. Commit the result and send
 each catalogue its update (`packaging/README.md`). Run it after signing the MSI, not before:
 signing changes the file and its sha256. When the `[ui]` extra's ranges change, move the pins
-in `packaging/flatpak/requirements.txt` with them (`tests/test_packaging.py` checks it on Python 3.11 and later, where `tomllib` exists). The files were drafted with an AI coding assistant: read the AI policy note at the top of `packaging/README.md` before submitting.
+in `packaging/flatpak/requirements.txt` with them (`tests/test_packaging.py` checks it). The files were drafted with an AI coding assistant: read the AI policy note at the top of `packaging/README.md` before submitting.
 
 ## Not done yet / known limits
 

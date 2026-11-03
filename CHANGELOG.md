@@ -12,6 +12,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 - **`adichtion check` reports damage**: `VERDICT: DAMAGED` with what is wrong, in which part of the file, and for a file
   that cannot be opened how many blocks of every record still read.
 
+### Changed
+
+- **Python 3.11 or later is required.** Python 3.10 reached end of life on 1 October 2026 (PEP 619) and gets no more
+  security fixes; the tests now run on 3.11 and 3.12. The installers are unaffected: they bundle their own Python, and
+  the Ubuntu package uses Ubuntu 24.04's Python 3.12.
+
 ### Fixed
 
 - Damaged files raised an `AdichtionError` subclass in most cases, but some damage escaped as `struct.error`,

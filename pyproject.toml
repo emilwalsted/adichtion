@@ -7,7 +7,7 @@ name = "adichtion"
 dynamic = ["version"]
 description = "Read ADInstruments LabChart .adicht files without LabChart: metadata, comments and sample data, on every platform"
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Emil Ingerslev Walsted", email = "emilwalsted@gmail.com" }]
@@ -20,7 +20,6 @@ classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
