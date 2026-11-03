@@ -470,3 +470,103 @@ and an empty name; an unfinished capture leaves a `VidC<n>.tmp` name.
   Flow zero correction likewise. The definitions read from the Mac settings
   and templates of the study (`adichtion macsettings`) agree with the
   numerical result wherever both exist.
+
+## 9. Damaged files and very large files
+
+### 9.1 What the reader promises
+
+A file that is damaged, cut short or not an ADInstruments file at all makes the
+reader raise a subclass of `adichtion.AdichtionError` (itself a `ValueError`),
+never an `IndexError`, `struct.error`, numpy error or `MemoryError` from deep
+inside a decoder. An undamaged file reads back exactly. A damaged file that
+still opens may give wrong sample values (the damage was not detectable from
+the file's own structure); `adichtion check` finds those through the stored
+min/max (§3.3). This is tested, not assumed: `tests/test_fuzz.py` mutates
+synthetic documents of every layout (v29, v26, the legacy layout, a fragmented
+container and a LabChart for Mac document) with bit flips, truncation, zeroed
+and 0xFF runs, swapped runs and extreme values in header and length fields,
+reads every channel of every record and the block min/max, and requires the
+result within 20 s and 256 MiB of allocation. The quick run (150 cases plus
+fixed sweeps) is part of `pytest -q`; `--runslow` adds 3000 random cases.
+
+### 9.2 Where damage is detected
+
+| part of the file | detected by | error |
+|---|---|---|
+| header: magic, cluster size (2^8 to 2^20), header size (512 up to the file size) | `AdichtContainer` | `AdichtFormatError` |
+| cluster map: a link or the first map page outside the file | `map_entry`, `cluster` | `AdichtFormatError` |
+| directory: a table entry outside the file | ignored: the entry is not a table (as before) | |
+| `Map`/`Blocks_0` missing from the directory | `AdichtFile` | `AdichtFormatError` |
+| Map stream grammar | `parse_chart_data` (falls back to the scan of §3 where the grammar fails) | `ChartDataError` |
+| block index points outside `Blocks_0` or at no sub-block header (`n`, `−n`) | `AdichtFile` at opening | `BlocksFormatError` |
+| a sub-block's sample count is negative or does not fit its block's ticks | `AdichtFile` and `SubBlockIndex` at opening | `BlocksFormatError` |
+| a packed body too small for its sample count (PackBits expands at most 2 bytes into 129) | decoding the block, before allocating | `BlocksFormatError` |
+| bit planes or an unpacked body too short for the sample count | decoding the block | `BlocksFormatError` |
+| a body whose PackBits stream is short but whose planes still fit | not detected: the missing planes read as zero; `check` sees the min/max differ | |
+| LabChart for Mac: table of contents, a chunk reaching past the end of the file | `MacResFile` | `MacChartError` |
+| LabChart for Mac: any field that points past its chunk or holds an impossible value | `read_mac_document` | `MacFormatError` |
+| a file shortened after it was opened | `AdichtFile.decode_block` | `AdichtFormatError` |
+
+A container keeps its cluster map in the last clusters of the file (§1.3), so
+a `.adicht` file that is cut short loses the map and cannot be opened at all,
+however much of the sample data is still there. A damaged sub-block header, by
+contrast, stops only the file's opening, not the decoding of the other blocks:
+`adichtion check` then reports, record by record, how many blocks still read.
+
+### 9.3 `adichtion check` on a damaged file
+
+`check` ends with `VERDICT: match`, `MISMATCH` (a block decodes, but not to the
+min/max stored for it) or `DAMAGED` (exit code 1 for both of the last two). It
+stops earlier, with exit code 1 and no verdict, when the file cannot be read at
+all from the disk, when its Map stream was read by the scan (nothing to check
+against) or when the block index and the `Blocks_0` chain disagree; a chain
+that cannot be walked at all counts as `DAMAGED`. For
+`DAMAGED` it prints what is wrong, the part of the file (container, Map stream,
+sample data, LabChart for Mac structure) and, when the file cannot be opened,
+for every record how many of its blocks read in every channel and where the
+first unreadable one starts, for example:
+
+    DAMAGED: the file cannot be opened: block index of record 1 channel 1 block 2 points at offset 94332, which holds no sub-block header
+      where: the sample data (the Blocks_0 stream)
+      record 1: 2 of 3 blocks readable in every channel; the first unreadable block is block 2 at 16.000 s
+      record 2: 1 of 1 blocks readable in every channel
+    VERDICT: DAMAGED
+
+A block that fails only when it is decoded is named with its time span, and the
+other blocks are still checked. `check` decodes every block once without
+keeping it in the block cache.
+
+### 9.4 Very large files
+
+Measured 2026-11-03 on Linux (Python 3.11, 4 cores, 15 GB RAM) on a synthetic
+v29 file of 2.21 GB (`synth.write_large_synthetic`: 4 int16 channels at
+1 kHz, 2 records, 38,088 storage blocks, 3.5 days of recording per record).
+Every number is one run; "anonymous" is the memory the process itself
+allocated (`RssAnon`), as opposed to pages of the mapped file, which the
+operating system can drop at any time.
+
+| operation | time | peak resident memory |
+|---|---|---|
+| open (warm file cache / cold) | 1.6 s / 2.9 s | 2.2 GB, of which 106 MiB anonymous |
+| open, a 220 MB file of the same kind | 0.1 s | 246 MB, of which 23 MiB anonymous |
+| read 10 minutes of one channel | 1.3 s (process total) | 2.2 GB, 126 MiB anonymous |
+| block table of one channel (whole file) | 1.4 s (process total) | 2.2 GB |
+| `adichtion export` of 1 hour, 4 channels, CSV | 6.1 s | 2.5 GB |
+| `adichtion check` (152,352 sub-blocks), before / after this change | 120 s / 106 s | 3.4 GB / 2.4 GB (the block cache) |
+| viewer curves (`adichtion bench`): whole file, coarse / detail, cold | 35 ms / 34 ms | |
+| viewer curves, 10 minutes / 60 s / 5 s, detail, cold | 270 ms / 156 ms / 154 ms | |
+| viewer, 20 pan and 10 zoom steps (`bench --pan`, offscreen) | 88 / 78 ms per step | 2.5 GB |
+
+The sample data is read through the file's mapping (`AdichtFile.zero_copy`),
+so it never becomes memory of the process; what grows with the file is the
+block index (one object per sub-block, about 4 % of the file size). Opening
+touches every sub-block header once; on a cold cache the operating system's
+read-ahead then pulls in the whole file (2.0 GB for 2.4 MB of headers). Telling
+it the access is random (`madvise(MADV_RANDOM)`) cut that to 619 MB but made
+the cold open slower (6.8 s against 2.9 s) and was not kept. The viewer never
+draws more than about 9,600 points per curve at any zoom level: whole-file and
+long views come from the stored block min/max, shorter ones from min/max
+envelopes of the decoded blocks (`ui/lod.py`); the exported data is always the
+decoded samples. A container whose `Blocks_0` stream is not one contiguous
+run of clusters (fragmented, §1.3; not seen in a real file) is copied into
+memory instead, and then costs its full size.

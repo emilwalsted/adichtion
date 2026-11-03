@@ -381,6 +381,93 @@ def write_synthetic(path, channels: Sequence[SynthChannel], records: Sequence[Sy
         fh.write(build_container(streams, cluster_size, version, fragment))
 
 
+def write_large_synthetic(path, size_bytes: int, n_channels: int = 4, n_records: int = 2, variants: int = 8,
+                          tick_rate: int = 1000, cluster_size: int = 4096, seed: int = 1) -> dict:
+    """Write a v29 document of about ``size_bytes`` (gigabytes if asked) without holding it in memory.
+
+    Packing a sub-block is slow in Python, so ``variants`` random-walk int16 blocks of 16000 ticks are
+    encoded once per channel and block ``b`` of channel ``c`` repeats variant ``(b * 7 + c) % variants``.
+    The streams are written straight to the file, laid out as :func:`build_container` lays them out
+    (contiguous, the directory table after them, then the cluster map).  Returns ``{"blocks": [...],
+    "variants": {channel: [samples, ...]}, "ticks": [...]}`` so a test can check any block against the
+    samples it was made from: ``variants[c][(b * 7 + c) % variants]``, ``b`` counted over the records."""
+    rng = np.random.default_rng(seed)
+    channels = [SynthChannel(f"Ch{c + 1}", "int16", None, 10.0) for c in range(n_channels)]
+    samples = {c: [np.clip(np.cumsum(rng.integers(-40, 41, BLOCK_TICKS)), -32768, 32767) for _ in range(variants)]
+               for c in range(n_channels)}
+    encoded = {c: [subblock(x, False) for x in samples[c]] for c in range(n_channels)}
+    per_block = sum(len(e) for c in range(n_channels) for e in encoded[c]) / variants
+    n_blocks = max(n_records, math.ceil(size_bytes / per_block))
+    per_record = [n_blocks // n_records + (1 if r < n_blocks % n_records else 0) for r in range(n_records)]
+    records = [SynthRecord(k * BLOCK_TICKS, start_utc=1_700_000_000.0 + 86400 * r) for r, k in enumerate(per_record)]
+    index: dict[tuple[int, int, int], tuple[int, float, float]] = {}
+    off, g = len(BLOCKS_MAGIC), 0
+    for ri, k in enumerate(per_record):
+        for bi in range(k):
+            for ci in range(n_channels):
+                v = (g * 7 + ci) % variants
+                index[(ri, bi, ci)] = (off, float(samples[ci][v].min()), float(samples[ci][v].max()))
+                off += len(encoded[ci][v])
+            g += 1
+    blocks_size = off
+    mp = build_map_stream(channels, records, tick_rate, index, blocks_size, 29)
+    version = tagged("adichtion synthetic")
+
+    def n_clusters(n: int) -> int:
+        return max(1, math.ceil(n / cluster_size))
+
+    first = {}
+    cluster = 2
+    for name, size in (("Version", len(version)), ("Map", len(mp)), ("Blocks_0", blocks_size)):
+        first[name] = (cluster, cluster + n_clusters(size) - 1, size)
+        cluster += n_clusters(size)
+
+    def entry(name: str, f: int, size: int, last: int, typ: int) -> bytes:
+        e = bytearray(ENTRY_SIZE)
+        nm = name.encode("utf-16le")
+        e[:len(nm)] = nm
+        struct.pack_into("<qqq", e, 0x48, f, size, last)
+        struct.pack_into("<ii", e, 0x88, 0, typ)
+        return bytes(e)
+
+    table = counted(3) + b"".join(entry(n, f, s, la, TYPE_STREAM) for n, (f, la, s) in first.items())
+    root_cluster = cluster
+    cluster += 1
+    map_first = cluster
+    epp = cluster_size // 8
+    pages = math.ceil((cluster + 1) / epp)
+    links = np.zeros((pages * epp, 2), dtype="<i4")
+    for f, la, _s in list(first.values()) + [(root_cluster, root_cluster, 0)]:
+        chain = np.arange(f, la + 1)
+        links[chain[:-1], 0] = chain[1:]
+        links[chain[1:], 1] = chain[:-1]
+    hdr = bytearray(HEADER_SIZE)
+    hdr[:len(CONTAINER_MAGIC)] = CONTAINER_MAGIC
+    struct.pack_into("<7i", hdr, 0x80, 29, HEADER_SIZE, 131072, 0x7FFFFFFF, 0, 0, int(math.log2(cluster_size)))
+    struct.pack_into("<qqq", hdr, 0x9C, pages * epp, -pages * epp, map_first)
+    hdr[0xB8:0xB8 + ENTRY_SIZE] = entry("ADIRootStorage", root_cluster, len(table), root_cluster, TYPE_STORAGE)
+
+    def pad(fh, n: int) -> None:
+        fh.write(bytes(n_clusters(n) * cluster_size - n))
+
+    with open(path, "wb") as fh:
+        fh.write(hdr)
+        for data in (version, mp):
+            fh.write(data)
+            pad(fh, len(data))
+        fh.write(BLOCKS_MAGIC)
+        g = 0
+        for k in per_record:
+            for _bi in range(k):
+                fh.write(b"".join(encoded[ci][(g * 7 + ci) % variants] for ci in range(n_channels)))
+                g += 1
+        pad(fh, blocks_size)
+        fh.write(table)
+        pad(fh, len(table))
+        fh.write(links.tobytes())
+    return {"blocks": per_record, "variants": samples, "ticks": [r.ticks for r in records]}
+
+
 # -- LabChart for Mac documents (docs/MAC_FORMAT.md) ------------------------------------------
 @dataclass
 class SynthMacChannel:

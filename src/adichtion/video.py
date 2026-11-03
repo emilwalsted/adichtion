@@ -9,6 +9,8 @@ video clock and the file name.  See ``docs/FORMAT.md`` §5.
 """
 from __future__ import annotations
 
+from .errors import AdichtionError
+
 import os
 import struct
 from typing import Optional
@@ -21,7 +23,7 @@ VIDEO_GUID = bytes.fromhex("a46425de60224944b4c6b13bc0eaa648")
 MOVIES_SUFFIX = " movies"
 
 
-class VideoStreamError(ValueError):
+class VideoStreamError(AdichtionError):
     pass
 
 

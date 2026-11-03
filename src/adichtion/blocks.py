@@ -37,6 +37,8 @@ sub-blocks of a file to ``(record, block, channel)`` without decoding anything.
 """
 from __future__ import annotations
 
+from .errors import AdichtionError
+
 import struct
 from dataclasses import dataclass, replace
 from typing import Iterator, Optional, Sequence
@@ -57,7 +59,7 @@ FLOAT32_PLANES = 32
 WORD_SAMPLES = 32  # samples per 32-bit word of a bit plane
 
 
-class BlocksFormatError(ValueError):
+class BlocksFormatError(AdichtionError):
     pass
 
 
@@ -107,7 +109,11 @@ def iter_subblocks(stream: bytes | memoryview) -> Iterator[SubBlock]:
             body_size = n - 12
             ssize = 4 if flags & FLAG_32BIT else 2
             if flags & FLAG_PACKED and not flags & FLAG_UNPACKED:
+                if body_offset + 4 > total:
+                    raise BlocksFormatError(f"the sub-block at stream offset {pos} is cut short")
                 raw, = struct.unpack_from("<i", view, body_offset)
+                if raw < 0:
+                    raise BlocksFormatError(f"the sub-block at stream offset {pos} has a negative size ({raw})")
                 n_samples = raw // ssize
             else:
                 n_samples = body_size // ssize
@@ -189,6 +195,8 @@ def unpack_planes(buf: bytes, n_planes: int, n_samples: int, word_reversed: bool
     if word_reversed:
         n_words = bits.shape[1] // WORD_SAMPLES
         bits = bits[:, : n_words * WORD_SAMPLES].reshape(n_planes, n_words, WORD_SAMPLES)[:, :, ::-1].reshape(n_planes, -1)
+    if bits.shape[1] < n_samples:   # the buffer's own plane size is too small for the sample count
+        raise BlocksFormatError(f"{n_planes} bit planes of {pb} bytes cannot hold {n_samples} samples")
     return bits[:, :n_samples]
 
 
@@ -228,8 +236,16 @@ def decode_subblock(body: bytes | memoryview, sb: SubBlock, prev_last: float = 0
     """Decode one sub-block.  Returns int32 counts (int16 channels) or float32."""
     body = bytes(body)
     if not sb.is_packed:
+        width = 4 if sb.is_float else 2
+        if len(body) < sb.n_samples * width:
+            raise BlocksFormatError(f"sub-block {sb.index}: {len(body)} bytes for {sb.n_samples} unpacked samples")
         arr = np.frombuffer(body, dtype="<f4" if sb.is_float else "<i2", count=sb.n_samples)
         return arr.astype(np.float32) if sb.is_float else arr.astype(np.int32)
+    planes = FLOAT32_PLANES if sb.is_float else INT16_PLANES
+    # PackBits expands at most 2 bytes into 129, so a sample count the body cannot hold is damage, found
+    # before anything the size of that count is allocated
+    if sb.n_samples < 0 or planes * plane_bytes(sb.n_samples) > 65 * len(body) + 129:
+        raise BlocksFormatError(f"sub-block {sb.index}: {len(body)} packed bytes cannot hold {sb.n_samples} samples")
     buf = packbits_decode(body[4:])
     if sb.is_float:
         return decode_float32(decode_float32_deltas(buf, sb.n_samples), prev_last)

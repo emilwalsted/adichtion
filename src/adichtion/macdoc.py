@@ -278,7 +278,17 @@ def _comment_list(data: bytes, ptr: int, start_tick: int, record: int) -> tuple[
 
 def read_mac_document(path: Union[str, os.PathLike], data: Optional[bytes] = None) -> MacDocument:
     """Parse a LabChart for Mac document.  ``data`` may pass the file's bytes when
-    the caller already holds them (they are needed again for decoding)."""
+    the caller already holds them (they are needed again for decoding).  A damaged
+    document raises :class:`MacFormatError`: a field that points past the end of
+    its chunk or holds an impossible number is reported as such, never as the
+    ``struct.error``, ``IndexError`` or ``OverflowError`` it would cause below."""
+    try:
+        return _read_mac_document(path, data)
+    except (struct.error, IndexError, OverflowError, UnicodeDecodeError) as e:
+        raise MacFormatError(f"{os.path.basename(os.fspath(path))!r} is damaged: {e}") from e
+
+
+def _read_mac_document(path: Union[str, os.PathLike], data: Optional[bytes] = None) -> MacDocument:
     path = os.fspath(path)
     res = MacResFile(path)
     if not res.is_document:

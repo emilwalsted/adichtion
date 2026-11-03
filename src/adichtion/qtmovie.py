@@ -14,6 +14,8 @@ sync samples, a few hundred kB even for a movie of many GB.  Pure ``struct`` + n
 """
 from __future__ import annotations
 
+from .errors import AdichtionError
+
 import os
 import struct
 from dataclasses import dataclass
@@ -28,7 +30,7 @@ SYNC_SAMPLE_SIZE = 8
 _CONTAINERS = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"udta", b"edts", b"dinf"}
 
 
-class MovieError(ValueError):
+class MovieError(AdichtionError):
     pass
 
 

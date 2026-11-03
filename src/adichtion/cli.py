@@ -26,6 +26,7 @@ import numpy as np
 from . import __version__
 from .chartdata import tagged_strings
 from .container import AdichtContainer
+from .errors import AdichtionError
 from .export import FORMATS, export_selections, read_labchart_text, upsampling_notice, whole_file
 from .file import AdichtFile, Selection
 from . import videoclip
@@ -105,15 +106,112 @@ def cmd_videos(a: argparse.Namespace) -> None:
                   f"video clock {v.start_s:10.3f} .. {v.stop_s:10.3f} s  file {'present' if path else ('missing' if v.has_video else '-')}")
 
 
+def _damage_site(exc: Exception) -> str:
+    """Which part of the file an :class:`AdichtionError` comes from, in the user's terms."""
+    from .blocks import BlocksFormatError
+    from .chartdata import ChartDataError
+    from .macchart import MacChartError
+    if isinstance(exc, MacChartError):
+        return "the structure of the LabChart for Mac document"
+    if isinstance(exc, ChartDataError):
+        return "the Map stream (records, channels, comments and the block index)"
+    if isinstance(exc, BlocksFormatError):
+        return "the sample data (the Blocks_0 stream)"
+    return "the container (header, cluster map or directory of streams)"
+
+
+def _salvage_report(path: str) -> None:
+    """For a file that cannot be opened: say how much of it could still be read, record by record.
+    Reads only what is there; nothing is repaired and nothing is written."""
+    from .blocks import decode_subblock
+    from .chartdata import parse_chart_data
+    from .file import subblock_at
+    from .macdoc import is_mac_document
+    if is_mac_document(path):
+        print("  readable: nothing (a LabChart for Mac document is read as a whole)")
+        return
+    try:
+        c = AdichtContainer(path)
+    except AdichtionError:
+        print("  readable: nothing: the container header itself is damaged")
+        return
+    with c:
+        size = len(c.data)
+        for e in c.walk():
+            if not e.is_storage and e.first > 0 and e.size > 0 and c.offset(e.first) + e.size > size:
+                print(f"  stream {e.path} is cut short: it needs {c.offset(e.first) + e.size} bytes, the file has {size}")
+        mp, bl = c.find_stream("Map"), c.find_stream("Blocks_0")
+        if mp is None or bl is None:
+            print("  readable: nothing: the Map or Blocks_0 stream is missing from the directory")
+            return
+        try:
+            chart = parse_chart_data(c.read_stream(mp))
+        except AdichtionError as exc:
+            print(f"  readable: nothing: the Map stream cannot be read ({exc})")
+            return
+        if chart.parse_mode != "sequential" or not chart.records:
+            print("  readable: unknown: the Map stream holds no block index to locate the samples by")
+            return
+        try:
+            view = memoryview(c.read_stream(bl))
+        except AdichtionError:
+            view = memoryview(b"")
+        for rec in chart.records:
+            n_ok, first_bad, t = 0, None, 0
+            for b, info in enumerate(rec.blocks):
+                ok = True
+                for ch in rec.channels:
+                    try:
+                        sb = subblock_at(view, ch.blocks[b].offset)
+                        if sb.body_offset + sb.body_size > len(view):
+                            raise AdichtionError("cut short")
+                        if info.ticks <= 0 or (sb.n_samples % info.ticks and info.ticks % max(sb.n_samples, 1)):
+                            raise AdichtionError("sample count does not fit the block")
+                        decode_subblock(view[sb.body_offset: sb.body_offset + sb.body_size], sb)
+                    except (AdichtionError, IndexError):    # IndexError: a channel's block list shorter than the record's
+                        ok = False
+                        break
+                if ok:
+                    n_ok += 1
+                elif first_bad is None:
+                    first_bad = (b, t)
+                t += info.ticks
+            rate = rec.tick_rate_hz
+            where = ""
+            if first_bad is not None:
+                at = f" at {first_bad[1] / rate:.3f} s" if rate else f" at tick {first_bad[1]}"
+                where = f"; the first unreadable block is block {first_bad[0] + 1}{at}"
+            print(f"  record {rec.index + 1}: {n_ok} of {len(rec.blocks)} blocks readable in every channel{where}")
+
+
 def cmd_check(a: argparse.Namespace) -> None:
-    """Decode every block and compare with the min/max LabChart stored in the Map stream."""
-    with _open(a.file) as f:
+    """Decode every block and compare with the min/max LabChart stored in the Map stream.  A damaged
+    file is reported as DAMAGED: what is wrong, in which part of the file, and how much could still
+    be read (``docs/FORMAT.md`` §9)."""
+    try:
+        f = AdichtFile(a.file)
+    except AdichtionError as exc:
+        print(f"DAMAGED: the file cannot be opened: {exc}")
+        print(f"  where: {_damage_site(exc)}")
+        _salvage_report(a.file)
+        print("VERDICT: DAMAGED")
+        sys.exit(1)
+    except OSError as exc:
+        sys.exit(f"error: {exc}")
+    with f:
         if f.parse_mode != "sequential":
             sys.exit("the Map stream was not parsed by the full grammar; nothing to check against")
-        walk = f.walk_subblocks()
-        if [(s.offset, s.body_size) for s in walk] != [(s.offset, s.body_size) for s in f.index.subblocks]:
-            sys.exit("MISMATCH: the block index of the Map stream and the Blocks_0 chain disagree")
-        n = bad = unchecked = 0
+        n = bad = unchecked = damaged = 0
+        if f.kind != "mac":
+            try:
+                walk = f.walk_subblocks()
+            except AdichtionError as exc:
+                walk = None
+                damaged += 1        # the indexed blocks may all read; the chain between them is still damaged
+                print(f"DAMAGED: the Blocks_0 chain cannot be walked: {exc}")
+            if walk is not None and [(s.offset, s.body_size) for s in walk] != \
+                    [(s.offset, s.body_size) for s in f.index.subblocks]:
+                sys.exit("MISMATCH: the block index of the Map stream and the Blocks_0 chain disagree")
         for rec in f.records:
             for ch in range(f.n_channels):
                 if not f.has_data(ch):
@@ -121,8 +219,18 @@ def cmd_check(a: argparse.Namespace) -> None:
                 # a Mac document's index holds the envelope of the signal before decimation:
                 # a decimated channel's samples lie inside it (MAC_FORMAT.md §3)
                 inside = f.kind == "mac" and f.index.decimation(rec.index, ch) > 1
+                t0 = 0
                 for b, blk in enumerate(f.channel_record(rec.index, ch).blocks):
-                    x = f.decode_block(rec.index, b, ch)
+                    start, t0 = t0, t0 + blk.ticks
+                    try:
+                        x = f.decode_block(rec.index, b, ch, cache=False)    # each block once: no cache to fill
+                    except AdichtionError as exc:
+                        damaged += 1
+                        rate = rec.tick_rate_hz
+                        span = f"{start / rate:.3f}-{t0 / rate:.3f} s" if rate else f"ticks {start}-{t0}"
+                        print(f"DAMAGED: record {rec.index + 1} channel {ch + 1} block {b + 1} "
+                              f"({span} of the record): {exc}")
+                        continue
                     if not len(x):
                         continue
                     if np.isnan(blk.min) or np.isnan(blk.max):
@@ -136,9 +244,10 @@ def cmd_check(a: argparse.Namespace) -> None:
                     if wrong:
                         bad += 1
                         print(f"record {rec.index + 1} channel {ch + 1} block {b + 1}: decoded {mn:g}..{mx:g}, stored {blk.min:g}..{blk.max:g}")
-        print(f"{n} blocks checked, {bad} mismatches" + (f", {unchecked} blocks without a stored min/max" if unchecked else ""))
-        print("VERDICT:", "match" if bad == 0 else "MISMATCH")
-        sys.exit(0 if bad == 0 else 1)
+        print(f"{n} blocks checked, {bad} mismatches" + (f", {unchecked} blocks without a stored min/max" if unchecked else "")
+              + (f", {damaged} blocks unreadable (the other blocks read)" if damaged else ""))
+        print("VERDICT:", "DAMAGED" if damaged else ("match" if bad == 0 else "MISMATCH"))
+        sys.exit(0 if bad == 0 and damaged == 0 else 1)
 
 
 def cmd_tree(a: argparse.Namespace) -> None:

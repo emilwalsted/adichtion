@@ -239,22 +239,30 @@ def _fill_subblocks_from_map(view: memoryview, chart: ChartData, out: list[SubBl
     for rec in chart.records:
         for b in range(len(rec.blocks)):
             for ch in rec.channels:
-                off = ch.blocks[b].offset
-                if off + HEADER_SIZE > len(view):
-                    raise BlocksFormatError(f"block index points outside the Blocks stream ({off})")
-                n, _check, negn, flags = struct.unpack_from("<iiii", view, off)
-                if negn != -n or n < 12:
-                    raise BlocksFormatError(f"block index of record {rec.index} channel {ch.channel} block {b} "
-                                            f"points at offset {off}, which holds no sub-block header")
-                body_offset = off + HEADER_SIZE
-                ssize = 4 if flags & FLAG_32BIT else 2
-                if flags & FLAG_PACKED and not flags & FLAG_UNPACKED:
-                    raw, = struct.unpack_from("<i", view, body_offset)
-                    n_samples = raw // ssize
-                else:
-                    n_samples = (n - 12) // ssize
-                out.append(SubBlock(index=len(out), offset=off, body_offset=body_offset, body_size=n - 12,
-                                    flags=flags, n_samples=n_samples))
+                out.append(subblock_at(view, ch.blocks[b].offset, len(out),
+                                       f"block index of record {rec.index + 1} channel {ch.channel + 1} block {b + 1}"))
+
+
+def subblock_at(view: memoryview, off: int, index: int = 0, what: str = "block index") -> SubBlock:
+    """The sub-block whose 16-byte header the Map stream's block index puts at ``off`` of the
+    Blocks stream (nothing decoded); :class:`BlocksFormatError` when there is no such header."""
+    if off < 0 or off + HEADER_SIZE > len(view):
+        raise BlocksFormatError(f"{what} points outside the Blocks stream ({off})")
+    n, _check, negn, flags = struct.unpack_from("<iiii", view, off)
+    if negn != -n or n < 12:
+        raise BlocksFormatError(f"{what} points at offset {off}, which holds no sub-block header")
+    body_offset = off + HEADER_SIZE
+    ssize = 4 if flags & FLAG_32BIT else 2
+    if flags & FLAG_PACKED and not flags & FLAG_UNPACKED:
+        if body_offset + 4 > len(view):
+            raise BlocksFormatError(f"{what}: the sub-block at {off} is cut short")
+        raw, = struct.unpack_from("<i", view, body_offset)
+        if raw < 0:
+            raise BlocksFormatError(f"{what}: the sub-block at {off} has a negative size ({raw})")
+        n_samples = raw // ssize
+    else:
+        n_samples = (n - 12) // ssize
+    return SubBlock(index=index, offset=off, body_offset=body_offset, body_size=n - 12, flags=flags, n_samples=n_samples)
 
 
 @dataclass(frozen=True)
@@ -608,8 +616,12 @@ class AdichtFile:
             mins, maxs = self._envelopes[key]
             return mins.copy(), maxs.copy()
         cr = self.channel_record(record, channel)
-        mins = np.array([b.min for b in cr.blocks], dtype=np.float64)
-        maxs = np.array([b.max for b in cr.blocks], dtype=np.float64)
+        if cr is not None:
+            mins = np.array([b.min for b in cr.blocks], dtype=np.float64)
+            maxs = np.array([b.max for b in cr.blocks], dtype=np.float64)
+        else:       # a legacy (scan) parse has no per-record index: every block's min/max is "not stored"
+            mins = np.full(len(self.index.blocks_per_record[record]), np.nan)
+            maxs = mins.copy()
         missing = np.flatnonzero(np.isnan(mins) | np.isnan(maxs))
         if len(missing) and not fill:
             return mins, maxs
