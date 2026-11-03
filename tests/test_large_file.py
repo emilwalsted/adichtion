@@ -2,7 +2,7 @@
 
 The quick test checks the generator on a few megabytes, block by block.  ``test_two_gigabytes`` (marked
 ``slow``: ``--runslow`` or ``ADICHTION_SLOW=1``; it needs about 2.3 GB of free disk) writes a 2.2 GB file
-in the test's own temporary folder, which pytest removes, and checks that it opens on the file's mapping,
+in the test's temporary folder and deletes it at the end (pytest keeps its last temporary folders), and checks that it opens on the file's mapping,
 that the memory the reader itself allocates does not follow the file size, and that blocks anywhere in
 the file decode sample for sample.  The measurements behind it are in docs/FORMAT.md §9.
 """
@@ -68,3 +68,4 @@ def test_two_gigabytes(tmp_path):
         rec = f.records[1]
         x = rec.read_raw(2, rec.ticks - 16000, rec.ticks)        # the last block of the file
         np.testing.assert_array_equal(x, _variant(info, 2, int(starts[-1]) - 1))
+    os.remove(p)

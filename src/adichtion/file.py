@@ -240,7 +240,7 @@ def _fill_subblocks_from_map(view: memoryview, chart: ChartData, out: list[SubBl
         for b in range(len(rec.blocks)):
             for ch in rec.channels:
                 out.append(subblock_at(view, ch.blocks[b].offset, len(out),
-                                       f"block index of record {rec.index} channel {ch.channel} block {b}"))
+                                       f"block index of record {rec.index + 1} channel {ch.channel + 1} block {b + 1}"))
 
 
 def subblock_at(view: memoryview, off: int, index: int = 0, what: str = "block index") -> SubBlock:
@@ -257,6 +257,8 @@ def subblock_at(view: memoryview, off: int, index: int = 0, what: str = "block i
         if body_offset + 4 > len(view):
             raise BlocksFormatError(f"{what}: the sub-block at {off} is cut short")
         raw, = struct.unpack_from("<i", view, body_offset)
+        if raw < 0:
+            raise BlocksFormatError(f"{what}: the sub-block at {off} has a negative size ({raw})")
         n_samples = raw // ssize
     else:
         n_samples = (n - 12) // ssize

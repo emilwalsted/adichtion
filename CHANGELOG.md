@@ -18,7 +18,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   `AttributeError`, `OverflowError` or a numpy error, and a damaged LabChart for Mac table of contents made the reader
   allocate gigabytes; found by fuzzing and fixed (docs/FORMAT.md §9).
 - The block min/max of a file whose Map stream is read by the scan (the legacy layout) raised `AttributeError`.
-- `adichtion check` no longer fills the block cache (1.2 GB less memory on a 2.2 GB file).
+- `adichtion check` no longer fills the block cache (1.0 GB less memory on a 2.2 GB file).
 - PySide6 6.12.0 is excluded from the `ui` extra: on Python 3.10 and 3.11 it releases one reference to `None` on every
   `QPainter.setPen` and `setRenderHint` call, and the viewer aborted with "deallocating None" after a few thousand paints.
 

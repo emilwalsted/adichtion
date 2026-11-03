@@ -4,7 +4,7 @@ Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
 ## 2026-11-03 — Damaged files: one error class, a strict reader and a reporting `check`
 
-Fuzzing the readers with mutated synthetic documents (`tests/test_fuzz.py`, docs/FORMAT.md §9) found seven
+Fuzzing the readers with mutated synthetic documents (`tests/test_fuzz.py`, docs/FORMAT.md §9) and the review of the change found ten
 ways a damaged file escaped as an arbitrary exception or an unbounded allocation; each is fixed with a
 regression test.
 
@@ -24,7 +24,7 @@ regression test.
   next crash. The table of contents is checked explicitly (a chunk reaching past the end of the file), because
   there the damage was a 4 GB allocation, not an exception.
 - **`check` decodes without the block cache** (`cache=False`): each block is read once, and on a 2.2 GB file
-  the cache added 1.2 GB of memory for nothing.
+  the cache added 1.0 GB of memory for nothing (3.4 GB against 2.4 GB peak).
 - **No `madvise` at opening.** Telling the OS that the header scan at opening is random reads cut the bytes
   read on a cold cache from 2.0 GB to 619 MB, but made the cold open slower (6.8 s against 2.9 s, measured on
   Linux); not kept. Worth measuring again on a Mac with a real large file before revisiting.

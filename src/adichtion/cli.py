@@ -165,8 +165,10 @@ def _salvage_report(path: str) -> None:
                         sb = subblock_at(view, ch.blocks[b].offset)
                         if sb.body_offset + sb.body_size > len(view):
                             raise AdichtionError("cut short")
+                        if info.ticks <= 0 or (sb.n_samples % info.ticks and info.ticks % max(sb.n_samples, 1)):
+                            raise AdichtionError("sample count does not fit the block")
                         decode_subblock(view[sb.body_offset: sb.body_offset + sb.body_size], sb)
-                    except AdichtionError:
+                    except (AdichtionError, IndexError):    # IndexError: a channel's block list shorter than the record's
                         ok = False
                         break
                 if ok:
@@ -199,16 +201,17 @@ def cmd_check(a: argparse.Namespace) -> None:
     with f:
         if f.parse_mode != "sequential":
             sys.exit("the Map stream was not parsed by the full grammar; nothing to check against")
+        n = bad = unchecked = damaged = 0
         if f.kind != "mac":
             try:
                 walk = f.walk_subblocks()
             except AdichtionError as exc:
                 walk = None
+                damaged += 1        # the indexed blocks may all read; the chain between them is still damaged
                 print(f"DAMAGED: the Blocks_0 chain cannot be walked: {exc}")
             if walk is not None and [(s.offset, s.body_size) for s in walk] != \
                     [(s.offset, s.body_size) for s in f.index.subblocks]:
                 sys.exit("MISMATCH: the block index of the Map stream and the Blocks_0 chain disagree")
-        n = bad = unchecked = damaged = 0
         for rec in f.records:
             for ch in range(f.n_channels):
                 if not f.has_data(ch):
@@ -223,8 +226,10 @@ def cmd_check(a: argparse.Namespace) -> None:
                         x = f.decode_block(rec.index, b, ch, cache=False)    # each block once: no cache to fill
                     except AdichtionError as exc:
                         damaged += 1
+                        rate = rec.tick_rate_hz
+                        span = f"{start / rate:.3f}-{t0 / rate:.3f} s" if rate else f"ticks {start}-{t0}"
                         print(f"DAMAGED: record {rec.index + 1} channel {ch + 1} block {b + 1} "
-                              f"({start / rec.tick_rate_hz:.3f}-{t0 / rec.tick_rate_hz:.3f} s of the record): {exc}")
+                              f"({span} of the record): {exc}")
                         continue
                     if not len(x):
                         continue

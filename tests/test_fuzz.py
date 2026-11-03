@@ -203,7 +203,7 @@ def test_fuzz_damaged_files(case):
 
 
 @pytest.mark.slow
-@settings(max_examples=3000, deadline=None, database=None,
+@settings(max_examples=3000, deadline=None, database=None, print_blob=True,
           suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large])
 @given(damaged())
 def test_fuzz_long(case):
@@ -381,3 +381,37 @@ def test_check_reports_an_unreadable_block_and_reads_the_rest(tmp_path, capsys, 
     assert code == 1 and "VERDICT: DAMAGED" in out
     assert "DAMAGED: record 1 channel 2 block 3 (32.000-40.000 s of the record): synthetic damage" in out
     assert "15 blocks checked, 0 mismatches, 1 blocks unreadable (the other blocks read)" in out
+
+
+def test_negative_packed_sample_count(tmp_path, capsys):
+    """A packed sub-block whose stored size is negative opened (16000 % -2 == 0) and then failed with
+    a plain ValueError in numpy; found by review."""
+    data, base, sb = _with_block_offsets()
+    b = bytearray(data)
+    struct.pack_into("<i", b, base + sb.body_offset, -4)
+    assert outcome(bytes(b)) == "BlocksFormatError"
+    p = tmp_path / "x.adicht"
+    p.write_bytes(bytes(b))
+    code, out = _check(p, capsys)
+    assert code == 1 and "VERDICT: DAMAGED" in out
+
+
+def test_check_counts_a_damaged_chain_even_when_every_block_reads(tmp_path, capsys):
+    """A sub-block header whose length fields are wrong breaks the walk of the chain, while the block
+    index still finds every block; check printed DAMAGED but ended with "match" and exit 0."""
+    data, base, sb = _with_block_offsets()
+    b = bytearray(data)
+    n = struct.unpack_from("<i", b, base + sb.offset)[0]
+    struct.pack_into("<i", b, base + sb.offset, n + 4)
+    struct.pack_into("<i", b, base + sb.offset + 8, -(n + 4))
+    p = tmp_path / "x.adicht"
+    p.write_bytes(bytes(b))
+    code, out = _check(p, capsys)
+    assert "DAMAGED: the Blocks_0 chain cannot be walked" in out
+    assert code == 1 and "VERDICT: DAMAGED" in out
+
+
+def test_iter_subblocks_on_a_header_at_the_very_end():
+    from adichtion.blocks import FLAG_PACKED, MAGIC, iter_subblocks
+    with pytest.raises(BlocksFormatError, match="cut short"):
+        list(iter_subblocks(MAGIC + struct.pack("<iiii", 20, 0, -20, FLAG_PACKED)))

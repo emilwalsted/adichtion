@@ -499,7 +499,8 @@ fixed sweeps) is part of `pytest -q`; `--runslow` adds 3000 random cases.
 | `Map`/`Blocks_0` missing from the directory | `AdichtFile` | `AdichtFormatError` |
 | Map stream grammar | `parse_chart_data` (falls back to the scan of §3 where the grammar fails) | `ChartDataError` |
 | block index points outside `Blocks_0` or at no sub-block header (`n`, `−n`) | `AdichtFile` at opening | `BlocksFormatError` |
-| a sub-block's sample count does not fit its block's ticks | `SubBlockIndex` at opening | `BlocksFormatError` |
+| a sub-block's sample count is negative or does not fit its block's ticks | `AdichtFile` and `SubBlockIndex` at opening | `BlocksFormatError` |
+| a packed body too small for its sample count (PackBits expands at most 2 bytes into 129) | decoding the block, before allocating | `BlocksFormatError` |
 | bit planes or an unpacked body too short for the sample count | decoding the block | `BlocksFormatError` |
 | a body whose PackBits stream is short but whose planes still fit | not detected: the missing planes read as zero; `check` sees the min/max differ | |
 | LabChart for Mac: table of contents, a chunk reaching past the end of the file | `MacResFile` | `MacChartError` |
@@ -515,13 +516,17 @@ contrast, stops only the file's opening, not the decoding of the other blocks:
 ### 9.3 `adichtion check` on a damaged file
 
 `check` ends with `VERDICT: match`, `MISMATCH` (a block decodes, but not to the
-min/max stored for it) or `DAMAGED` (exit code 1 for both of the last two). For
+min/max stored for it) or `DAMAGED` (exit code 1 for both of the last two). It
+stops earlier, with exit code 1 and no verdict, when the file cannot be read at
+all from the disk, when its Map stream was read by the scan (nothing to check
+against) or when the block index and the `Blocks_0` chain disagree; a chain
+that cannot be walked at all counts as `DAMAGED`. For
 `DAMAGED` it prints what is wrong, the part of the file (container, Map stream,
 sample data, LabChart for Mac structure) and, when the file cannot be opened,
 for every record how many of its blocks read in every channel and where the
 first unreadable one starts, for example:
 
-    DAMAGED: the file cannot be opened: block index of record 0 channel 0 block 1 points at offset 94332, which holds no sub-block header
+    DAMAGED: the file cannot be opened: block index of record 1 channel 1 block 2 points at offset 94332, which holds no sub-block header
       where: the sample data (the Blocks_0 stream)
       record 1: 2 of 3 blocks readable in every channel; the first unreadable block is block 2 at 16.000 s
       record 2: 1 of 1 blocks readable in every channel
