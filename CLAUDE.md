@@ -58,6 +58,17 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    4–6 only; never put Qt imports below it. `src/adichtion/ui/CLAUDE.md` has
    its structure and the Qt rules that were learnt the hard way.
 
+## Damaged files (docs/FORMAT.md §9)
+
+- Every error for a file the reader cannot read is an `AdichtionError` (`errors.py`, a `ValueError`); a new
+  error class for file content derives from it. Never let `struct.error`, `IndexError` or a numpy error
+  escape a decoder: check the bound and raise the layer's own error, or (the Mac parser) convert at the
+  module's boundary. A length or count read from the file is checked against the file before it sizes an
+  allocation (`fh.read(n)` allocates `n` up front).
+- `tests/test_fuzz.py` holds the property (data or an `AdichtionError`, within 20 s and 256 MiB); a new
+  finding gets a fixed regression test there. `pytest --runslow` (or `ADICHTION_SLOW=1`) runs the long
+  fuzzing and `tests/test_large_file.py`'s 2.2 GB file (`synth.write_large_synthetic`).
+
 ## Non-negotiable rules
 
 - **Correctness is verified, not assumed.** Raw int16 decoding is

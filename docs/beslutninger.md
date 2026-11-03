@@ -2,6 +2,35 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-11-03 — Damaged files: one error class, a strict reader and a reporting `check`
+
+Fuzzing the readers with mutated synthetic documents (`tests/test_fuzz.py`, docs/FORMAT.md §9) found seven
+ways a damaged file escaped as an arbitrary exception or an unbounded allocation; each is fixed with a
+regression test.
+
+- **One error class.** `AdichtionError(ValueError)` (`adichtion.errors`, exported from the package) is the base
+  of every reader error: `AdichtFormatError`, `ChartDataError`, `BlocksFormatError`, `MacChartError`/
+  `MacFormatError`, `VideoStreamError`, `MovieError`. They were all `ValueError` already, so code that caught
+  `ValueError` keeps working; new code can catch `AdichtionError` and know it is the file, not a bug.
+- **The reader stays strict.** A file whose block index points at no sub-block header, or whose sample count
+  does not fit, still refuses to open, rather than opening with holes that every caller would have to
+  handle. Considered and rejected: opening anyway and returning NaN or empty blocks for the damaged ones. The
+  viewer, export and inference would then silently present a partial recording as whole. What a user needs
+  from a damaged file is to know how much is left, so that is what `adichtion check` reports (record by
+  record, from the Map stream's block index, without opening the file through `AdichtFile`).
+- **Mac parser errors are converted at its boundary.** `read_mac_document` turns `struct.error`,
+  `IndexError`, `OverflowError` and `UnicodeDecodeError` from the parser into `MacFormatError`, instead of a
+  bounds check in front of every field: the format has dozens of offsets, and a missed check would be the
+  next crash. The table of contents is checked explicitly (a chunk reaching past the end of the file), because
+  there the damage was a 4 GB allocation, not an exception.
+- **`check` decodes without the block cache** (`cache=False`): each block is read once, and on a 2.2 GB file
+  the cache added 1.2 GB of memory for nothing.
+- **No `madvise` at opening.** Telling the OS that the header scan at opening is random reads cut the bytes
+  read on a cold cache from 2.0 GB to 619 MB, but made the cold open slower (6.8 s against 2.9 s, measured on
+  Linux); not kept. Worth measuring again on a Mac with a real large file before revisiting.
+- **Not done:** the block index costs about 4 % of the file size in memory (one `SubBlock` per sub-block); flat
+  arrays would cut it, but every user of `SubBlockIndex` would change. Left for a later change.
+
 ## 2026-10-16 — PySide6 6.12.0 is excluded (it aborts on Python 3.10 and 3.11)
 
 The CI job on Ubuntu with Python 3.10 died with "Aborted (core dumped)" part-way through the suite; the other five jobs were green.
