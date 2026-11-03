@@ -17,6 +17,7 @@ Public API::
     from adichtion.macchart import channel_settings   # ... or read them from a LabChart for Mac document
 """
 from .container import AdichtContainer, AdichtFormatError
+from .errors import AdichtionError
 from .file import AdichtFile, Record, Selection
 from .model import (BlockInfo, ChannelBlock, ChannelInfo, ChannelRecordInfo, ChannelSetup, ChartData, Comment,
                     RecordInfo, UnitsConversion, VideoClip)
@@ -24,7 +25,7 @@ from .model import (BlockInfo, ChannelBlock, ChannelInfo, ChannelRecordInfo, Cha
 __version__ = "1.0.0"
 
 __all__ = [
-    "AdichtFile", "Record", "Selection", "AdichtContainer", "AdichtFormatError",
+    "AdichtFile", "Record", "Selection", "AdichtContainer", "AdichtFormatError", "AdichtionError",
     "BlockInfo", "ChannelBlock", "ChannelInfo", "ChannelRecordInfo", "ChannelSetup", "ChartData", "Comment",
     "RecordInfo", "UnitsConversion", "VideoClip",
     "__version__",

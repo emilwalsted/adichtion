@@ -66,3 +66,21 @@ def samples_dir():
     """Folder with real .adicht files (and LabChart exports) for the gated integration tests."""
     d = os.environ.get("ADICHTION_SAMPLES")
     return d if d and os.path.isdir(d) else None
+
+
+# -- slow tests (the long fuzzing run, the multi-gigabyte file): only with --runslow or ADICHTION_SLOW=1
+def pytest_addoption(parser):
+    parser.addoption("--runslow", action="store_true", default=False, help="run the tests marked slow")
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: long-running; runs with --runslow or ADICHTION_SLOW=1")
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--runslow") or os.environ.get("ADICHTION_SLOW") == "1":
+        return
+    skip = pytest.mark.skip(reason="slow: run with --runslow or ADICHTION_SLOW=1")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip)

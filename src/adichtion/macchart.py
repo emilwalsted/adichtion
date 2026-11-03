@@ -26,6 +26,8 @@ bytes, 0x0e: 6 bytes, 0x10: 8 bytes, 0x18: float64, 8: Pascal string).
 """
 from __future__ import annotations
 
+from .errors import AdichtionError
+
 import os
 import struct
 from dataclasses import dataclass, field
@@ -86,7 +88,7 @@ CALCULATION_LABELS = {
 }
 
 
-class MacChartError(ValueError):
+class MacChartError(AdichtionError):
     pass
 
 
@@ -164,6 +166,8 @@ class MacResFile:
         for i in range(0, self.toc_length, 14):
             typ = toc[i : i + 4].decode("latin-1")
             cid, off, ln = struct.unpack_from(">HII", toc, i + 4)
+            if off + ln > self.size:        # a damaged length would make read() allocate it up front
+                raise MacChartError(f"chunk {typ!r} {cid} ({ln} bytes at {off}) reaches past the end of the file")
             self.chunks.append(MacChunk(typ, cid, off, ln))
 
     def find(self, typ: str, cid: Optional[int] = None) -> list[MacChunk]:

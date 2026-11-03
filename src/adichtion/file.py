@@ -608,8 +608,12 @@ class AdichtFile:
             mins, maxs = self._envelopes[key]
             return mins.copy(), maxs.copy()
         cr = self.channel_record(record, channel)
-        mins = np.array([b.min for b in cr.blocks], dtype=np.float64)
-        maxs = np.array([b.max for b in cr.blocks], dtype=np.float64)
+        if cr is not None:
+            mins = np.array([b.min for b in cr.blocks], dtype=np.float64)
+            maxs = np.array([b.max for b in cr.blocks], dtype=np.float64)
+        else:       # a legacy (scan) parse has no per-record index: every block's min/max is "not stored"
+            mins = np.full(len(self.index.blocks_per_record[record]), np.nan)
+            maxs = mins.copy()
         missing = np.flatnonzero(np.isnan(mins) | np.isnan(maxs))
         if len(missing) and not fill:
             return mins, maxs

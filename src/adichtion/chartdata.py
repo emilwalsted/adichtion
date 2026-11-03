@@ -23,6 +23,8 @@ samples stay readable; :attr:`ChartData.parse_mode` tells which path was used.
 """
 from __future__ import annotations
 
+from .errors import AdichtionError
+
 import math
 import re
 import struct
@@ -40,7 +42,7 @@ DTYPE_TAG_BASE = 0x80020000     # channel data-type tag: | 1 = int16, | 3 = floa
 NEW_OBJECT = 0x80000000         # high bit of an object slot: a new object follows
 
 
-class ChartDataError(ValueError):
+class ChartDataError(AdichtionError):
     pass
 
 

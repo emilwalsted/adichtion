@@ -10,6 +10,8 @@ depend on numpy and never decodes sample data.
 """
 from __future__ import annotations
 
+from .errors import AdichtionError
+
 import mmap
 import os
 import struct
@@ -27,7 +29,7 @@ TYPE_STORAGE = 1
 TYPE_STREAM = 2
 
 
-class AdichtFormatError(ValueError):
+class AdichtFormatError(AdichtionError):
     """Raised when a file does not look like an ADInstruments compound file."""
 
 
@@ -68,6 +70,7 @@ class AdichtContainer:
 
     def __init__(self, path: str | os.PathLike):
         self.path = os.fspath(path)
+        self._views: list[memoryview] = []      # the zero-copy views handed out by stream_view (first: close() reads it)
         self._fh = open(self.path, "rb")
         try:
             self.data: mmap.mmap | bytes = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
@@ -81,13 +84,15 @@ class AdichtContainer:
         if not (8 <= log2cl <= 20):
             self.close()
             raise AdichtFormatError(f"implausible cluster size 2**{log2cl}")
+        if not (HEADER_SIZE <= self.header_size < len(d)):
+            self.close()
+            raise AdichtFormatError(f"implausible header size {self.header_size}")
         self.cluster_size = 1 << log2cl
         self.capacity, self.neg_capacity, self.map_first = struct.unpack_from("<qqq", d, 0x9C)
         self.root = Entry.from_bytes(d[0xB8 : 0xB8 + ENTRY_SIZE])
         self.n_clusters = (len(d) - self.header_size) // self.cluster_size
         self.entries_per_page = self.cluster_size // 8
         self._tree: Optional[Entry] = None
-        self._views: list[memoryview] = []      # the zero-copy views handed out by stream_view
 
     # -- lifecycle -----------------------------------------------------------
     def close(self) -> None:
@@ -124,12 +129,16 @@ class AdichtContainer:
 
     def cluster(self, cluster: int) -> bytes:
         o = self.offset(cluster)
+        if cluster < 2 or o >= len(self.data):
+            raise AdichtFormatError(f"cluster {cluster} lies outside the file")
         return bytes(self.data[o : o + self.cluster_size])
 
     def map_entry(self, cluster: int) -> tuple[int, int]:
         """(next, prev) links of a cluster from the cluster map; 0 = none."""
         page, idx = divmod(cluster, self.entries_per_page)
         o = self.offset(self.map_first + page) + idx * 8
+        if cluster < 0 or o < self.header_size or o + 8 > len(self.data):
+            raise AdichtFormatError(f"the cluster map entry of cluster {cluster} lies outside the file")
         return struct.unpack_from("<ii", self.data, o)
 
     def chain(self, first: int, last: int) -> Iterator[int]:
@@ -213,7 +222,10 @@ class AdichtContainer:
     def _load_table(self, e: Entry) -> Optional[list[Entry]]:
         if e.first <= 0:
             return None
-        blob = self.cluster(e.first)  # tables have always fitted in one cluster
+        try:
+            blob = self.cluster(e.first)  # tables have always fitted in one cluster
+        except AdichtFormatError:
+            return None                   # an entry pointing outside the file is not a table (as before)
         return self.parse_table(blob[: e.size] if e.size else blob)
 
     def tree(self) -> Entry:
