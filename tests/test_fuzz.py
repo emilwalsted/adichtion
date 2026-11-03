@@ -305,3 +305,79 @@ def test_damaged_mac_document_raises_mac_format_error():
         b[i:i + 64] = b"\xff" * len(b[i:i + 64])
         seen.add(outcome(bytes(b)))
     assert "MacFormatError" in seen
+
+
+# -- adichtion check on damaged files ------------------------------------------------------------
+def _check(path, capsys):
+    from adichtion.cli import main as cli_main
+    with pytest.raises(SystemExit) as exit_info:
+        cli_main(["check", str(path)])
+    return exit_info.value.code, capsys.readouterr().out
+
+
+def _with_block_offsets():
+    data = bases()["v29"]
+    p = os.path.join(tempfile.mkdtemp(), "v29.adicht")
+    with open(p, "wb") as fh:
+        fh.write(data)
+    with AdichtFile(p) as f:
+        return data, f._container.offset(f._blocks_entry.first), f.index.get(0, 1, 0)
+
+
+def test_check_undamaged(tmp_path, capsys):
+    p = tmp_path / "ok.adicht"
+    p.write_bytes(bases()["v29"])
+    code, out = _check(p, capsys)
+    assert code == 0 and "VERDICT: match" in out and "DAMAGED" not in out
+
+
+def test_check_names_the_damaged_header_and_what_still_reads(tmp_path, capsys):
+    data, base, sb = _with_block_offsets()
+    b = bytearray(data)
+    b[base + sb.offset + 8: base + sb.offset + 12] = bytes(4)       # the -n check field of record 1 block 2, channel 1
+    p = tmp_path / "x.adicht"
+    p.write_bytes(bytes(b))
+    code, out = _check(p, capsys)
+    assert code == 1 and "VERDICT: DAMAGED" in out
+    assert "where: the sample data" in out
+    assert "record 1: 2 of 3 blocks readable in every channel; the first unreadable block is block 2 at 16.000 s" in out
+    assert "record 2: 1 of 1 blocks readable" in out
+
+
+def test_check_reports_a_cut_off_file(tmp_path, capsys):
+    data, base, sb = _with_block_offsets()
+    p = tmp_path / "x.adicht"
+    p.write_bytes(data[: base + sb.offset + 100])
+    code, out = _check(p, capsys)
+    assert code == 1 and "VERDICT: DAMAGED" in out and "where: the container" in out
+    assert "readable: nothing" in out
+
+
+def test_check_reports_an_impossible_sample_count(tmp_path, capsys):
+    data, base, sb = _with_block_offsets()
+    b = bytearray(data)
+    struct.pack_into("<i", b, base + sb.body_offset, 1 << 30)        # the packed block claims 2**29 samples
+    p = tmp_path / "x.adicht"
+    p.write_bytes(bytes(b))
+    code, out = _check(p, capsys)
+    assert code == 1 and "VERDICT: DAMAGED" in out and "536870912 samples for 16000 ticks" in out
+    assert "record 1: 2 of 3 blocks readable in every channel; the first unreadable block is block 2" in out
+
+
+def test_check_reports_an_unreadable_block_and_reads_the_rest(tmp_path, capsys, monkeypatch):
+    """A block that fails only when it is decoded (the file opens): named with its time, the
+    other blocks are still checked."""
+    p = tmp_path / "x.adicht"
+    p.write_bytes(bases()["v29"])
+    real = AdichtFile.decode_block
+
+    def failing(self, record, block, channel, cache=True):
+        if (record, block, channel) == (0, 2, 1):
+            raise BlocksFormatError("synthetic damage")
+        return real(self, record, block, channel, cache)
+
+    monkeypatch.setattr(AdichtFile, "decode_block", failing)
+    code, out = _check(p, capsys)
+    assert code == 1 and "VERDICT: DAMAGED" in out
+    assert "DAMAGED: record 1 channel 2 block 3 (32.000-40.000 s of the record): synthetic damage" in out
+    assert "15 blocks checked, 0 mismatches, 1 blocks unreadable (the other blocks read)" in out
