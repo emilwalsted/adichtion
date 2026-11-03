@@ -201,6 +201,24 @@ equal the tag, and `CHANGELOG.md` needs the `## [X.Y.Z]` entry). The build also 
 GitHub release without a PyPI release or the reverse; check both runs. The gate tests Python 3.12 on Ubuntu only: check
 the *Tests* workflow (3.10, three OSes) on the release commit. The dry run publishes whatever ref it is started on.
 
+## 7. Package catalogues (Homebrew, winget, Flathub)
+
+`packaging/` holds a Homebrew cask, the winget manifests and a Flatpak manifest for the
+current release; `packaging/README.md` has what each catalogue needs and how to submit to it.
+After the release is published (installers on the GitHub release, the MSI signed and its asset
+replaced, the wheel on PyPI), one call rewrites all of them:
+
+```
+python packaging/update.py X.Y.Z --verify --validate
+```
+
+It reads the release from GitHub's REST API, downloads the dmg and the MSI to check their
+sha256, reads the MSI's product code with `msiinfo` (msitools), looks up the Flatpak's wheels
+on PyPI, and validates the result against the catalogues' schemas. Commit the result and send
+each catalogue its update (`packaging/README.md`). Run it after signing the MSI, not before:
+signing changes the file and its sha256. When the `[ui]` extra's ranges change, move the pins
+in `packaging/flatpak/requirements.txt` with them (`tests/test_packaging.py` checks it on Python 3.11 and later, where `tomllib` exists). The files were drafted with an AI coding assistant: read the AI policy note at the top of `packaging/README.md` before submitting.
+
 ## Not done yet / known limits
 
 - The dmg is built for the runner's architecture (Apple Silicon on `macos-latest`); there is

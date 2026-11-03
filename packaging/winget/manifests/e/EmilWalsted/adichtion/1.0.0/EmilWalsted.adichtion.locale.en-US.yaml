@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
+
+PackageIdentifier: EmilWalsted.adichtion
+PackageVersion: 1.0.0
+PackageLocale: en-US
+Publisher: Emil Ingerslev Walsted
+PublisherUrl: https://github.com/emilwalsted
+PublisherSupportUrl: https://github.com/emilwalsted/adichtion/issues
+Author: Emil Ingerslev Walsted
+PackageName: adichtion
+PackageUrl: https://www.respmech.dk/adichtion.html
+License: GPL-3.0-or-later
+LicenseUrl: https://github.com/emilwalsted/adichtion/blob/main/LICENSE
+ShortDescription: View and export LabChart .adicht recordings without LabChart.
+Description: |-
+  adichtion opens LabChart .adicht files: every channel on one time axis with the blocks
+  laid end to end, comments, the video recorded with a block, and the definitions of
+  calculated channels recovered from the data. It exports the file, a block or a selection
+  as LabChart-style text, CSV or Excel.
+Moniker: adichtion
+Tags:
+- adicht
+- physiology
+- recording
+- viewer
+- export
+- csv
+- excel
+ReleaseNotesUrl: https://github.com/emilwalsted/adichtion/releases/tag/v1.0.0
+ManifestType: defaultLocale
+ManifestVersion: 1.12.0
