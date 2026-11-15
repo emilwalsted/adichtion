@@ -116,7 +116,7 @@ them, with the block labels and comment flags in a strip above the channels.
   them with the document's definition, and the channel and export dialogs
   show them greyed out.
 * *Export…* writes the whole file, the block under the cursor or the selected
-  interval as LabChart-style text, CSV or an Excel workbook, for the channels
+  interval as LabChart-style text, CSV, a tab-separated table, an Excel workbook or a MATLAB file, for the channels
   shown, all channels or a choice. Channels of different sampling rates share
   one table at the tick rate, the slower ones up-sampled as LabChart's own
   export does; the dialog says which.

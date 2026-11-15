@@ -28,8 +28,8 @@ x-linked channel stacks, worker threads); the project rules stay in the repo-roo
 - `icons.py` — the toolbar's line icons as SVG strings in the theme's colours (`toolbar_icon(name)`);
   `startup_dialog.py` — the dialog the app opens with (recent files + "Open a file…").
 - `main_window.py` — menus, toolbar, the three panels (`info_panel`, `data_panel`,
-  `video_panel`), dialogs (`channel_dialog`, `export_dialog`), inference and export
-  jobs on a second `JobRunner`.
+  `video_panel`), dialogs (`channel_dialog`, `export_dialog`), statistics and export
+  jobs on its own `JobRunner` (`runner`) and inference on another (`infer_runner`).
 - **Opening a file is asynchronous** (`MainWindow.open_file`): `open_runner` (a third `JobRunner`) runs `_open_job`
   (`AdichtFile(path)`, which touches no Qt); `_on_open_done` installs the file on the GUI thread. `open_file`
   returning True means "started", not "opened". The newest request wins; a cancelled, replaced or late (window

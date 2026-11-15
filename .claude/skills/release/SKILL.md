@@ -1,6 +1,6 @@
 ---
 name: release
-description: Releasing adichtion — CHANGELOG entry, the two-place version bump, v* tag, the "Build installers" workflow (Windows MSI, macOS dmg, Ubuntu .deb), macOS notarisation secrets and local Certum MSI signing. Use for any release, changelog, installer, signing or version task.
+description: Releasing adichtion — CHANGELOG entry, the two-place version bump, v* tag, the "Build installers" workflow (Windows MSI, macOS dmg, Ubuntu .deb), macOS notarisation secrets and local Certum MSI signing, the PyPI publish, the website notification and the package catalogues. Use for any release, changelog, installer, signing or version task.
 ---
 
 # Releasing adichtion
@@ -41,11 +41,17 @@ Run workflow*) only produces artifacts and needs no permission.
 - A `.adicht` double-click opens the app (document type registered by briefcase; macOS
   `FileOpen` handled in `ui/app.py`). This is the part only a real Mac or Windows machine can
   verify; the headless tests cannot.
+- PyPI: `.github/workflows/publish-pypi.yml` publishes on the same `v*` tag (Trusted Publishing, environment `pypi`;
+  `docs/RELEASING.md` section 6). It runs in parallel with *Build installers*: check both runs. A PyPI version can
+  never be replaced, and a manual run of *Publish to PyPI* goes to TestPyPI.
+- Website: the last step of `publish-release` sends a `repository_dispatch` (`adichtion-release`) that makes
+  respmech.dk publish its Adichtion page again with the new version. Without the secret `WEBSITE_DISPATCH_TOKEN` the
+  step is skipped with a notice, and an HTTP error is only a warning. The release notes on that page are added by hand.
+- Package catalogues: after the release, and after the MSI is signed,
+  `python packaging/update.py X.Y.Z --verify --validate` (`docs/RELEASING.md` section 7, `packaging/README.md`).
 
 ## What is not there yet
 
-- PyPI: `.github/workflows/publish-pypi.yml` publishes on the same `v*` tag (Trusted Publishing; one-time setup by Emil,
-  `docs/RELEASING.md` section 6). No website hook (unlike RespMech).
 - No Intel-Mac build (the dmg is built on `macos-latest`, Apple Silicon), as for RespMech.
 - No `release-request` flow for environments that cannot push tags: ask Emil to tag from the
   Mac instead.
