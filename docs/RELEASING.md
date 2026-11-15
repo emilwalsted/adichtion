@@ -223,5 +223,3 @@ in `packaging/flatpak/requirements.txt` with them (`tests/test_packaging.py` che
 
 - The dmg is built for the runner's architecture (Apple Silicon on `macos-latest`); there is
   no Intel build, as for RespMech.
-- PyPI publishing is set up (section 6) but needs the one-time trusted-publisher registration on PyPI before the
-  first tag; until then `pip install` is from the repository.

@@ -1,8 +1,8 @@
 # CLAUDE.md — adichtion
 
-Project memory for **adichtion**: a reader (and, later, a desktop viewer/exporter
-app) for ADInstruments LabChart `.adicht` files, built on a reverse-engineered
-format description. Public repo `emilwalsted/adichtion`, GPL-3.0-or-later.
+Project memory for **adichtion**: a reader and a desktop viewer/exporter app for
+ADInstruments LabChart recordings (`.adicht` files and LabChart for Mac documents),
+built on a reverse-engineered format description. Public repo `emilwalsted/adichtion`, GPL-3.0-or-later.
 Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 (`emilwalsted/respmech`): same layering, packaging and release discipline.
 
@@ -34,7 +34,7 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
    the same `ChartData`, a `MacBlockIndex` with the interface `AdichtFile` uses,
    and the Mac block decoder (`struct` + numpy, no file handles).
 4. `file.py` (`AdichtFile`, `Record`, `Selection`) + `decimate.py` + `video.py` +
-   `qtmovie.py` — the API the UI will use: lazy per-block decoding with an LRU
+   `qtmovie.py` — the API the UI uses: lazy per-block decoding with an LRU
    cache, unit conversion per record, selections by time or comments, min/max
    envelopes for plotting (from the file's block index when possible),
    LabChart's up-sampling, `AdichtFile.block_table` (one flat table of the block index per channel, for the
@@ -88,8 +88,11 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   consistent across all sample files; the rest is inferred. Update
   `docs/FORMAT.md` §7/§8 when the status changes.
 - **Ask before any upload to a live site or a release tag.** A `v*` tag runs
-  `.github/workflows/release.yml` and publishes a GitHub release with the
-  installers; a manual run of that workflow only produces artifacts.
+  `.github/workflows/release.yml` (a GitHub release with the installers, then a
+  notification that makes respmech.dk publish again) and
+  `.github/workflows/publish-pypi.yml` (the package on PyPI, where a version can
+  never be replaced). A manual run of *Build installers* only produces artifacts;
+  a manual run of *Publish to PyPI* uploads to TestPyPI.
 - **Commits** are authored and committed as Emil Walsted <emilwalsted@gmail.com>,
   without tool-added trailers (`.claude/settings.json` turns them off; do not
   reintroduce them). Commit with explicit paths, never `git add -A`.
@@ -120,7 +123,8 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
 
 - LabChart's "block" = this library's `Record` (following the ADI SDK); the
   16000-tick storage chunks are "blocks" here. Don't mix the two in the UI.
-- `pytest` is fast. The integration tests need `ADICHTION_SAMPLES` pointing at
+- `pytest` takes a few minutes with the viewer tests (about 3½ min for the whole
+  suite on a 4-core Linux machine, measured 2026-11-15). The integration tests need `ADICHTION_SAMPLES` pointing at
   a folder with real files (they skip otherwise); the inference one takes a
   couple of minutes on the eleven 2016 files.
 - Every channel's units object carries its LSB (volts per count, or the scale
@@ -165,7 +169,8 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   `decimate.upsample_like_labchart`: linear, whole counts half away from zero,
   last sample held; 99.998 % identical to the WinChart exports), and the user is
   told (`export.upsampling_notice` in the CLI, the dialog and the status bar).
-- `pytest` (unit + synthetic) stays under a few seconds; the inference tests
+- `pytest` without the viewer tests takes about a minute (measured 2026-11-15; the
+  quick fuzz runs in `tests/test_fuzz.py` are about 20 s of it); the inference tests
   build their own synthetic document with derived channels, the viewer tests
   run headless (`tests/ui/`, `QT_QPA_PLATFORM=offscreen`).
 - UI wording: LabChart's blocks are "blocks" in the app (Emil's call,
@@ -186,6 +191,12 @@ Author: Emil Ingerslev Walsted. The app is modelled on RespMech
   locally afterwards (`scripts/sign-msi-certum.sh`), macOS dmg signed+notarised
   only with the Apple secrets (`docs/SIGNING.md`), Ubuntu 24.04 `.deb` via
   Docker.
+- Package catalogues (`packaging/`, `docs/RELEASING.md` §7): a Homebrew cask, winget
+  manifests and a Flatpak manifest for the released version, rewritten after a release
+  (and after the MSI is signed) by `python packaging/update.py X.Y.Z --verify --validate`;
+  `tests/test_packaging.py` keeps them consistent with each other and with the `[ui]`
+  extra. `packaging/README.md` has each catalogue's submission steps and its policy on
+  AI-assisted contributions; nothing is published from this repository.
 - **A locally rebuilt app can keep showing a stale icon** (`docs/RELEASING.md`
   §5): Briefcase copies `installer/adichtion.*` into the bundle at
   `briefcase create` time only, not on every `build`/`run`, and macOS itself
