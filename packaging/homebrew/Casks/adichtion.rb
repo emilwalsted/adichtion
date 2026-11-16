@@ -1,6 +1,6 @@
 cask "adichtion" do
-  version "1.0.0"
-  sha256 "9ff29799ca8f2b355cea66ba689c000761b2e1414203cce706f84e145556a37c"
+  version "1.0.1"
+  sha256 "d4c883496967d795021e37d56392e97fc0d039171fdcaf3e735f794084f9709f"
 
   url "https://github.com/emilwalsted/adichtion/releases/download/v#{version}/adichtion-#{version}.dmg"
   name "adichtion"

@@ -35,8 +35,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/emilwalsted/adichtion.git
-        tag: v1.0.0
-        commit: 87b24e49c0ea0067e8362f516d1b7692b27aec7d
+        tag: v1.0.1
+        commit: c93037fcefa118c494e6f173fb1a323a3eda66e4
       - type: file
         path: dk.emilwalsted.adichtion.desktop
       - type: file
