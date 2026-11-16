@@ -78,7 +78,7 @@ pythonpath = ["src", "tests"]
 [tool.briefcase]
 project_name = "adichtion"
 bundle = "dk.emilwalsted"                     # -> dk.emilwalsted.adichtion
-version = "1.0.0"
+version = "1.0.1"
 url = "https://github.com/emilwalsted/adichtion"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
