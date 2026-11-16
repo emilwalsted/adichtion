@@ -2,6 +2,21 @@
 
 Daterede beslutninger og afgjorte punkter. Nyeste øverst.
 
+## 2026-11-16 — 1.0.1 is 1.0.0 plus the PySide6 exclusion, released from a branch off v1.0.0
+
+PySide6 6.12.0, still the newest PySide6 on 2026-11-16, aborts the viewer on Python 3.10 and 3.11 (2026-10-16 below),
+and 1.0.0 on PyPI allows it, so a new `pip install "adichtion[ui]"` on those versions got a viewer that crashed after a
+few thousand paints. 1.0.1 carries that exclusion and nothing else a user would notice. It was built on a branch from
+the v1.0.0 tag, and the branch was merged back into main, so the tagged commit is on main as the PyPI gate requires.
+
+- **Not released from main.** Main's decoder hardening (2026-11-03 below) has not yet been run against the real
+  recordings, which a decoder change needs before it ships, and main requires Python 3.11: a 1.0.1 from main would have
+  left Python 3.10 users on 1.0.0, the version with the crash.
+- **What else is on the branch:** the version bump, the warm-up pause test made independent of runner speed, and the
+  release workflow's runner pin and website notification (a tag runs the workflows of the tagged commit).
+- **The next release comes from main as usual,** with the decoder hardening and the Python 3.11 floor, after the
+  integration tests on the real recordings.
+
 ## 2026-11-03 — Python 3.11 is the minimum (3.10 is end of life)
 
 Python 3.10's security support ended on 1 October 2026 (PEP 619, read in the PEP's own source on 2026-11-03), so
