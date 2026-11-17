@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] – 2026-11-17
+
+A file that is damaged or cut short now always gives an `adichtion.AdichtionError` instead of an arbitrary error,
+and `adichtion check` says what is damaged and how much can still be read. Python 3.11 or later is required.
+
 ### Added
 
 - **`adichtion.AdichtionError`**, the base class of every error the reader raises for a file it cannot read (all of them
