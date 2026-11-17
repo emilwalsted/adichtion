@@ -1,18 +1,18 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 
 PackageIdentifier: EmilWalsted.adichtion
-PackageVersion: 1.0.1
+PackageVersion: 1.1.0
 InstallerType: msi
 UpgradeBehavior: install
 FileExtensions:
 - adicht
-ReleaseDate: 2026-11-16
+ReleaseDate: 2026-11-17
 AppsAndFeaturesEntries:
 - UpgradeCode: '{5203AE25-974E-51B6-831E-BB546B20B35D}'
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/emilwalsted/adichtion/releases/download/v1.0.1/adichtion-1.0.1.msi
-  InstallerSha256: A7FE263D01BE7AD1FD5E0B4CF3435E36FBFAA741013145A7ACABF892AEF15043
-  ProductCode: '{DDBF4584-6D80-4811-8C27-8D8639537ED6}'
+  InstallerUrl: https://github.com/emilwalsted/adichtion/releases/download/v1.1.0/adichtion-1.1.0.msi
+  InstallerSha256: E60F45586687015FFFC9E31CD3B9790C50801FEC1EE7F022A7FFE39A5E2DE796
+  ProductCode: '{CDF34BD8-96BA-4799-B7E1-DA2419D1E6EB}'
 ManifestType: installer
 ManifestVersion: 1.12.0

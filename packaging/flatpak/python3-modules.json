@@ -3,13 +3,13 @@
     "buildsystem": "simple",
     "build-commands": [
         "pip3 uninstall -y numpy",
-        "pip3 install --verbose --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} --no-deps --no-build-isolation \"adichtion==1.0.1\" \"numpy==2.2.6\" \"opencv-python-headless==4.12.0.88\" \"imageio-ffmpeg==0.8.1\" \"pyqtgraph==0.14.0\" \"colorama==0.4.6\" \"openpyxl==3.1.5\" \"et-xmlfile==2.0.0\""
+        "pip3 install --verbose --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} --no-deps --no-build-isolation \"adichtion==1.1.0\" \"numpy==2.2.6\" \"opencv-python-headless==4.12.0.88\" \"imageio-ffmpeg==0.8.1\" \"pyqtgraph==0.14.0\" \"colorama==0.4.6\" \"openpyxl==3.1.5\" \"et-xmlfile==2.0.0\""
     ],
     "sources": [
         {
             "type": "file",
-            "url": "https://files.pythonhosted.org/packages/1a/0d/e4ef0eba6ef84525b035fea1c7f6b908fa978a6f0d212fae8e84e0f9c83f/adichtion-1.0.1-py3-none-any.whl",
-            "sha256": "9360a763c5728fc758adeb4e24b9b24741baba9537d86db2ae41bdda6df8600b"
+            "url": "https://files.pythonhosted.org/packages/b4/d7/d0411cfb187470e0b6a12a9c849773d6d9a11ca0ad4bbbeaff948043c9b5/adichtion-1.1.0-py3-none-any.whl",
+            "sha256": "2e968180e3fadaca259425b8996d25f2334c8b4dfe484a9d97f113642d6b20f9"
         },
         {
             "type": "file",
